@@ -1,0 +1,8 @@
+{
+  "version": "v0.107.79",
+  "channel": "stable",
+  "archive": "AdGuardHome_linux_arm64.tar.gz",
+  "archive_sha256": "3f7893c18e8aaadc456d0452839190561c306ca95175a2254958be80a769c1ae",
+  "source": "https://github.com/AdguardTeam/AdGuardHome/releases/download/v0.107.79/AdGuardHome_linux_arm64.tar.gz",
+  "binary_sha256": "64a9b6fc6269247f1973cddbf285aa6ce866d11bd29546b0f4135ba31d2283c8"
+}

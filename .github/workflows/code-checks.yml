@@ -1,0 +1,30 @@
+name: AdBlock Pro code checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  static-and-unit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: JavaScript syntax
+        run: |
+          node --input-type=module --check < webroot/app.js
+          node --input-type=module --check < webroot/kernelsu.js
+      - name: Shell syntax
+        run: |
+          for script in action.sh bindhosts.sh customize.sh service.sh uninstall.sh webui-config.sh webui-job.sh scripts/*.sh; do
+            bash -n "$script"
+          done
+      - name: WebUI async state regression tests
+        run: node --test tests/*.test.mjs
+      - name: Python policy and upstream safety tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py'

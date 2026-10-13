@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 790" role="img" aria-labelledby="title desc">
+  <title id="title">AdBlock Pro DNS 过滤流程</title>
+  <desc id="desc">Android 系统 DNS 请求经 Root 模块重定向到 AdGuard Home，由内置规则和个人名单判断后拦截或转发给配置的上游 DNS。</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f5faf8"/><stop offset="1" stop-color="#eef3f7"/></linearGradient>
+    <linearGradient id="hero" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#087f5b"/><stop offset="1" stop-color="#13a979"/></linearGradient>
+    <filter id="shadow" x="-20%" y="-25%" width="140%" height="160%"><feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#173b31" flood-opacity=".08"/></filter>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10Z" fill="#13946b"/></marker>
+    <style>
+      text{font-family:Inter,"Noto Sans SC","Microsoft YaHei",sans-serif;fill:#18342d}
+      .muted{fill:#60756f}.small{font-size:17px}.body{font-size:19px}.title{font-size:25px;font-weight:700}.card{fill:#fff;stroke:#dce8e3;stroke-width:1.5}
+    </style>
+  </defs>
+  <rect width="1440" height="790" rx="28" fill="url(#bg)"/>
+  <circle cx="1310" cy="80" r="125" fill="#dff2ea" opacity=".65"/>
+  <circle cx="65" cy="680" r="130" fill="#e1edf1" opacity=".55"/>
+  <g transform="translate(68 53)">
+    <rect width="48" height="48" rx="15" fill="#dff4eb"/>
+    <path d="M24 8 37 13v10c0 9-5.6 14.7-13 18-7.4-3.3-13-9-13-18V13l13-5Z" fill="none" stroke="#07815d" stroke-width="2.5" stroke-linejoin="round"/>
+    <path d="m18 23 4 4 8-9" fill="none" stroke="#07815d" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+  <text x="132" y="84" font-size="25" font-weight="750">AdBlock Pro</text>
+  <text x="132" y="108" class="small muted">Root · ARM64 · AdGuard Home</text>
+  <text x="68" y="166" font-size="34" font-weight="750">广告域名在 DNS 层被拦截</text>
+  <text x="68" y="198" font-size="19" class="muted">请求先经过本机规则判断；允许的域名继续解析，命中规则的域名返回拦截结果。</text>
+
+  <g filter="url(#shadow)">
+    <rect class="card" x="55" y="242" width="260" height="190" rx="22"/>
+    <rect class="card" x="375" y="242" width="280" height="190" rx="22"/>
+    <rect x="715" y="242" width="300" height="190" rx="22" fill="#f0faf5" stroke="#8ed3b5" stroke-width="2"/>
+    <rect class="card" x="1075" y="242" width="310" height="190" rx="22"/>
+  </g>
+
+  <g transform="translate(82 268)">
+    <rect width="43" height="43" rx="13" fill="#edf4f7"/>
+    <path d="M10 14h23v19H10zM15 9h23v19" fill="none" stroke="#516b73" stroke-width="2" stroke-linejoin="round"/>
+    <text x="0" y="82" class="title">Android 应用</text>
+    <text x="0" y="113" class="body muted">浏览器 · 社交 · 电商</text>
+    <text x="0" y="145" class="small muted">通过系统 DNS 发起查询</text>
+  </g>
+  <g transform="translate(402 268)">
+    <rect width="43" height="43" rx="13" fill="#e4f5ed"/>
+    <path d="M21.5 7 34 12v9c0 8-5.4 13-12.5 16-7.1-3-12.5-8-12.5-16v-9l12.5-5Z" fill="none" stroke="#07815d" stroke-width="2" stroke-linejoin="round"/>
+    <text x="0" y="82" class="title">Root 模块</text>
+    <text x="0" y="113" class="body muted">启动与 DNS 接管</text>
+    <text x="0" y="145" class="small muted">重定向本机 IPv4 TCP/UDP 53</text>
+  </g>
+  <g transform="translate(742 268)">
+    <rect width="43" height="43" rx="13" fill="#d8f1e6"/>
+    <path d="M8 13h27v21H8zM13 8h27v21" fill="none" stroke="#07815d" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="14" cy="24" r="1.5" fill="#07815d"/><circle cx="20" cy="24" r="1.5" fill="#07815d"/>
+    <text x="0" y="82" class="title">AdGuard Home</text>
+    <text x="0" y="113" class="body muted">本机 DNS 过滤引擎</text>
+    <text x="0" y="145" class="small muted">命中规则则拦截；否则继续查询</text>
+  </g>
+  <g transform="translate(1102 268)">
+    <rect width="43" height="43" rx="13" fill="#edf4f7"/>
+    <path d="M8 16h27M8 25h18M8 34h27M29 22l6 4-6 4" fill="none" stroke="#516b73" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="0" y="82" class="title">上游 DNS</text>
+    <text x="0" y="113" class="body muted">处理未命中规则的域名</text>
+    <text x="0" y="145" class="small muted">使用设备配置中的上游 DNS</text>
+  </g>
+
+  <path d="M315 338h53" stroke="#13946b" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M655 338h53" stroke="#13946b" stroke-width="3" marker-end="url(#arrow)"/>
+  <path d="M1015 338h53" stroke="#13946b" stroke-width="3" marker-end="url(#arrow)"/>
+  <text x="318" y="319" class="small muted">DNS :53</text>
+  <text x="662" y="319" class="small muted">接管</text>
+  <text x="1019" y="319" class="small muted">允许解析</text>
+
+  <rect x="55" y="476" width="1330" height="192" rx="22" fill="#fff" stroke="#dce8e3" stroke-width="1.5"/>
+  <text x="82" y="519" class="title">过滤规则</text>
+  <text x="82" y="547" class="small muted">AdGuard Home 根据启用的规则判断域名</text>
+  <g>
+    <rect x="82" y="572" width="270" height="67" rx="14" fill="#f5faf8" stroke="#dce8e3"/>
+    <text x="102" y="600" class="body" font-weight="700">10007 基础规则</text><text x="102" y="624" class="small muted">随模块提供</text>
+    <rect x="374" y="572" width="300" height="67" rx="14" fill="#f5faf8" stroke="#dce8e3"/>
+    <text x="394" y="600" class="body" font-weight="700">秋风纯广告</text><text x="394" y="624" class="small muted">随包快照 · 均衡档启用</text>
+    <rect x="696" y="572" width="300" height="67" rx="14" fill="#f5faf8" stroke="#dce8e3"/>
+    <text x="716" y="600" class="body" font-weight="700">自选订阅源</text><text x="716" y="624" class="small muted">按需添加和更新</text>
+    <rect x="1018" y="572" width="337" height="67" rx="14" fill="#f5faf8" stroke="#dce8e3"/>
+    <text x="1038" y="600" class="body" font-weight="700">个人黑白名单</text><text x="1038" y="624" class="small muted">仅在本机规则中维护</text>
+  </g>
+  <text x="82" y="719" class="small muted">GKD 独立负责其支持的开屏跳过规则。私人 DNS、VPN 或应用内加密 DNS 可能绕过系统 DNS 接管。</text>
+</svg>

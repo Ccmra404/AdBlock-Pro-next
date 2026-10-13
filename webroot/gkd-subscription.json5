@@ -1,0 +1,29 @@
+{
+  id: 2026100901,
+  name: 'AdBlock Pro - 保守开屏规则',
+  version: 1,
+  author: 'personal configuration',
+  supportUri: 'https://github.com/gkd-kit/gkd',
+  categories: [
+    { key: 0, name: '开屏广告' },
+  ],
+  // 只匹配可见、可点击且文字完全为“跳过”的控件。
+  // 不自动点击“关闭”“同意”“下一步”等文字，降低误触风险。
+  globalGroups: [
+    {
+      key: 0,
+      name: '可点击的跳过按钮',
+      fastQuery: true,
+      matchTime: 8000,
+      actionMaximum: 1,
+      resetMatch: 'app',
+      rules: [
+        {
+          key: 0,
+          matches: '[text="跳过"][visibleToUser=true][clickable=true]',
+        },
+      ],
+    },
+  ],
+  apps: [],
+}

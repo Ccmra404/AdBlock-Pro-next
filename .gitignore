@@ -1,0 +1,7 @@
+/config/*.auth
+/bin/AdGuardHome.yaml
+*.zip
+*.log
+
+__pycache__/
+*.pyc

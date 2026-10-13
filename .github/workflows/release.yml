@@ -1,0 +1,158 @@
+name: Build AdBlock Pro ARM64 root module ZIP
+
+on:
+  pull_request:
+    paths:
+      # Any file entering the installer ZIP must trigger an ARM64 package test.
+      - "tools/bootstrap/**"
+      - "customize.sh"
+      - "module.prop"
+      - "action.sh"
+      - "service.sh"
+      - "uninstall.sh"
+      - "bindhosts.sh"
+      - "webui-config.sh"
+      - "webui-job.sh"
+      - "settings.conf"
+      - "config-blacklist.txt"
+      - "config-whitelist.txt"
+      - "scripts/**"
+      - "webroot/**"
+      - "META-INF/**"
+      - "bin/AdGuardHome"
+      - "bin/data/filters/**"
+      - "tests/**"
+      - "upstream/**"
+      - "tools/*.py"
+      - "README.md"
+      - "LICENSE"
+      - "THIRD_PARTY_NOTICES.md"
+      - "licenses/**"
+      - ".github/workflows/**"
+  # Only an explicit main-branch workflow_dispatch can create a Release.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-arm64-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  package:
+    runs-on: ubuntu-24.04-arm
+    outputs:
+      version: ${{ steps.assemble.outputs.version }}
+    env:
+      ARTIFACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Test per-device credential generator
+        working-directory: tools/bootstrap
+        run: |
+          go mod download
+          git diff --exit-code -- go.mod go.sum
+          go test ./...
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ../../bin/adblock-bootstrap .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/adblock-bootstrap-native .
+      - name: Validate generated initial configuration with bundled AdGuard Home
+        run: |
+          uname -m
+          # GitHub source blobs need not retain an executable bit.
+          chmod 755 ./bin/AdGuardHome
+          mkdir -p /tmp/adblock-config-test
+          /tmp/adblock-bootstrap-native /tmp/adblock-config-test/AdGuardHome.yaml /tmp/adblock-config-test/admin.auth
+          test -s /tmp/adblock-config-test/admin.auth
+          test -s /tmp/adblock-config-test/AdGuardHome.yaml
+          file ./bin/AdGuardHome
+          echo "AdGuard Home emulator version check:"
+          ./bin/AdGuardHome --version || true
+          echo "Testing bootstrap config:"
+          if ! ./bin/AdGuardHome --check-config --config /tmp/adblock-config-test/AdGuardHome.yaml; then
+            echo "Config validation failed; emulator diagnostics:"
+            ./bin/AdGuardHome --check-config --config /tmp/adblock-config-test/AdGuardHome.yaml > /tmp/agh-diagnostics.log 2>&1 || true
+            tail -n 55 /tmp/agh-diagnostics.log
+            exit 1
+          fi
+          rm -rf /tmp/adblock-config-test
+      - name: Verify personal filters on first boot and refresh with native ARM64 core
+        run: python3 tools/test_personal_filter.py --engine ./bin/AdGuardHome --bootstrap /tmp/adblock-bootstrap-native
+      - name: Run project checks
+        run: |
+          for script in action.sh bindhosts.sh customize.sh service.sh uninstall.sh webui-config.sh webui-job.sh scripts/*.sh; do
+            bash -n "$script"
+          done
+          node --input-type=module --check < webroot/app.js
+          node --input-type=module --check < webroot/kernelsu.js
+          node --test tests/*.test.mjs
+          python3 -m unittest discover -s tests -p 'test_*.py'
+      - name: Assemble installable root module ZIP
+        id: assemble
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="$(sed -n 's/^version=//p' module.prop)"
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "Invalid module release version: $TAG" >&2; exit 1 ;;
+          esac
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          stage="$(mktemp -d)"
+          mkdir -p "$stage/bin/data/filters" "$stage/licenses" dist
+          cp module.prop action.sh customize.sh service.sh uninstall.sh bindhosts.sh webui-config.sh webui-job.sh settings.conf config-blacklist.txt config-whitelist.txt LICENSE THIRD_PARTY_NOTICES.md "$stage/"
+          if [ "$GITHUB_REF" != refs/heads/main ]; then
+            TAG="${TAG}-dev.${ARTIFACT_SHA:0:7}"
+            sed -i "s/^version=.*/version=$TAG/" "$stage/module.prop"
+          fi
+          cp -a META-INF scripts webroot "$stage/"
+          cp licenses/AWAvenue-GPL-3.0.txt "$stage/licenses/"
+          cp bin/AdGuardHome bin/adblock-bootstrap "$stage/bin/"
+          cp bin/data/filters/10007.txt bin/data/filters/1791638912.txt "$stage/bin/data/filters/"
+          chmod 755 "$stage/bin/AdGuardHome" "$stage/bin/adblock-bootstrap"
+          (cd "$stage" && zip -q -r -9 "$GITHUB_WORKSPACE/dist/AdBlock-Pro-$TAG-arm64.zip" .)
+          rm -rf "$stage"
+          unzip -t "dist/AdBlock-Pro-$TAG-arm64.zip" | tail -n 1
+          unzip -Z1 "dist/AdBlock-Pro-$TAG-arm64.zip" | grep -qx "bin/adblock-bootstrap"
+          unzip -Z1 "dist/AdBlock-Pro-$TAG-arm64.zip" | grep -qx "META-INF/com/google/android/update-binary"
+          if unzip -Z1 "dist/AdBlock-Pro-$TAG-arm64.zip" | grep -Eq '(^|/)(admin[.]auth|AdGuardHome[.]yaml)$'; then
+            echo "SECURITY ERROR: archived credentials/configuration" >&2
+            exit 1
+          fi
+          python3 tools/validate_module_zip.py "dist/AdBlock-Pro-$TAG-arm64.zip" --version "$TAG" --version-code "$(sed -n 's/^versionCode=//p' module.prop)"
+          (cd dist && sha256sum "AdBlock-Pro-$TAG-arm64.zip" > "AdBlock-Pro-$TAG-arm64.zip.sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AdBlock-Pro-test-${{ github.run_id }}-arm64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+  publish:
+    needs: package
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.package.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: AdBlock-Pro-test-${{ github.run_id }}-arm64
+          path: dist
+      - name: Verify publication preconditions and artifact checksum
+        run: |
+          set -euo pipefail
+          python3 tools/release_guard.py --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA"
+          (cd dist && sha256sum -c "AdBlock-Pro-$TAG-arm64.zip.sha256")
+          python3 tools/validate_module_zip.py "dist/AdBlock-Pro-$TAG-arm64.zip" --version "$TAG" --version-code "$(sed -n 's/^versionCode=//p' module.prop)"
+      - name: Create a new immutable prerelease
+        run: |
+          set -euo pipefail
+          printf '%s\n' "ARM64 prerelease for commit $GITHUB_SHA. Automated checks passed; Android device validation is separate. See the reviewed PR and docs/integration-rc3.md for scope and outstanding tests." > /tmp/release-notes.md
+          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "AdBlock Pro $TAG (ARM64 test build)" --notes-file /tmp/release-notes.md --prerelease --latest=false
