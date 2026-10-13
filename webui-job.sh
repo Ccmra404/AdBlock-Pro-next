@@ -1,0 +1,183 @@
+#!/system/bin/sh
+MODDIR=${0%/*}
+DIR=/data/adb/bindhosts_personal/webui-jobs
+CONFIG=$MODDIR/webui-config.sh
+umask 077
+. "$MODDIR/scripts/compat.sh" || exit 1
+
+# Keep only the last 200 completed operations. In-progress jobs have no .done.
+prune_jobs() {
+  for file in "$DIR"/*.done; do
+    [ -f "$file" ] || continue
+    id=${file##*/}; id=${id%.done}
+    case "$id" in ''|*[!0-9]*) continue ;; esac
+    printf '%s\n' "$id"
+  done | "$BB" sort -r | "$BB" tail -n +201 | while IFS= read -r id; do
+    case "$id" in ''|*[!0-9]*) continue ;; esac
+    rm -f "$DIR/$id.log" "$DIR/$id.done" "$DIR/$id.action"
+  done
+}
+
+case "$1" in
+ config)
+  case "$2" in
+   list-whitelist|list-blacklist) ;;
+   list-sources) case "$3" in ''|light|balanced|strict) ;; *) exit 1;; esac ;;
+   add-whitelist|add-blacklist|remove-whitelist|remove-blacklist) echo "$3" | "$BB" grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' || exit 1 ;;
+   auto-update|autostart) case "$3" in on|off) ;; *) exit 1;; esac ;;
+   set-mode) case "$3" in light|balanced|strict) ;; *) exit 1;; esac ;;
+   set-source) case "$4" in on|off) ;; *) exit 1;; esac; case "$5" in light|balanced|strict) ;; *) exit 1;; esac; case "$3" in https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac ;;
+   add-source) case "$4" in light|balanced|strict) ;; *) exit 1;; esac; case "$3" in https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac ;;
+   remove-source) case "$3" in https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac ;;
+   *) exit 1;;
+  esac
+  # Serialize configuration writes with DNS worker operations across WebUI
+  # sessions. Reads intentionally remain non-blocking.
+  case "$2" in
+   list-whitelist|list-blacklist|list-sources) ;;
+   *)
+    if [ "${ABP_JOB_CONFIG_LOCKED:-0}" != 1 ]; then
+     mkdir -p "$DIR" || exit 1
+     export ABP_JOB_CONFIG_LOCKED=1
+     exec "$BB" flock -n "$DIR/worker.lock" "$BB" sh "$0" "$@"
+    fi
+    ;;
+  esac
+  case "$2" in
+   set-source) result=$(sh "$CONFIG" "$2" "$3" "$4" "$5" 2>&1); event_id=$6 ;;
+   add-source) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$5 ;;
+   list-sources) result=$(sh "$CONFIG" "$2" "$3" 2>&1); event_id='' ;;
+   *) result=$(sh "$CONFIG" "$2" "$3" 2>&1); event_id=$4 ;;
+  esac
+  code=$?
+  printf '%s\n' "$result"
+  case "$2" in
+   add-whitelist|add-blacklist|remove-whitelist|remove-blacklist|auto-update|autostart|set-mode|set-source|add-source|remove-source) loggable=1 ;;
+   *) loggable=0 ;;
+  esac
+  case "$event_id" in ''|*[!0-9]*) loggable=0 ;; esac
+  if [ "$loggable" = 1 ] && [ ${#event_id} -le 20 ]; then
+   mkdir -p "$DIR" || exit "$code"
+   printf '%s\n%s\n' "$2" "$3" > "$DIR/$event_id.action.tmp" && mv "$DIR/$event_id.action.tmp" "$DIR/$event_id.action" || exit "$code"
+   printf '%s\n' "$result" > "$DIR/$event_id.log.tmp" && mv "$DIR/$event_id.log.tmp" "$DIR/$event_id.log" || exit "$code"
+   printf '%s\n' "$code" > "$DIR/$event_id.done.tmp" && mv "$DIR/$event_id.done.tmp" "$DIR/$event_id.done" || exit "$code"
+  fi
+  [ "$loggable" != 1 ] || prune_jobs
+  exit "$code"
+  ;;
+ diagnose)
+  case "$2" in ''|*[!0-9]*) exit 1;; esac
+  [ ${#2} -le 20 ] || exit 1
+  mkdir -p "$DIR" || exit 1
+  [ ! -e "$DIR/$2.log" ] || exit 1
+  printf '%s\n\n' diagnose > "$DIR/$2.action.tmp" && mv "$DIR/$2.action.tmp" "$DIR/$2.action" || exit 1
+  echo '正在执行环境诊断…' > "$DIR/$2.log"
+  sh "$MODDIR/bindhosts.sh" --diagnose >> "$DIR/$2.log" 2>&1
+  code=$?
+  [ "$code" = 0 ] && echo '[结果] 环境诊断完成' >> "$DIR/$2.log" || echo '[结果] 环境诊断未完成' >> "$DIR/$2.log"
+  printf '%s\n' "$code" > "$DIR/$2.done.tmp" && mv "$DIR/$2.done.tmp" "$DIR/$2.done" || exit 1
+  cat "$DIR/$2.log"
+  exit "$code"
+  ;;
+ list)
+  mkdir -p "$DIR"
+  for file in "$DIR"/*.done; do [ -f "$file" ] || continue; key=${file##*/}; key=${key%.done}; printf '%s\n' "$key"; done | "$BB" sort -r | "$BB" head -n 8
+  ;;
+ recent)
+  mkdir -p "$DIR" || exit 1
+  keys="$DIR/.recent-keys.$$"
+  for file in "$DIR"/*.log; do [ -f "$file" ] || continue; key=${file##*/}; key=${key%.log}; printf '%s\n' "$key"; done |
+   "$BB" sort -r | "$BB" head -n 120 > "$keys" || { rm -f "$keys"; exit 1; }
+  while IFS= read -r key; do
+   case "$key" in ''|*[!0-9]*) continue ;; esac
+   if [ -f "$DIR/$key.done" ]; then code=$(cat "$DIR/$key.done"); [ "$code" = 0 ] && status=success || status=failure; else status=running; fi
+   action=unknown; argument=''
+   if [ -f "$DIR/$key.action" ]; then action=$(sed -n '1p' "$DIR/$key.action"); argument=$(sed -n '2p' "$DIR/$key.action"); fi
+   summary=$(tail -n 1 "$DIR/$key.log" 2>/dev/null | tr '\t\r\n' '   ' | cut -c 1-240)
+   printf '%s\t%s\t%s\t%s\t%s\n' "$key" "$status" "$action" "$argument" "$summary"
+  done < "$keys"
+  rm -f "$keys"
+  ;;
+ detail)
+  case "$2" in ''|*[!0-9]*) exit 1;; esac
+  [ ${#2} -le 20 ] || exit 1
+  [ -f "$DIR/$2.log" ] || exit 1
+  tail -c 12000 "$DIR/$2.log"
+  ;;
+ clear)
+  mkdir -p "$DIR" || exit 1
+  # Never delete an in-progress job's .log: poll needs that file even
+  # when another WebUI session clears completed records.
+  for file in "$DIR"/*.done; do
+   [ -f "$file" ] || continue
+   key=${file##*/}; key=${key%.done}
+   case "$key" in ''|*[!0-9]*) continue ;; esac
+   rm -f "$DIR/$key.log" "$DIR/$key.done" "$DIR/$key.action" || exit 1
+  done
+  echo '已清空已完成任务日志；进行中任务、规则历史与当前规则未更改。'
+  ;;
+ start)
+  case "$2" in ''|*[!0-9]* ) exit 1;; esac
+  [ ${#2} -le 20 ] || exit 1
+  case "$3" in --update|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
+  case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
+  if [ "$3" = --observe ]; then case "$4" in 30|60|90) ;; *) exit 1;; esac; fi
+  if [ "$3" = --rollback-history ]; then echo "$4" | "$BB" grep -Eq '^[0-9]{14}-[0-9]+$' || exit 1; fi
+  mkdir -p "$DIR" || exit 1
+  # Atomic exclusive creation rejects a duplicate job ID.
+  ( set -C; : > "$DIR/$2.log" ) 2>/dev/null || exit 1
+  printf '%s\n%s\n' "$3" "$4" > "$DIR/$2.action.tmp" && mv "$DIR/$2.action.tmp" "$DIR/$2.action" || exit 1
+  case "$3" in --observe) echo "准备临时观察 $4 秒 DNS 域名…" > "$DIR/$2.log" ;; *) echo '任务已提交，正在等待下载或校验结果…' > "$DIR/$2.log" ;; esac
+  "$BB" nohup "$BB" sh "$0" worker "$2" "$3" "$4" </dev/null >/dev/null 2>&1 &
+  echo started
+  ;;
+ worker)
+  case "$2" in ''|*[!0-9]* ) exit 1;; esac
+  [ ${#2} -le 20 ] || exit 1
+  case "$3" in --update|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
+  case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
+  if [ "$3" = --observe ]; then case "$4" in 30|60|90) ;; *) exit 1;; esac; fi
+  # Serialize privileged mutations from multiple WebUI sessions.
+  "$BB" flock -n "$DIR/worker.lock" "$BB" sh "$0" execute "$2" "$3" "$4" >> "$DIR/$2.log" 2>&1
+  result=$?
+  if [ "$result" != 0 ]; then
+    echo "[!] Task failed or another DNS operation is already running (exit $result)." >> "$DIR/$2.log"
+  fi
+  printf '%s\n' "$result" > "$DIR/$2.tmp" && mv "$DIR/$2.tmp" "$DIR/$2.done"
+  bytes=$(wc -c < "$DIR/$2.log" 2>/dev/null)
+  if [ "${bytes:-0}" -gt 65536 ] 2>/dev/null; then
+    "$BB" tail -c 65536 "$DIR/$2.log" > "$DIR/$2.trim" && mv "$DIR/$2.trim" "$DIR/$2.log"
+  fi
+  prune_jobs
+  ;;
+ execute)
+  case "$2" in ''|*[!0-9]* ) exit 1;; esac
+  [ ${#2} -le 20 ] || exit 1
+  case "$3" in --update|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1 ;; esac
+  if [ "$3" = --observe ]; then
+    exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$4" "$2"
+  else
+    exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$4"
+  fi
+  ;;
+ poll)
+  case "$2" in ''|*[!0-9]* ) exit 1;; esac
+  [ ${#2} -le 20 ] || exit 1
+  [ -f "$DIR/$2.log" ] || exit 1
+  tail -c 12000 "$DIR/$2.log"
+  if [ -f "$DIR/$2.done" ]; then printf '\nJOB_DONE='; cat "$DIR/$2.done"; fi
+  ;;
+ observe-result)
+  case "$2" in ''|*[!0-9]*) exit 1 ;; esac
+  [ ${#2} -le 20 ] || exit 1
+  result="/data/adb/bindhosts_personal/observations/$2.result"
+  [ -f "$result" ] || { echo '[!] Observation result is missing or has expired.' >&2; exit 1; }
+  cat "$result"
+  ;;
+ observe-clean)
+  case "$2" in ''|*[!0-9]*) exit 1 ;; esac
+  [ ${#2} -le 20 ] || exit 1
+  rm -f "/data/adb/bindhosts_personal/observations/$2.result" "/data/adb/bindhosts_personal/observations/$2.meta"
+  ;;
+ *) exit 1;;
+esac

@@ -1,0 +1,612 @@
+#!/system/bin/sh
+MODDIR=${0%/*}
+AGH=/data/adb/adblockpro
+STATE=/data/adb/bindhosts_personal
+API=http://127.0.0.1:3000/control
+AUTH_FILE=$AGH/admin.auth
+HISTORY=$STATE/dns-history
+OBS_DIR=$STATE/observations
+. "$MODDIR/scripts/compat.sh" || exit 1
+USER_FILTER=$AGH/bin/userfilters/adblock-pro-user-rules.txt
+umask 077
+. "$AGH/settings.conf" 2>/dev/null
+redir_port=${redir_port:-5591}
+
+is_protocol_listening() {
+  files=$1
+  expected_state=$2
+  port_hex=$(printf '%04X' "$redir_port")
+  for file in $files; do
+    [ -r "$file" ] || continue
+    "$BB" awk -v pat=":$port_hex\$" -v expected="$expected_state" \
+      'NR > 1 && $2 ~ pat && $4 == expected { found=1 } END { exit !found }' "$file" && return 0
+  done
+  return 1
+}
+
+is_dns_listening() {
+  is_protocol_listening '/proc/net/udp /proc/net/udp6' 07 &&
+    is_protocol_listening '/proc/net/tcp /proc/net/tcp6' 0A
+}
+
+is_our_process() {
+  pid=$1
+  case "$pid" in ''|*[!0-9]*) return 1 ;; esac
+  [ -r "/proc/$pid/cmdline" ] || return 1
+  "$BB" tr '\000' ' ' < "/proc/$pid/cmdline" | "$BB" grep -Fq "$AGH/bin/AdGuardHome"
+}
+
+api() {
+  method=$1; path=$2; body=${3-}; timeout=${4:-20}
+  if [ -z "${CURL:-}" ]; then CURL=$(abp_find_curl) || return 1; fi
+  [ -r "$AUTH_FILE" ] || { echo '[!] Local API credentials are missing.' >&2; return 1; }
+  if [ "$method" = GET ]; then
+    "$CURL" --basic --silent --show-error --fail --connect-timeout 3 --max-time "$timeout" \
+      --user "$(cat "$AUTH_FILE")" "$API$path"
+  else
+    "$CURL" --basic --silent --show-error --fail --connect-timeout 3 --max-time "$timeout" \
+      --user "$(cat "$AUTH_FILE")" -H 'Content-Type: application/json' -X "$method" \
+      --data-binary "$body" "$API$path"
+  fi
+}
+
+json_top_bool() {
+  # Subscription objects also contain enabled; only read the API's root field.
+  "$BB" awk -v key="$1" '
+    { json=json $0 "\n" }
+    END {
+      for (i=1; i<=length(json); i++) {
+        c=substr(json,i,1)
+        if (quoted) {
+          if (escaped) { escaped=0; continue }
+          if (c=="\\") { escaped=1; continue }
+          if (c!="\"") continue
+          quoted=0
+          if (depth==1 && substr(json,start,i-start)==key) {
+            rest=substr(json,i+1)
+            if (rest ~ /^[[:space:]]*:[[:space:]]*(true|false)[[:space:]]*[,}]/) {
+              sub(/^[[:space:]]*:[[:space:]]*/, "", rest)
+              value=(rest ~ /^true/) ? "true" : "false"; found++
+            }
+          }
+        } else if (c=="\"") { quoted=1; start=i+1 }
+        else if (c=="{" || c=="[") depth++
+        else if (c=="}" || c=="]") depth--
+      }
+      if (found!=1 || quoted || depth!=0) exit 1
+      print value
+    }'
+}
+
+querylog_config() {
+  querylog_json=$(api GET /querylog_info 5) || return 1
+  querylog_interval=$(printf '%s' "$querylog_json" | "$BB" grep -Eo '"interval"[[:space:]]*:[[:space:]]*[0-9]+' | "$BB" head -n 1 | "$BB" cut -d: -f2 | "$BB" tr -d '[:space:]')
+  querylog_enabled=$(printf '%s' "$querylog_json" | "$BB" grep -Eo '"enabled"[[:space:]]*:[[:space:]]*(true|false)' | "$BB" head -n 1 | "$BB" cut -d: -f2 | "$BB" tr -d '[:space:]')
+  querylog_anonymize=$(printf '%s' "$querylog_json" | "$BB" grep -Eo '"anonymize_client_ip"[[:space:]]*:[[:space:]]*(true|false)' | "$BB" head -n 1 | "$BB" cut -d: -f2 | "$BB" tr -d '[:space:]')
+  case "$querylog_interval" in ''|*[!0-9]*) return 1 ;; esac
+  case "$querylog_enabled" in true|false) ;; *) return 1 ;; esac
+  case "$querylog_anonymize" in true|false) ;; *) return 1 ;; esac
+}
+
+set_querylog_config() {
+  api POST /querylog_config "{\"interval\":$1,\"enabled\":$2,\"anonymize_client_ip\":$3}" 8 >/dev/null
+}
+
+restore_querylog_yaml() {
+  yaml_enabled=$1
+  case "$yaml_enabled" in true|false) ;; *) return 1 ;; esac
+  yaml="$AGH/bin/AdGuardHome.yaml"
+  [ -f "$yaml" ] || return 1
+  tmp="$yaml.observe.$$"
+  awk -v value="$yaml_enabled" '
+    /^querylog:[[:space:]]*$/ { in_querylog=1; print; next }
+    in_querylog && /^[^[:space:]]/ { in_querylog=0 }
+    in_querylog && /^  enabled:[[:space:]]*/ { print "  enabled: " value; seen=1; next }
+    { print }
+    END { if (!seen) exit 2 }
+  ' "$yaml" > "$tmp" || { rm -f "$tmp"; return 1; }
+  chmod 600 "$tmp" && mv "$tmp" "$yaml"
+}
+
+observe_restore() {
+  observe_id=$1
+  case "$observe_id" in ''|*[!0-9]*) return 1 ;; esac
+  observe_meta="$OBS_DIR/$observe_id.meta"
+  [ -r "$observe_meta" ] || return 0
+  observe_interval=$(sed -n '1p' "$observe_meta")
+  observe_enabled=$(sed -n '2p' "$observe_meta")
+  observe_anonymize=$(sed -n '3p' "$observe_meta")
+  case "$observe_interval" in ''|*[!0-9]*) return 1 ;; esac
+  case "$observe_enabled" in true|false) ;; *) return 1 ;; esac
+  case "$observe_anonymize" in true|false) ;; *) return 1 ;; esac
+  [ "$observe_enabled" = true ] && return 0
+  if set_querylog_config "$observe_interval" false "$observe_anonymize"; then return 0; fi
+  pid=''; [ ! -r "$AGH/bin/agh.pid" ] || pid=$(cat "$AGH/bin/agh.pid")
+  is_our_process "$pid" && return 1
+  restore_querylog_yaml false
+}
+
+observe_abort() {
+  [ "${observe_restored:-0}" = 1 ] || observe_restore "${observe_id:-}" || return 1
+  rm -f "$OBS_DIR/active" "$OBS_DIR/${observe_id:-}.result" "$OBS_DIR/${observe_id:-}.result.tmp" "$OBS_DIR/${observe_id:-}.meta"
+  rmdir "$OBS_DIR/lock" 2>/dev/null
+}
+
+observe_capture() {
+  observe_seconds=$1
+  observe_id=$2
+  case "$observe_seconds" in 30|60|90) ;; *) echo '[!] Observation duration must be 30, 60, or 90 seconds.' >&2; return 1 ;; esac
+  case "$observe_id" in ''|*[!0-9]*) echo '[!] Invalid observation ID.' >&2; return 1 ;; esac
+  [ ${#observe_id} -le 20 ] || { echo '[!] Invalid observation ID.' >&2; return 1; }
+  mkdir -p "$OBS_DIR" || return 1
+  chmod 700 "$OBS_DIR" 2>/dev/null
+  if ! mkdir "$OBS_DIR/lock" 2>/dev/null; then echo '[!] A DNS observation is already active.' >&2; return 1; fi
+  # The module normally keeps query logs in memory only. Refuse to start if
+  # file logging was enabled separately in AdGuard Home's native settings.
+  file_logging=$(awk '
+    /^querylog:[[:space:]]*$/ { in_querylog=1; next }
+    in_querylog && /^[^[:space:]]/ { exit }
+    in_querylog && /^  file_enabled:/ { print $2; exit }
+  ' "$AGH/bin/AdGuardHome.yaml" 2>/dev/null)
+  if [ "$file_logging" != false ]; then
+    rmdir "$OBS_DIR/lock" 2>/dev/null
+    echo '[!] Temporary observation requires AdGuard Home query-log file storage to be disabled.' >&2
+    return 1
+  fi
+  querylog_config || { rmdir "$OBS_DIR/lock" 2>/dev/null; echo '[!] Cannot read the current DNS query-log settings.' >&2; return 1; }
+  observe_meta="$OBS_DIR/$observe_id.meta"
+  printf '%s\n%s\n%s\n%s\n%s\n' "$querylog_interval" "$querylog_enabled" "$querylog_anonymize" "$(date +%s)" "$observe_seconds" > "$observe_meta.tmp" || { rmdir "$OBS_DIR/lock" 2>/dev/null; return 1; }
+  chmod 600 "$observe_meta.tmp" && mv "$observe_meta.tmp" "$observe_meta" || { rm -f "$observe_meta.tmp"; rmdir "$OBS_DIR/lock" 2>/dev/null; return 1; }
+  printf '%s\n' "$observe_id" > "$OBS_DIR/active.tmp" && chmod 600 "$OBS_DIR/active.tmp" && mv "$OBS_DIR/active.tmp" "$OBS_DIR/active" || { rm -f "$observe_meta"; rmdir "$OBS_DIR/lock" 2>/dev/null; return 1; }
+  if [ "$querylog_enabled" = false ]; then
+    # Keep the temporary query-log client field anonymized even if the
+    # user's normal query-log preference is not; restore it on every exit.
+    set_querylog_config "$querylog_interval" true true || {
+      rm -f "$OBS_DIR/active" "$observe_meta"
+      rmdir "$OBS_DIR/lock" 2>/dev/null
+      echo '[!] Could not temporarily enable DNS query logging.' >&2
+      return 1
+    }
+  fi
+  observe_started_at=$(date +%s)
+  observe_restored=0
+  trap 'observe_abort >/dev/null 2>&1' EXIT
+  trap 'exit 1' HUP INT TERM
+  # Only keep a short, private API snapshot for the WebUI to parse locally.
+  # The normal operation log never receives DNS queries or client addresses.
+  echo "[进度] OBSERVE_START_EPOCH=$observe_started_at"
+  echo "[进度] 正在观察设备 DNS 域名，共 $observe_seconds 秒；请现在打开目标应用。"
+  sleep "$observe_seconds"
+  observe_result="$OBS_DIR/$observe_id.result"
+  if ! api GET '/querylog?limit=200' 15 > "$observe_result.tmp"; then
+    rm -f "$observe_result.tmp"
+    observe_restore "$observe_id" || { echo '[!] Query-log restoration failed; it will be retried after service startup.' >&2; return 1; }
+    observe_restored=1
+    rm -f "$OBS_DIR/active"
+    rmdir "$OBS_DIR/lock" 2>/dev/null
+    echo '[!] Could not read the DNS query log.' >&2
+    return 1
+  fi
+  if ! "$BB" grep -q '"data"' "$observe_result.tmp"; then
+    rm -f "$observe_result.tmp"
+    observe_restore "$observe_id" || { echo '[!] Query-log restoration failed; it will be retried after service startup.' >&2; return 1; }
+    observe_restored=1
+    rm -f "$OBS_DIR/active"
+    rmdir "$OBS_DIR/lock" 2>/dev/null
+    echo '[!] AdGuard Home returned an unexpected query-log response.' >&2
+    return 1
+  fi
+  chmod 600 "$observe_result.tmp" && mv "$observe_result.tmp" "$observe_result" || { rm -f "$observe_result.tmp"; return 1; }
+  observe_restore "$observe_id" || { echo '[!] Query-log restoration failed; it will be retried after service startup.' >&2; return 1; }
+  observe_restored=1
+  rm -f "$OBS_DIR/active"
+  rmdir "$OBS_DIR/lock" 2>/dev/null
+  trap - EXIT HUP INT TERM
+  echo '[结果] DNS 域名观察完成；原查询日志设置已恢复。'
+  # A result that is never opened is removed after ten minutes.
+  "$BB" sh "$AGH/scripts/detach.sh" "$BB" "$BB" sh -c 'sleep 600; rm -f "$1" "$2"' \
+    observe-cleanup "$observe_result" "$observe_meta" >/dev/null 2>&1 &
+}
+
+recover_observation() {
+  [ -r "$OBS_DIR/active" ] || return 0
+  observe_id=$(cat "$OBS_DIR/active" 2>/dev/null)
+  case "$observe_id" in ''|*[!0-9]*) rm -f "$OBS_DIR/active"; rmdir "$OBS_DIR/lock" 2>/dev/null; return 1 ;; esac
+  observe_restore "$observe_id" || { echo '[!] Could not restore DNS query-log settings after an interrupted observation.' >&2; return 1; }
+  rm -f "$OBS_DIR/active" "$OBS_DIR/$observe_id.result" "$OBS_DIR/$observe_id.result.tmp"
+  rmdir "$OBS_DIR/lock" 2>/dev/null
+  job_log="$STATE/webui-jobs/$observe_id.log"
+  if [ -f "$job_log" ] && [ ! -f "$STATE/webui-jobs/$observe_id.done" ]; then
+    echo '[!] Observation was interrupted by a device restart; original query-log settings were restored.' >> "$job_log"
+    printf '1\n' > "$STATE/webui-jobs/$observe_id.done.tmp" && mv "$STATE/webui-jobs/$observe_id.done.tmp" "$STATE/webui-jobs/$observe_id.done"
+  fi
+}
+
+valid_domain() {
+  [ ${#1} -le 253 ] && printf '%s\n' "$1" | "$BB" grep -Eiq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+}
+
+rules_count() {
+  printf '%s' "$1" | "$BB" grep -Eo '"rules_count"[[:space:]]*:[[:space:]]*[0-9]+' | "$BB" awk -F: '{ n += $2 } END { print n + 0 }'
+}
+
+history_text() {
+  [ -d "$HISTORY" ] || return 0
+  first=1
+  for archive in $($BB ls -1t "$HISTORY"/*.tar.gz 2>/dev/null | $BB head -n 3); do
+    [ -f "$archive" ] || continue
+    key=${archive##*/}; key=${key%.tar.gz}
+    count=${key#*-}
+    [ "$first" = 1 ] || printf ','
+    printf '%s:%s' "$key" "$count"
+    first=0
+  done
+}
+
+classify_dns_health() {
+  state=degraded
+  if [ "$running" != 1 ]; then health=stopped; state=paused
+  elif [ "$listening" != 1 ]; then health=listener_failed
+  elif [ "$api_ok" != 0 ]; then health=api_failed
+  elif [ "$takeover" = off ] && [ "$redirected" = 0 ]; then health=takeover_off; state=bypassed
+  elif [ "$takeover" = off ]; then health=takeover_cleanup_pending
+  elif [ "$takeover" != on ]; then health=takeover_unknown
+  elif [ "$redirected" != 1 ]; then health=takeover_failed
+  else health=active; state=active
+  fi
+}
+
+status() {
+  filter_json='{}'; stats_json='{}'
+  api_ok=1
+  pid=''; [ ! -r "$AGH/bin/agh.pid" ] || pid=$(cat "$AGH/bin/agh.pid")
+  running=0
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ -r "/proc/$pid/cmdline" ] && "$BB" tr '\000' ' ' < "/proc/$pid/cmdline" | "$BB" grep -Fq "$AGH/bin/AdGuardHome"; then running=1; fi
+  if [ "$running" = 1 ]; then
+    filter_json=$(api GET /filtering/status 4) && api_ok=0 || filter_json='{}'
+    stats_json=$(api GET /stats 3) || stats_json='{}'
+  fi
+  listening_udp=0; is_protocol_listening '/proc/net/udp /proc/net/udp6' 07 && listening_udp=1
+  listening_tcp=0; is_protocol_listening '/proc/net/tcp /proc/net/tcp6' 0A && listening_tcp=1
+  listening=0; [ "$listening_udp" = 1 ] && [ "$listening_tcp" = 1 ] && listening=1
+  redirected=0
+  iptables -t nat -C OUTPUT -j ADGUARD_REDIRECT_DNS >/dev/null 2>&1 && redirected=1
+  takeover=$(cat "$STATE/dns-takeover" 2>/dev/null); case "$takeover" in on|off) ;; *) takeover=unknown ;; esac
+  classify_dns_health
+  mode=$(cat "$STATE/blocking-mode" 2>/dev/null); case "$mode" in light|balanced|strict) ;; *) mode=balanced ;; esac
+  auto=$(cat "$STATE/auto-update" 2>/dev/null); case "$auto" in on|off) ;; *) auto=on ;; esac
+  last_update=$(cat "$STATE/last-update" 2>/dev/null); case "$last_update" in ''|*[!0-9]*) last_update=0 ;; esac
+  # The binary version rarely changes, but launching a second AGH process
+  # on every WebUI status poll adds avoidable CPU and I/O overhead.
+  version_cache="$STATE/engine-version"
+  if [ -s "$version_cache" ]; then
+    version=$("$BB" head -n 1 "$version_cache")
+  else
+    version=$("$AGH/bin/AdGuardHome" --version 2>/dev/null | "$BB" head -n 1 | "$BB" tr '\r\n' '  ')
+    [ -n "$version" ] || version=unknown
+    printf '%s\n' "$version" > "$version_cache.tmp.$" &&
+      mv -f "$version_cache.tmp.$" "$version_cache"
+  fi
+  module_version=$($BB grep '^version=' "$MODDIR/module.prop" | $BB cut -d= -f2-)
+  [ -n "$module_version" ] || module_version=unknown
+  count=$(rules_count "$filter_json")
+  if [ "$count" = 0 ] && [ -d "$AGH/bin/data/filters" ]; then
+    count=$(for file in "$AGH/bin/data/filters"/*.txt; do [ -f "$file" ] || continue; "$BB" awk '!/^[[:space:]]*(!|#|$)/ { n++ } END { print n+0 }' "$file"; done | "$BB" awk '{ n += $1 } END { print n+0 }')
+  fi
+  filtering_enabled=$(printf '%s' "$filter_json" | json_top_bool enabled)
+  case "$filtering_enabled" in true|false) ;; *) filtering_enabled=unknown ;; esac
+  autostart=$(cat "$STATE/autostart" 2>/dev/null); case "$autostart" in on|off) ;; *) autostart=on ;; esac
+  printf 'state=%s blocked=%s mode=%s\n' "$state" "$count" "$mode"
+  printf 'filtering_enabled=%s\ndns_takeover=%s\nautostart=%s\n' "$filtering_enabled" "$takeover" "$autostart"
+  printf 'dns_core_running=%s\ndns_health=%s\n' "$running" "$health"
+  [ "$running" = 1 ] || pid=''
+  "$BB" sh "$AGH/scripts/memory.sh" quick "$pid" | "$BB" sed 's/^mem_rss/dns_rss/;s/^mem_pss/dns_pss/;s/^mem_/dns_mem_/'
+  printf 'module=version=%s / %s\nupdate_due=no\nauto_update=%s\nlast_update=%s\n' "$module_version" "$version" "$auto" "$last_update"
+  printf 'history=%s\n' "$(history_text)"
+  printf 'dns_filter_json=%s\n' "$(printf '%s' "$filter_json" | $BB tr '\r\n' '  ')"
+  printf 'dns_stats_json=%s\n' "$(printf '%s' "$stats_json" | $BB tr '\r\n' '  ')"
+  printf 'dns_listener=%s\ndns_listener_udp=%s\ndns_listener_tcp=%s\ndns_redirect=%s\n' "$listening" "$listening_udp" "$listening_tcp" "$redirected"
+}
+
+save_snapshot() {
+  filter_json=$(api GET /filtering/status) || return 1
+  count=$(rules_count "$filter_json")
+  stamp=$(date '+%Y%m%d%H%M%S')
+  key="$stamp-$count"
+  stage="$HISTORY/.stage.$$"
+  mkdir -p "$stage/bin/data" "$stage/state" || return 1
+  cp "$AGH/bin/AdGuardHome.yaml" "$stage/bin/AdGuardHome.yaml" || { rm -rf "$stage"; return 1; }
+  [ ! -d "$AGH/bin/data/filters" ] || cp -R "$AGH/bin/data/filters" "$stage/bin/data/filters" || { rm -rf "$stage"; return 1; }
+  [ ! -d "$AGH/bin/userfilters" ] || cp -R "$AGH/bin/userfilters" "$stage/bin/userfilters" || { rm -rf "$stage"; return 1; }
+  for file in sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
+    [ ! -f "$STATE/$file" ] || cp "$STATE/$file" "$stage/state/$file" || { rm -rf "$stage"; return 1; }
+  done
+  [ ! -f "$STATE/profiles-initialized" ] || cp "$STATE/profiles-initialized" "$stage/state/profiles-initialized" || { rm -rf "$stage"; return 1; }
+  [ ! -d "$STATE/profiles" ] || cp -R "$STATE/profiles" "$stage/state/profiles" || { rm -rf "$stage"; return 1; }
+  mkdir -p "$HISTORY" || { rm -rf "$stage"; return 1; }
+  tar -czf "$HISTORY/$key.tar.gz" -C "$stage" . || { rm -rf "$stage"; return 1; }
+  rm -rf "$stage"
+  LAST_SNAPSHOT=$key
+  old=$($BB ls -1t "$HISTORY"/*.tar.gz 2>/dev/null | $BB tail -n +4)
+  [ -z "$old" ] || printf '%s\n' "$old" | while IFS= read -r file; do [ -z "$file" ] || rm -f "$file"; done
+}
+
+restore_snapshot() {
+  key=$1
+  archive="$HISTORY/$key.tar.gz"
+  [ -f "$archive" ] || { echo '[!] Snapshot not found.' >&2; return 1; }
+  restore="$HISTORY/.restore.$$"
+  mkdir -p "$restore" || return 1
+  tar -xzf "$archive" -C "$restore" || { rm -rf "$restore"; return 1; }
+  # Never overwrite a live resolver's configuration if safe stop failed.
+  "$AGH/scripts/tool.sh" stop || { rm -rf "$restore"; echo '[!] Cannot stop DNS safely; rollback aborted.' >&2; return 1; }
+  cp "$restore/bin/AdGuardHome.yaml" "$AGH/bin/AdGuardHome.yaml" || { rm -rf "$restore"; return 1; }
+  rm -rf "$AGH/bin/data/filters" "$AGH/bin/userfilters"
+  [ ! -d "$restore/bin/data/filters" ] || cp -R "$restore/bin/data/filters" "$AGH/bin/data/filters" || { rm -rf "$restore"; return 1; }
+  [ ! -d "$restore/bin/userfilters" ] || cp -R "$restore/bin/userfilters" "$AGH/bin/userfilters" || { rm -rf "$restore"; return 1; }
+  for file in sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
+    rm -f "$STATE/$file"
+    [ ! -f "$restore/state/$file" ] || cp "$restore/state/$file" "$STATE/$file" || { rm -rf "$restore"; return 1; }
+  done
+  rm -f "$STATE/profiles-initialized"
+  [ ! -f "$restore/state/profiles-initialized" ] || cp "$restore/state/profiles-initialized" "$STATE/profiles-initialized" || { rm -rf "$restore"; return 1; }
+  rm -rf "$STATE/profiles"
+  [ ! -d "$restore/state/profiles" ] || cp -R "$restore/state/profiles" "$STATE/profiles" || { rm -rf "$restore"; return 1; }
+  rm -rf "$restore"
+  "$AGH/scripts/tool.sh" start
+}
+
+update_failed() {
+  message=$1
+  printf '%s\n' "$message" >&2
+  if [ -n "${LAST_SNAPSHOT:-}" ]; then
+    echo '[恢复] 更新未完成，正在恢复更新前的规则与配置。' >&2
+    restore_snapshot "$LAST_SNAPSHOT" || { echo '[!] 自动恢复失败；请从规则管理中手动恢复历史版本。' >&2; return 1; }
+    echo '[恢复] 已恢复更新前的规则与配置。' >&2
+  fi
+  return 1
+}
+
+source_name() {
+  case "$1" in
+    https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward) printf '10007 应用与广告规则' ;;
+    https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt) printf '秋风广告规则' ;;
+    https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt) printf '秋风纯广告' ;;
+    https://anti-ad.net/easylist.txt) printf 'anti-AD EasyList' ;;
+    https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt) printf 'AdRules DNS（大列表）' ;;
+    https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt) printf 'AdGuard DNS' ;;
+    *) host=${1#https://}; host=${host%%/*}; printf '%s' "$host" ;;
+  esac
+}
+
+post_remove_source() {
+  url=$1
+  body=$(printf '{"url":"%s","whitelist":false}' "$url")
+  result=$(api POST /filtering/remove_url "$body" 20 2>&1) && return 0
+  case "$result" in *"not found"*|*"does not exist"*) return 0 ;; esac
+  printf '%s\n' "$result" >&2
+  return 1
+}
+
+sync_sources() {
+  config="$MODDIR/webui-config.sh"
+  desired="$STATE/.desired-sources.$$"
+  applied="$STATE/sources-applied.txt"
+  # Do not pipe a failed source-list command into a successful sort: that
+  # previously produced an empty desired set and removed all live sources.
+  raw="$STATE/.sources-raw.$$"
+  /system/bin/sh "$config" list-sources > "$raw" || { rm -f "$raw" "$desired"; return 1; }
+  "$BB" awk -F '\t' '$1=="source" && $5=="enabled" { print $4 }' "$raw" | "$BB" sort -u > "$desired" || { rm -f "$raw" "$desired"; return 1; }
+  rm -f "$raw"
+  # 10007 is a required base source for every profile. Do not apply a
+  # broken/empty catalog that could wipe working DNS filters.
+  "$BB" grep -Fxq 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' "$desired" || {
+    echo '[!] Missing fixed base source; keeping existing filters.' >&2
+    rm -f "$desired"
+    return 1
+  }
+  [ -f "$applied" ] || : > "$applied"
+
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
+    if ! "$BB" grep -Fxq "$url" "$desired"; then
+      echo "[进度] 移除停用来源：$(source_name "$url")"
+      post_remove_source "$url" || { rm -f "$desired"; return 1; }
+    fi
+  done < "$applied"
+
+  while IFS= read -r url; do
+    [ -n "$url" ] || continue
+    name=$(source_name "$url")
+    escaped=$(printf '%s' "$url" | $BB sed 's/\\/\\\\/g; s/"/\\"/g')
+    safe_name=$(printf '%s' "$name" | $BB sed 's/\\/\\\\/g; s/"/\\"/g')
+    if ! "$BB" grep -Fxq "$url" "$applied"; then
+      echo "[进度] 添加规则源：$name"
+      body=$(printf '{"name":"%s","url":"%s","whitelist":false}' "$safe_name" "$escaped")
+      result=$(api POST /filtering/add_url "$body" 30 2>&1) || {
+        case "$result" in *"already added"*|*"already exists"*) ;; *) printf '%s\n' "$result" >&2; rm -f "$desired"; return 1 ;; esac
+      }
+    fi
+    body=$(printf '{"url":"%s","whitelist":false,"data":{"name":"%s","url":"%s","enabled":true}}' "$escaped" "$safe_name" "$escaped")
+    api POST /filtering/set_url "$body" 30 >/dev/null || { rm -f "$desired"; return 1; }
+  done < "$desired"
+  cp "$desired" "$applied.tmp" && chmod 600 "$applied.tmp" && mv "$applied.tmp" "$applied" || { rm -f "$desired"; return 1; }
+  rm -f "$desired"
+}
+
+write_personal_filter() {
+  filter_dir="$AGH/bin/userfilters"
+  mkdir -p "$filter_dir" || return 1
+  tmp="$USER_FILTER.tmp.$$"
+  printf '! AdBlock Pro personal allow and block rules\n' > "$tmp" || return 1
+  for kind in blacklist whitelist; do
+    [ ! -f "$STATE/$kind.txt" ] || while IFS= read -r domain; do
+      domain=$(printf '%s' "$domain" | $BB tr '[:upper:]' '[:lower:]')
+      case "$domain" in ''|\#*) continue ;; esac
+      valid_domain "$domain" || { rm -f "$tmp"; echo "[!] Invalid domain in $kind.txt: $domain" >&2; return 1; }
+      if [ "$kind" = blacklist ]; then rule="||$domain^"; else rule="@@||$domain^"; fi
+      printf '%s\n' "$rule" >> "$tmp" || { rm -f "$tmp"; return 1; }
+    done < "$STATE/$kind.txt"
+  done
+  rules_tmp="$tmp.sorted"
+  $BB awk '!/^[[:space:]]*(!|#|$)/ { print }' "$tmp" | $BB sort -u > "$rules_tmp" || { rm -f "$tmp" "$rules_tmp"; return 1; }
+  printf '! AdBlock Pro personal allow and block rules\n' > "$tmp" || { rm -f "$tmp" "$rules_tmp"; return 1; }
+  cat "$rules_tmp" >> "$tmp" || { rm -f "$tmp" "$rules_tmp"; return 1; }
+  rm -f "$rules_tmp"
+  chmod 600 "$tmp" && mv "$tmp" "$USER_FILTER" || { rm -f "$tmp"; return 1; }
+  USER_RULE_COUNT=$($BB awk '!/^[[:space:]]*(!|#|$)/ { n++ } END { print n+0 }' "$USER_FILTER")
+}
+
+sync_personal_filter() {
+  marker="$STATE/user-filter-applied"
+  write_personal_filter || return 1
+  rule_count=$USER_RULE_COUNT
+  if [ "$rule_count" -eq 0 ]; then
+    if [ -f "$marker" ]; then
+      post_remove_source "$USER_FILTER" || return 1
+      rm -f "$marker"
+    fi
+    return 0
+  fi
+
+  escaped=$(printf '%s' "$USER_FILTER" | $BB sed 's/\\/\\\\/g; s/"/\\"/g')
+  name='AdBlock Pro 个人黑白名单'
+  if [ ! -f "$marker" ]; then
+    body=$(printf '{"name":"%s","url":"%s","whitelist":false}' "$name" "$escaped")
+    result=$(api POST /filtering/add_url "$body" 20 2>&1)
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      case "$result" in *"already added"*|*"already exists"*) ;; *) printf '%s\n' "$result" >&2; return 1 ;; esac
+    fi
+  fi
+  body=$(printf '{"url":"%s","whitelist":false,"data":{"name":"%s","url":"%s","enabled":true}}' "$escaped" "$name" "$escaped")
+  api POST /filtering/set_url "$body" 20 >/dev/null || return 1
+  printf '%s\n' "$USER_FILTER" > "$marker.tmp" && chmod 600 "$marker.tmp" && mv "$marker.tmp" "$marker"
+}
+
+update_rules() {
+  LAST_SNAPSHOT=
+  echo '[进度] 检查 AdGuard Home 服务状态'
+  api GET /status 4 >/dev/null || { echo '[!] DNS 服务没有响应；现有规则未更改。' >&2; return 1; }
+  save_snapshot || { echo '[!] 无法保存更新前的规则快照。' >&2; return 1; }
+  echo '[进度] 应用来源与黑白名单配置'
+  sync_sources || { update_failed '[!] 规则来源配置失败。'; return 1; }
+  sync_personal_filter || { update_failed '[!] 个人黑白名单同步失败。'; return 1; }
+  echo '[进度] 下载并校验规则源'
+  api POST /filtering/refresh '{"whitelist":false}' 180 || { update_failed '[!] 规则下载或校验失败。'; return 1; }
+  filter_json=$(api GET /filtering/status) || { update_failed '[!] 无法读取更新后的规则状态。'; return 1; }
+  count=$(rules_count "$filter_json")
+  [ "$count" -gt 0 ] || { update_failed '[!] 更新后没有可用过滤规则。'; return 1; }
+  date '+%s' > "$STATE/last-update.tmp" && mv "$STATE/last-update.tmp" "$STATE/last-update" || { update_failed '[!] 无法记录规则更新时间。'; return 1; }
+  echo "[成功] 规则更新完成，规则数：$count"
+}
+
+diagnose() {
+  root_uid=$(id -u 2>/dev/null); case "$root_uid" in ''|*[!0-9]*) root_uid=unknown ;; esac
+  pid=''; [ ! -r "$AGH/bin/agh.pid" ] || pid=$(cat "$AGH/bin/agh.pid")
+  running=0
+  if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ -r "/proc/$pid/cmdline" ] && "$BB" tr '\000' ' ' < "/proc/$pid/cmdline" | "$BB" grep -Fq "$AGH/bin/AdGuardHome"; then running=1; fi
+  listening_udp=0; is_protocol_listening '/proc/net/udp /proc/net/udp6' 07 && listening_udp=1
+  listening_tcp=0; is_protocol_listening '/proc/net/tcp /proc/net/tcp6' 0A && listening_tcp=1
+  listening=0; [ "$listening_udp" = 1 ] && [ "$listening_tcp" = 1 ] && listening=1
+  redirected=0; iptables -t nat -C OUTPUT -j ADGUARD_REDIRECT_DNS >/dev/null 2>&1 && redirected=1
+  api GET /status 4 >/dev/null 2>&1; api_ok=$?
+  filter_json=$(api GET /filtering/status 4 2>/dev/null); filter_ok=$?
+  count=0; [ "$filter_ok" -ne 0 ] || count=$(rules_count "$filter_json")
+  takeover=$(cat "$STATE/dns-takeover" 2>/dev/null); case "$takeover" in on|off) ;; *) takeover=unknown ;; esac
+  classify_dns_health
+  case "$state" in active) state=ready ;; paused) state=stopped ;; esac
+  printf 'diag_root_uid=%s\ndiag_service_state=%s\ndiag_agh_binary_readable=%s\ndiag_loaded_rule_count=%s\n' \
+    "$root_uid" "$state" "$([ -x "$AGH/bin/AdGuardHome" ] && echo yes || echo no)" "$count"
+  printf 'diag_dns_listener=%s\ndiag_dns_listener_udp=%s\ndiag_dns_listener_tcp=%s\ndiag_dns_api=%s\ndiag_dns_takeover=%s\ndiag_dns_redirect=%s\n' \
+    "$listening" "$listening_udp" "$listening_tcp" "$([ "$api_ok" = 0 ] && echo yes || echo no)" "$takeover" "$redirected"
+  printf 'diag_ipv6_mode=passthrough\ndiag_private_dns=not-overridden\ndiag_vpn=may-bypass-or-intercept\n'
+  printf 'diag_root_family=%s\ndiag_busybox=%s\n' "$(abp_root_family)" "$BB"
+  printf 'diag_dns_core_running=%s\ndiag_dns_health=%s\n' "$running" "$health"
+  # Only during explicit diagnosis; no additional overhead in 30s status polls.
+  [ "$running" = 1 ] || pid=''
+  [ ! -f "$AGH/scripts/footprint.sh" ] || "$BB" sh "$AGH/scripts/footprint.sh" "$pid"
+}
+
+case "$1" in
+  --render-user-rules)
+    write_personal_filter || exit 1
+    printf '[+] Rendered %s personal rules.\n' "$USER_RULE_COUNT"
+    ;;
+  --status) status ;;
+  --pause) "$AGH/scripts/tool.sh" stop ;;
+  --resume)
+    # start now reconciles a running resolver's listener and firewall state;
+    # avoid an unnecessary DNS interruption when merely resuming.
+    "$AGH/scripts/tool.sh" start
+    ;;
+  --update)
+    if [ "${ABP_UPDATE_LOCKED:-0}" != 1 ]; then
+      export ABP_UPDATE_LOCKED=1
+      exec "$BB" flock -n "$STATE/update.lock" /system/bin/sh "$0" --update
+    fi
+    update_rules
+    ;;
+  --rollback-history)
+    key=$2
+    case "$key" in [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9]*) ;; *) echo '[!] Invalid history key.' >&2; exit 1 ;; esac
+    restore_snapshot "$key"
+    ;;
+  --rollback)
+    latest=$($BB ls -1t "$HISTORY"/*.tar.gz 2>/dev/null | $BB head -n 1)
+    [ -n "$latest" ] || { echo '[!] No saved snapshot.' >&2; exit 1; }
+    key=${latest##*/}; key=${key%.tar.gz}
+    exec /system/bin/sh "$0" --rollback-history "$key"
+    ;;
+  --diagnose) diagnose ;;
+  --storage-report) "$BB" sh "$AGH/scripts/footprint.sh" ;;
+  --observe) observe_capture "$2" "$3" ;;
+  --recover-observation) recover_observation ;;
+  --filtering)
+    case "$2" in on) enabled=true ;; off) enabled=false ;; *) echo '[!] Expected on or off.' >&2; exit 1 ;; esac
+    filtering=$(api GET /filtering/status 4) || { echo '[!] AdGuard Home API is unavailable.' >&2; exit 1; }
+    interval=$(printf '%s' "$filtering" | "$BB" grep -Eo '"interval"[[:space:]]*:[[:space:]]*[0-9]+' | "$BB" head -n 1 | "$BB" cut -d: -f2 | "$BB" tr -d '[:space:]')
+    case "$interval" in ''|*[!0-9]*) echo '[!] Cannot read filter update interval.' >&2; exit 1 ;; esac
+    api POST /filtering/config "{\"enabled\":$enabled,\"interval\":$interval}" 8 || exit 1
+    echo "[+] DNS filtering $2; DNS resolver remains available."
+    ;;
+  --takeover)
+    case "$2" in
+      off)
+        "$AGH/scripts/iptables.sh" disable || exit 1
+        printf 'off\n' > "$STATE/dns-takeover.tmp" && chmod 600 "$STATE/dns-takeover.tmp" && mv "$STATE/dns-takeover.tmp" "$STATE/dns-takeover" || exit 1
+        echo '[+] DNS redirection disabled; AdGuard Home remains available.'
+        ;;
+      on)
+        pid=''; [ ! -r "$AGH/bin/agh.pid" ] || pid=$(cat "$AGH/bin/agh.pid")
+        is_our_process "$pid" || { echo '[!] AdGuard Home is not running.' >&2; exit 1; }
+        is_dns_listening || { echo '[!] Both TCP and UDP DNS listeners must be ready before redirecting.' >&2; exit 1; }
+        "$AGH/scripts/iptables.sh" enable || { "$AGH/scripts/iptables.sh" disable >/dev/null 2>&1; exit 1; }
+        printf 'on\n' > "$STATE/dns-takeover.tmp" && chmod 600 "$STATE/dns-takeover.tmp" && mv "$STATE/dns-takeover.tmp" "$STATE/dns-takeover" || { "$AGH/scripts/iptables.sh" disable >/dev/null 2>&1; exit 1; }
+        echo '[+] DNS redirection enabled after TCP and UDP listener checks.'
+        ;;
+    esac
+    ;;
+  --restart)
+    "$AGH/scripts/tool.sh" stop || exit 1
+    "$AGH/scripts/tool.sh" start
+    ;;
+  --check-domain)
+    domain=$(printf '%s' "$2" | $BB tr '[:upper:]' '[:lower:]')
+    valid_domain "$domain" || { echo '[!] Invalid domain.' >&2; exit 1; }
+    api GET "/filtering/check_host?name=$domain" 15
+    ;;
+  --set-auto-update)
+    case "$2" in on) interval=24 ;; off) interval=0 ;; *) exit 1 ;; esac
+    pid=''; [ ! -r "$AGH/bin/agh.pid" ] || pid=$(cat "$AGH/bin/agh.pid")
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null && [ -r "/proc/$pid/cmdline" ] && "$BB" tr '\000' ' ' < "/proc/$pid/cmdline" | "$BB" grep -Fq "$AGH/bin/AdGuardHome"; then
+      filtering=$(api GET /filtering/status 4) || exit 1
+      enabled=$(printf '%s' "$filtering" | json_top_bool enabled)
+      case "$enabled" in true|false) ;; *) echo '[!] Cannot read the current filtering state.' >&2; exit 1 ;; esac
+      api POST /filtering/config "{\"enabled\":$enabled,\"interval\":$interval}" 5
+    else
+      sed -i "s/^[[:space:]]*filters_update_interval:.*/  filters_update_interval: $interval/" "$AGH/bin/AdGuardHome.yaml"
+    fi
+    ;;
+  *) echo '[!] Unsupported action.' >&2; exit 1 ;;
+esac

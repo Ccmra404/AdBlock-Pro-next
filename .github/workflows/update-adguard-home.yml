@@ -1,0 +1,121 @@
+name: Track AdGuard Home Stable
+
+on:
+  # Checks happen in GitHub Actions, not on Android devices.
+  schedule:
+    - cron: '19 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+concurrency:
+  group: adguard-home-upstream-tracker
+  cancel-in-progress: false
+
+jobs:
+  upstream:
+    if: github.repository == 'Ccmra404/AdBlock-Pro-next' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+      - name: Check latest upstream stable release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/update_adguard_home.py --check >> "$GITHUB_OUTPUT"
+      - name: Fetch official ARM64 binary and verify SHA256
+        if: steps.check.outputs.update_required == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 tools/update_adguard_home.py --update
+      - name: Validate new engine version and configuration
+        if: steps.check.outputs.update_required == 'true'
+        env:
+          EXPECTED_VERSION: ${{ steps.check.outputs.upstream_version }}
+        run: |
+          set -euo pipefail
+          chmod 755 ./bin/AdGuardHome
+          ./bin/AdGuardHome --version | grep -F "version $EXPECTED_VERSION"
+          python3 -m unittest discover -s tests -p 'test_*.py'
+          (
+            cd tools/bootstrap
+            go mod download
+            go build -o /tmp/adblockpro-bootstrap .
+          )
+          temp_dir="$(mktemp -d)"
+          trap 'rm -rf "$temp_dir"' EXIT
+          /tmp/adblockpro-bootstrap "$temp_dir/AdGuardHome.yaml" "$temp_dir/admin.auth"
+          ./bin/AdGuardHome --check-config --config "$temp_dir/AdGuardHome.yaml"
+      - name: Create separate upstream upgrade PR
+        id: propose
+        if: steps.check.outputs.update_required == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_VERSION: ${{ steps.check.outputs.upstream_version }}
+        run: |
+          set -euo pipefail
+          branch="chore/upstream-adguard-home-$UPSTREAM_VERSION"
+          if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+            # A previous run may have pushed the branch and then failed to
+            # create its PR (for example because PR permissions were disabled).
+            # Retry opening the PR without rewriting the already checked code.
+            count=$(gh pr list --state all --head "$branch" --json number --jq 'length')
+            if [ "$count" -gt 0 ]; then
+              echo "Upgrade PR for $UPSTREAM_VERSION already exists; no duplicate."
+              exit 0
+            fi
+            # Verify the existing branch matches the binary and metadata just
+            # validated in this job; never claim untested branch contents passed.
+            git fetch origin "$branch"
+            git diff --quiet FETCH_HEAD -- bin/AdGuardHome upstream/adguard-home.json || {
+              echo "Existing upgrade branch differs; manual review required." >&2
+              exit 1
+            }
+            echo "Upgrade branch matches verified files; retrying PR creation."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git switch -c "$branch"
+            git add bin/AdGuardHome upstream/adguard-home.json
+            git diff --cached --quiet && { echo "No source changes to submit."; exit 0; }
+            git commit -m "chore(upstream): update AdGuard Home to $UPSTREAM_VERSION"
+            git push -u origin "$branch"
+          fi
+          # GitHub repository settings must allow GitHub Actions to open PRs.
+          cat > /tmp/upstream-pr.md <<EOF
+          ## 改动目的
+          将官方稳定版 AdGuard Home 更新至 $UPSTREAM_VERSION，等待人工复审。
+          ## 变更范围
+          - bin/AdGuardHome、upstream/adguard-home.json；不改变版本号、规则、IPv6 策略或用户配置。
+          ## 风险及恢复方案
+          核心行为可能变化；真机验收后才决定合并。失败时保留上一可用模块，撤销本模块 DNS 接管后回退。
+          ## 自动化验证
+          官方 archive SHA256、ARM64 ELF、版本和初始配置检查已通过；Node、Go、安装 ZIP 验证需核对本分支最新 Actions run。CI 结果不能代替真机测试。
+          ## 真机状态
+          未执行 KernelSU、Magisk、APatch 真机测试；安装升级、重启、联网切换、暂停恢复和卸载均待验证。
+          ## 发布门禁
+          Draft PR；不会自动合并、发布或修改手机。合并和发布均需明确人工确认；已有 tag 和 Release 不可覆盖。
+          EOF
+          gh pr create --draft \
+            --base main \
+            --head "$branch" \
+            --title "chore(upstream): AdGuard Home $UPSTREAM_VERSION (ARM64)" \
+            --body-file /tmp/upstream-pr.md
+          echo "branch_name=$branch" >> "$GITHUB_OUTPUT"
+      - name: Build an unpublished ARM64 test ZIP from the upgrade branch
+        if: steps.propose.outputs.branch_name != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_BRANCH: ${{ steps.propose.outputs.branch_name }}
+        run: |
+          # workflow_dispatch on a non-main branch only uploads an Actions artifact.
+          # The release workflow must never publish Releases from this branch.
+          gh workflow run release.yml --ref "$BUILD_BRANCH"

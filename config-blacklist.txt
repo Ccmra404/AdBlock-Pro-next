@@ -1,0 +1,3 @@
+# Public builds do not include device-specific personal block rules.
+# Add your own exact domains here before building a private package, or manage
+# personal rules in the module WebUI after installation.
