@@ -20,7 +20,9 @@ function installFixture(t, family, preference, failWrite = false) {
     ...readdirSync(new URL('../webroot/', import.meta.url)).map(name => 'webroot/' + name)];
   for (const file of files) {
     const target = path.join(stage, file); mkdirSync(path.dirname(target), { recursive: true });
-    writeFileSync(target, remap(readFileSync(file === 'scripts/compat.sh' ? root.compatFile : new URL('../' + file, import.meta.url), 'utf8')));
+    let contents = remap(readFileSync(file === 'scripts/compat.sh' ? root.compatFile : new URL('../' + file, import.meta.url), 'utf8'));
+    if (file === 'config-blacklist.txt' || file === 'config-whitelist.txt') contents = contents.replace(/\r?\n/g, '\r\n');
+    writeFileSync(target, contents);
   }
   mkdirSync(path.join(stage, 'bin/data/filters'), { recursive: true });
   writeFileSync(path.join(stage, 'bin/AdGuardHome'), 'fixture-only-engine');
@@ -42,16 +44,19 @@ function installFixture(t, family, preference, failWrite = false) {
 }
 
 for (const family of ['KernelSU', 'Magisk', 'APatch']) {
-  test(family + ': first install enables takeover without bundling device-specific personal rules', t => {
+  test(family + ': first install seeds the 29 maintainer domains and later preserves user edits', t => {
     const f = installFixture(t, family);
     const installed = f.install(); assert.equal(installed.status, 0, installed.stderr + installed.stdout);
     assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'on\n');
     assert.match(installed.stdout, /DNS takeover: on \(initialized\)/);
     const personal = path.join(f.runtime, 'bin/userfilters/adblock-pro-user-rules.txt');
-    const defaults = readFileSync(new URL('../config-blacklist.txt', import.meta.url), 'utf8').split('\n').filter(row => row && !row.startsWith('#'));
+    const defaults = readFileSync(new URL('../config-blacklist.txt', import.meta.url), 'utf8').split(/\r?\n/).map(row => row.trim()).filter(row => row && !row.startsWith('#'));
     const rules = readFileSync(personal, 'utf8').split('\n').filter(row => row.startsWith('||'));
     assert.equal(rules.length, defaults.length);
-    assert.deepEqual(defaults, []);
+    assert.equal(defaults.length, 29);
+    assert.equal(new Set(defaults).size, defaults.length);
+    assert.ok(defaults.includes('ads.app.qc-up.com'));
+    assert.ok(defaults.includes('de.ad.gameley.com'));
     assert.deepEqual(rules, [...new Set(defaults.map(domain => '||' + domain + '^'))].sort());
     assert.match(readFileSync(path.join(f.runtime, 'bin/AdGuardHome.yaml'), 'utf8'), new RegExp('url: ' + shellPath(personal).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.equal(readFileSync(path.join(f.state, 'user-filter-applied'), 'utf8').trim(), shellPath(personal));

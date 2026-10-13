@@ -1,3 +1,32 @@
-# Public builds do not include device-specific personal block rules.
-# Add your own exact domains here before building a private package, or manage
-# personal rules in the module WebUI after installation.
+# Maintainer-curated app ad domains, included at the repository owner's request.
+# Copied only when initializing a new install; upgrades preserve the user's existing list.
+# One lowercase exact domain per line. No IPs, wildcards, URLs, or shell code.
+adsmind.ugdtimg.com
+ads.app.qc-up.com
+ad-open2.fancydsp.com
+adx-bj.anythinktech.com
+api-access.pangolin-sdk-toutiao.com
+api-nxs-v4.mentamob.com
+api-v3.mentamob.com
+api.yunxish.com
+bid-adx2.vlion.cn
+bid.buluken.com
+c3.gdt.qq.com
+cdn.yunxish.com
+datk.anythinktech.com
+de.ad.gameley.com
+dsp-api-cn.metricslinks.com
+evt.bidex.cn
+jp.ad.gameley.com
+log-api.pangolin-sdk-toutiao-b.com
+mpcfg.fancydsp.com
+pgdt.ugdtimg.com
+rdelivery.qq.com
+sdk.adx.adwangmai.com
+sdk.e.qq.com
+sdkg.fancyapi.com
+sf3-fe-tos.pglstatp-toutiao.com
+td-nexus.advlion.com
+t2.fancyapi.com
+vt.bidex.cn
+yumao.puata.info

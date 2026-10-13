@@ -435,12 +435,14 @@ sync_sources() {
 }
 
 write_personal_filter() {
+  cr=$(printf '\r')
   filter_dir="$AGH/bin/userfilters"
   mkdir -p "$filter_dir" || return 1
   tmp="$USER_FILTER.tmp.$$"
   printf '! AdBlock Pro personal allow and block rules\n' > "$tmp" || return 1
   for kind in blacklist whitelist; do
     [ ! -f "$STATE/$kind.txt" ] || while IFS= read -r domain; do
+      domain=${domain%"$cr"}
       domain=$(printf '%s' "$domain" | $BB tr '[:upper:]' '[:lower:]')
       case "$domain" in ''|\#*) continue ;; esac
       valid_domain "$domain" || { rm -f "$tmp"; echo "[!] Invalid domain in $kind.txt: $domain" >&2; return 1; }

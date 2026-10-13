@@ -29,9 +29,14 @@ def exercise(engine, bootstrap):
         subprocess.run([str(bootstrap), str(config), str(auth)], check=True, capture_output=True)
         personal = root / 'bin/userfilters/adblock-pro-user-rules.txt'
         personal.parent.mkdir(parents=True)
-        # Use generic test-only names instead of shipping a maintainer's
-        # device-specific personal block list in the public repository.
-        domains = ['first-boot-regression.example', 'second-boot-regression.example']
+        # Exercise the exact maintainer-curated seed list shipped in the package.
+        repository = Path(__file__).resolve().parents[1]
+        domains = [
+            row.strip() for row in (repository / 'config-blacklist.txt').read_text(encoding='utf-8').splitlines()
+            if row.strip() and not row.lstrip().startswith('#')
+        ]
+        if len(domains) != 29 or len(set(domains)) != 29:
+            raise AssertionError('expected 29 unique maintainer seed domains')
         personal.write_text('\n'.join('||' + domain + '^' for domain in domains) + '\n')
         text = config.read_text()
         assert 'url: /data/adb/adblockpro/bin/userfilters/adblock-pro-user-rules.txt' in text

@@ -152,7 +152,7 @@ AdBlock-Pro/
 └── .github/workflows/      # GitHub Actions 自动检查
 ```
 
-运行时的个人设置保存在 `/data/adb/bindhosts_personal/`，AdGuard Home 相关文件保存在 `/data/adb/adblockpro/`。公开源码不预置设备个人黑白名单；安装后可通过 WebUI 添加和管理自己的域名。
+运行时的个人设置保存在 `/data/adb/bindhosts_personal/`，AdGuard Home 相关文件保存在 `/data/adb/adblockpro/`。安装包内含 29 条维护者整理的应用广告域名，首次安装时写入个人黑名单；升级会保留已有黑白名单，不会覆盖用户修改。白名单初始为空。用户可以在 WebUI 中查看、删除或补充域名。
 
 ## 开发状态与测试
 
