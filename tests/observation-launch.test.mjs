@@ -22,7 +22,7 @@ api() {
  esac
 }
 cmd() { [ "$NO_ACTIVITY" != 1 ] && echo com.coolapk.market/.MainActivity; }
-am() { printf 'am %s\\n' "$*" >> "$TRACE"; if [ "$LAUNCH_ERROR" = 1 ] && [ "$1" = start ]; then echo 'Error: unavailable'; fi; }
+am() { if [ "$STRICT_BINDER_FDS" = 1 ] && [ -f /dev/fd/1 ]; then return 2; fi; printf 'am %s\\n' "$*" >> "$TRACE"; if [ "$LAUNCH_ERROR" = 1 ] && [ "$1" = start ]; then echo 'Error: unavailable'; fi; }
 sleep() { :; }
 observe_capture "$1" "$2" "$3"
 `);
@@ -50,4 +50,11 @@ test('pre-existing disk query logging is refused without launching an app or cha
  const yaml=path.join(path.dirname(f.trace),'runtime/bin/AdGuardHome.yaml');
  writeFileSync(yaml,'querylog:\n  file_enabled: true\n');
  const r=f.run(); assert.notEqual(r.status,0); assert.match(r.stderr,/磁盘/); assert.equal(existsSync(f.trace),false);
+});
+
+
+test('activity commands use pipes when Android refuses regular-file stdout',t=>{
+ const f=fixture(t),r=f.run('10','com.coolapk.market',{STRICT_BINDER_FDS:'1'});
+ assert.equal(r.status,0,r.stderr);assert.match(readFileSync(f.trace,'utf8'),/am force-stop[\s\S]*am start/);
+ assert.equal(existsSync(path.join(f.state,'observations/active')),false);
 });

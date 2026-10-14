@@ -187,13 +187,13 @@ observe_capture() {
   echo "[进度] OBSERVE_START_EPOCH=$observe_started_at"
   if [ -n "$observe_package" ]; then
     echo "[进度] 正在打开选定应用，共观察 $observe_seconds 秒。"
-    if ! am force-stop --user 0 "$observe_package" ||
-       ! am start --user 0 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$observe_activity" > "$OBS_DIR/$observe_id.launch.tmp" 2>&1 ||
-       "$BB" grep -q '^Error:' "$OBS_DIR/$observe_id.launch.tmp"; then
-      rm -f "$OBS_DIR/$observe_id.launch.tmp"
+    # Android's activity service may reject a Root-private file descriptor.
+    # Capture both streams through a pipe, not the worker's on-disk log.
+    if ! observe_launch_output=$(am force-stop --user 0 "$observe_package" 2>&1) ||
+       ! observe_launch_output=$(am start --user 0 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$observe_activity" 2>&1) ||
+       printf '%s\n' "$observe_launch_output" | "$BB" grep -q '^Error:'; then
       echo '[!] 应用启动失败，正在恢复原查询日志设置。' >&2; return 1;
     fi
-    rm -f "$OBS_DIR/$observe_id.launch.tmp"
   else
     echo "[进度] 正在观察设备 DNS 域名，共 $observe_seconds 秒；请现在打开目标应用。"
   fi
