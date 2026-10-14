@@ -199,7 +199,7 @@ function managePage() {
   return `${heading('系统设置', '管理 DNS 接管、自动运行与维护')}
     <div class="stack"><section class="panel"><div class="panel-head"><div><h2 class="section-title">运行设置</h2><p class="section-sub">过滤暂停不会关闭 DNS 核心；DNS 接管可单独撤销</p></div></div><div class="rows">${row('globe','DNS 接管','控制本模块的 DNS 重定向规则',toggle('takeover',s?.dns_takeover === 'on','DNS 接管'))}${row('power','开机自动运行','关闭后下次开机不自动启动核心',toggle('autostart',s?.autostart !== 'off','开机自动运行'))}${row('refresh','每日自动更新','由 AdGuard Home 按每日周期更新规则',toggle('auto-update',s?.auto_update !== 'off','每日自动更新'))}</div><div class="notice warn" style="margin-top:14px">${icon('info')}<span>此模块只接管 IPv4 明文 DNS。私人 DNS、VPN、应用内 DoH/DoT 可能绕过过滤；IPv6 DNS 不接管。</span></div></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">运行维护</h2><p class="section-sub">诊断结果统一保存在运行日志中</p></div></div><div class="btn-row"><button class="btn" data-action="diagnose">${icon('activity')} 运行诊断</button><button class="btn" data-action="restart">${icon('refresh')} 重启 DNS 核心</button><button class="btn btn-danger" data-action="disable-takeover">${icon('power')} 紧急解除接管</button><button class="btn" data-nav="logs">查看运行日志</button></div></section>
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">管理入口</h2><p class="section-sub">规则高级配置由 AdGuard Home 原生后台提供</p></div></div><div class="action-grid"><a class="action-card" href="http://127.0.0.1:3000/" target="_blank" rel="noopener">${icon('external')}<span class="action-text"><strong>AdGuard Home 后台</strong><small>订阅、上游 DNS 与查询日志</small></span></a><a class="action-card" href="https://github.com/gkd-kit/gkd" target="_blank" rel="noopener">${icon('external')}<span class="action-text"><strong>GKD 项目</strong><small>独立管理开屏广告跳过</small></span></a></div><p class="field-help">WebUI 不保存或展示 AdGuard Home 管理密码；首次登录凭据由安装包单独提供。</p></section></div>`;
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">管理入口</h2><p class="section-sub">规则高级配置由 AdGuard Home 原生后台提供</p></div></div><div class="action-grid"><a class="action-card" href="http://127.0.0.1:3000/" target="_blank" rel="noopener">${icon('external')}<span class="action-text"><strong>AdGuard Home 后台</strong><small>订阅、上游 DNS 与查询日志</small></span></a><button type="button" class="action-card" data-action="copy-gkd-link">${icon('activity')}<span class="action-text"><strong>GKD 项目</strong><small>复制项目链接，在浏览器中查看</small></span></button></div><p class="field-help">WebUI 不保存或展示 AdGuard Home 管理密码；首次登录凭据由安装包单独提供。</p></section></div>`;
 }
 const actionNames = { '--update': '规则更新', '--pause': '暂停过滤核心', '--resume': '启动过滤核心', '--rollback': '恢复规则', '--rollback-history': '恢复历史规则', '--filtering': '过滤开关', '--takeover': 'DNS 接管', '--restart': '重启 DNS 核心', '--diagnose': '环境诊断', '--observe': '域名观察', diagnose: '环境诊断', 'set-mode': '切换过滤模式', 'set-source': '切换规则来源', 'add-source': '导入规则来源', 'remove-source': '删除规则来源', 'add-whitelist': '添加白名单', 'remove-whitelist': '删除白名单', 'add-blacklist': '添加黑名单', 'remove-blacklist': '删除黑名单', 'auto-update': '自动更新设置', autostart: '开机运行设置' };
 function logRow(line) {
@@ -772,6 +772,17 @@ function exportPersonalRules() {
   const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'adblock-pro-personal-rules.txt'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function copyGkdLink() {
+  const field = document.createElement('textarea');
+  field.value = 'https://github.com/gkd-kit/gkd';
+  field.style.position = 'fixed'; field.style.opacity = '0';
+  document.body.appendChild(field);
+  try {
+    field.select();
+    if (!document.execCommand('copy')) throw new Error('当前宿主无法复制链接，请在浏览器访问 github.com/gkd-kit/gkd');
+  } finally { field.remove(); }
+}
+
 // Finish the first frame before calling the KernelSU native Shell bridge.
 // An earlier tab's scheduled request cannot start after navigation changed.
 function schedulePageLoad(page) {
@@ -835,6 +846,7 @@ document.addEventListener('click', async event => {
   switch (button.dataset.action) {
     case 'theme': state.theme = state.theme === 'dark' ? 'light' : 'dark'; localStorage.setItem('abp-theme', state.theme); document.documentElement.dataset.theme = state.theme; break;
     case 'personal-rules-export': exportPersonalRules(); toast('个人规则已导出为 TXT'); break;
+    case 'copy-gkd-link': try { copyGkdLink(); toast('GKD 项目链接已复制'); } catch (e) { toast(e.message); } break;
     case 'diagnose': startDiagnosis().catch(e => toast(e.message)); break;
     case 'observe-start': startObservation().catch(e => toast(e.message)); break;
     case 'observe-retry': {
