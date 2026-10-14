@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise first-boot and refreshed personal rules with the real ARM64 core.
+"""Exercise personal rules and memory-only observation with the real ARM64 core.
 
 Uses isolated temporary data and loopback ports; never reads device credentials
 or downloads subscription lists. Intended for the native ARM64 package job.
@@ -9,6 +9,7 @@ import base64
 import json
 from pathlib import Path
 import socket
+import struct
 import subprocess
 import tempfile
 import time
@@ -65,12 +66,21 @@ def exercise(engine, bootstrap):
             result = api('/filtering/check_host?name=' + urllib.parse.quote(domain))
             return result['reason'].startswith('Filtered')
 
-        def wait_until(check):
+        def dns_query(domain):
+            name = b''.join(bytes([len(label)]) + label.encode('ascii') for label in domain.split('.')) + b'\0'
+            packet = struct.pack('!6H', 0x4142, 0x0100, 1, 0, 0, 0) + name + struct.pack('!2H', 1, 1)
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
+                client.settimeout(5)
+                client.sendto(packet, ('127.0.0.1', dns_port))
+                reply, _ = client.recvfrom(4096)
+            assert len(reply) >= 12 and reply[:2] == packet[:2] and reply[2] & 0x80, 'DNS probe did not receive a matching response'
+
+        def wait_until(check, message='Local filter application timeout'):
             for _ in range(100):
                 if check():
                     return
                 time.sleep(0.1)
-            raise AssertionError('Local filter application timeout')
+            raise AssertionError(message)
 
         with (root / 'engine.log').open('wb') as log:
             process = subprocess.Popen([str(engine), '--config', str(config), '--work-dir', str(root)], stdout=log, stderr=log)
@@ -94,6 +104,39 @@ def exercise(engine, bootstrap):
                 assert blocked('native-regression.example')
                 for domain in shared_domains:
                     assert blocked(domain), 'offline shared domain not applied: ' + domain
+                # Exercise the same memory-only API snapshot and actual WebUI
+                # parser as observation, without using an Android device.
+                previous = api('/querylog_info')
+                started_at = int(time.time() * 1000)
+                try:
+                    api('/querylog_config', {**previous, 'enabled': True, 'anonymize_client_ip': True})
+                    assert api('/querylog_info')['enabled'] is True, 'temporary query logging did not enable'
+                    dns_query(domains[0])
+                    def has_probe():
+                        return any(entry.get('question', {}).get('name', '').rstrip('.') == domains[0]
+                                   for entry in api('/querylog?limit=200')['data'])
+                    wait_until(has_probe, 'Memory-only DNS query was not captured')
+                    snapshot = api('/querylog?limit=200')
+                    parser_test = r"""
+const fs = require('node:fs'), vm = require('node:vm');
+const source = fs.readFileSync(process.argv[1], 'utf8');
+const begin = source.indexOf('function validObservedDomain(');
+const end = source.indexOf('async function loadObservationResult(');
+if (begin < 0 || end <= begin) throw new Error('Observation parser functions missing');
+const parse = vm.runInNewContext(source.slice(begin, end) + ';parseObservedDomains');
+const result = parse(fs.readFileSync(0, 'utf8'), Number(process.argv[3]));
+if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live core snapshot lost the probe domain in WebUI parsing');
+"""
+                    subprocess.run(['node', '-e', parser_test,
+                                    str(Path(__file__).resolve().parents[1] / 'webroot/app.js'),
+                                    domains[0], str(started_at)], input=json.dumps(snapshot),
+                                   text=True, capture_output=True, check=True)
+                finally:
+                    api('/querylog_config', previous)
+                restored = api('/querylog_info')
+                for key in ('enabled', 'interval', 'anonymize_client_ip'):
+                    assert restored[key] == previous[key], 'temporary query-log preference not restored: ' + key
+                assert not list(root.rglob('querylog.json*')), 'memory-only observation wrote a disk query log'
                 # A later personal-file change must be applied on refresh,
                 # without replacing native user_rules or doubling sources.
                 personal.write_text('||custom-regression.example^\n||allowed-regression.example^\n@@||allowed-regression.example^\n@@||' + shared_domains[0] + '^\n')
@@ -120,7 +163,7 @@ def exercise(engine, bootstrap):
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-    print('Native ARM64 personal filter: first-boot rules, refresh, whitelist and native user_rules preservation passed.')
+    print('Native ARM64: personal rules, refresh, whitelist, native user_rules and memory-only observation parsing passed.')
 
 
 if __name__ == '__main__':
