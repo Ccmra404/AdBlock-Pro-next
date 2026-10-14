@@ -1,8 +1,6 @@
 package main
 
 import (
- "crypto/rand"
- "encoding/hex"
  "errors"
  "fmt"
  "os"
@@ -10,6 +8,9 @@ import (
 
  "golang.org/x/crypto/bcrypt"
 )
+
+// Public first-install default; upgrades never replace an existing account.
+const initialPassword = "password"
 
 const initialConfig = `# Created on this device by AdBlock Pro. Do not upload this file.
 # Matches the bundled v0.107.79 core; avoid legacy migrations resetting querylog.
@@ -68,7 +69,7 @@ func main() {
   fmt.Fprintln(os.Stderr, "initial configuration failed:", err)
   os.Exit(1)
  }
- fmt.Println("Local AdGuard Home credentials generated privately on this device.")
+ fmt.Println("Local AdGuard Home configuration created on this device.")
 }
 
 func createConfig(configFile, authFile string) error {
@@ -83,17 +84,14 @@ func createConfig(configFile, authFile string) error {
   return err
  }
 
- secret := make([]byte, 24)
- if _, err := rand.Read(secret); err != nil { return err }
- password := hex.EncodeToString(secret)
- hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+ hash, err := bcrypt.GenerateFromPassword([]byte(initialPassword), bcrypt.DefaultCost)
  if err != nil { return err }
  for _, dir := range []string{filepath.Dir(configFile), filepath.Dir(authFile)} {
   if err := os.MkdirAll(dir, 0700); err != nil { return err }
  }
  // Write both files with private permissions. Nothing secret is printed.
  if err := writeExclusive(configFile, []byte(fmt.Sprintf(initialConfig, string(hash)))); err != nil { return err }
- if err := writeExclusive(authFile, []byte("admin:"+password+"\n")); err != nil {
+ if err := writeExclusive(authFile, []byte("admin:"+initialPassword+"\n")); err != nil {
   _ = os.Remove(configFile)
   return err
  }
