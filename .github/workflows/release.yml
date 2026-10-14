@@ -32,6 +32,14 @@ on:
       - ".github/workflows/**"
   # Only an explicit main-branch workflow_dispatch can create a Release.
   workflow_dispatch:
+    inputs:
+      channel:
+        description: Publication type (requires maintainer authorization)
+        type: choice
+        default: prerelease
+        options:
+          - prerelease
+          - stable
 
 permissions:
   contents: read
@@ -144,6 +152,7 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       TAG: ${{ needs.package.outputs.version }}
+      CHANNEL: ${{ inputs.channel || 'prerelease' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -156,8 +165,16 @@ jobs:
           python3 tools/release_guard.py --repo "$GITHUB_REPOSITORY" --tag "$TAG" --sha "$GITHUB_SHA"
           (cd dist && sha256sum -c "AdBlock-Pro-$TAG-arm64.zip.sha256")
           python3 tools/validate_module_zip.py "dist/AdBlock-Pro-$TAG-arm64.zip" --version "$TAG" --version-code "$(sed -n 's/^versionCode=//p' module.prop)"
-      - name: Create a new immutable prerelease
+      - name: Create a new immutable release
         run: |
           set -euo pipefail
-          printf '%s\n' "ARM64 prerelease for commit $GITHUB_SHA. Automated checks passed; Android device validation is separate. See the reviewed PR and docs/integration-rc3.md for scope and outstanding tests." > /tmp/release-notes.md
-          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "AdBlock Pro $TAG (ARM64 test build)" --notes-file /tmp/release-notes.md --prerelease --latest=false
+          case "$CHANNEL" in
+            prerelease) prerelease=true; latest=false; build_type='ARM64 test build' ;;
+            stable)
+              case "$TAG" in *-*) echo 'Stable releases cannot use prerelease tags.' >&2; exit 1 ;; esac
+              prerelease=false; latest=true; build_type=ARM64
+              ;;
+            *) echo 'Invalid publication channel.' >&2; exit 1 ;;
+          esac
+          printf '%s\n' "ARM64 $CHANNEL for commit $GITHUB_SHA. Automated checks passed; Android device validation is separate. See docs/release-v0.13.0-candidate.md for verified scope and outstanding device tests." > /tmp/release-notes.md
+          gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "AdBlock Pro $TAG ($build_type)" --notes-file /tmp/release-notes.md --prerelease="$prerelease" --latest="$latest"

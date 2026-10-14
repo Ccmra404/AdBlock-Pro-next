@@ -1,6 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { shellPath } from './shell-fixture.mjs';
 
 const workflow = readFileSync(new URL('../.github/workflows/release.yml', import.meta.url), 'utf8');
 const triggers = workflow.slice(workflow.indexOf('\non:\n'), workflow.indexOf('\npermissions:\n'));
@@ -50,3 +54,42 @@ test('upstream automation stays on main and proposes Draft PRs only', () => {
   assert.doesNotMatch(tracker, /--clobber|gh release create|gh pr merge|push[^\n]*--force/);
   assert.match(tracker, /git diff --quiet FETCH_HEAD -- bin\/AdGuardHome upstream\/adguard-home.json/);
 });
+
+const releaseStep = workflow.slice(workflow.indexOf('      - name: Create a new immutable '));
+const releaseScript = releaseStep.slice(releaseStep.indexOf('        run: |\n') + 15)
+  .split('\n').map(line => line.replace(/^          /, '')).join('\n');
+
+function publication(t, channel, tag = 'v0.13.0') {
+  const dir = mkdtempSync(path.join(tmpdir(), 'abp-release-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const args = path.join(dir, 'args');
+  const result = spawnSync('bash', ['-c', `gh() { printf '%s\\n' "$@" > "$RELEASE_ARGS"; }
+${releaseScript.replaceAll('/tmp/release-notes.md', shellPath(path.join(dir, 'notes.md')))}`], {
+    encoding: 'utf8', cwd: dir,
+    env: { ...process.env, CHANNEL: channel, TAG: tag, GITHUB_SHA: 'a'.repeat(40), RELEASE_ARGS: shellPath(args) },
+  });
+  return { ...result, args: existsSync(args) ? readFileSync(args, 'utf8') : null };
+}
+
+test('manual publication defaults to the safer prerelease channel', () => {
+  assert.match(triggers, /channel:[\s\S]*type: choice[\s\S]*default: prerelease[\s\S]*options:[\s\S]*- prerelease[\s\S]*- stable/);
+  assert.match(workflow, /CHANNEL:.*inputs.channel.*prerelease/);
+});
+
+for (const channel of ['prerelease', 'stable']) {
+  test('manual ' + channel + ' publication uses explicit prerelease and latest flags', t => {
+    const result = publication(t, channel);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.args, new RegExp('--prerelease=' + (channel === 'prerelease') + '\\n'));
+    assert.match(result.args, new RegExp('--latest=' + (channel === 'stable') + '\\n'));
+    assert.match(result.args, /--target\na{40}\n/);
+  });
+}
+
+for (const [channel, tag] of [['unknown', 'v0.13.0'], ['stable', 'v0.13.0-rc.3'], ['stable', 'v0.13.0-dev.1234567']]) {
+  test('invalid publication selection cannot call GitHub: ' + channel + ' / ' + tag, t => {
+    const result = publication(t, channel, tag);
+    assert.notEqual(result.status, 0);
+    assert.equal(result.args, null);
+  });
+}
