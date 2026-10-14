@@ -481,12 +481,15 @@ write_personal_filter() {
 ensure_shared_filter() {
   "$BB" sh "$RULE_STORE" init || return 1
   shared_json=$(api GET /filtering/status 4) || return 1
-  if printf '%s' "$shared_json" | "$BB" grep -Eo '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | "$BB" cut -d '"' -f4 | "$BB" grep -Fxq "$SHARED_FILTER"; then return 0; fi
-  body=$(printf '{"name":"AdBlock Pro 共享抓包规则","url":"%s","whitelist":false}' "$SHARED_FILTER")
-  result=$(api POST /filtering/add_url "$body" 8 2>&1) && return 0
-  case "$result" in *"already added"*|*"already exists"*) return 0 ;; esac
-  printf '%s\n' "$result" >&2
-  return 1
+  if ! printf '%s' "$shared_json" | "$BB" grep -Eo '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | "$BB" cut -d '"' -f4 | "$BB" grep -Fxq "$SHARED_FILTER"; then
+    body=$(printf '{"name":"AdBlock Pro 共享抓包规则","url":"%s","whitelist":false}' "$SHARED_FILTER")
+    result=$(api POST /filtering/add_url "$body" 8 2>&1) || {
+      case "$result" in *"already added"*|*"already exists"*) ;; *) printf '%s\n' "$result" >&2; return 1 ;; esac
+    }
+  fi
+  # This is a fixed base filter, so reconcile its enabled state on startup and update.
+  body=$(printf '{"url":"%s","whitelist":false,"data":{"name":"AdBlock Pro 共享抓包规则","url":"%s","enabled":true}}' "$SHARED_FILTER" "$SHARED_FILTER")
+  api POST /filtering/set_url "$body" 8 >/dev/null || { echo '[!] Cannot enable the bundled shared rule filter.' >&2; return 1; }
 }
 
 sync_shared_rules() {
