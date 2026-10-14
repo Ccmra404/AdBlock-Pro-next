@@ -2,15 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-const source=readFileSync(new URL('../webroot/app.js',import.meta.url),'utf8').replace(/^import[^\n]*\n/,'').replace(/\ninit\(\);[\s\S]*$/,'\n');
+const source=readFileSync(new URL('../webroot/app.js',import.meta.url),'utf8').replace(/^import[^\n]*\n/,'').replace(/\ninit\(\);/,'\n');
 function harness() {
   const pending=[], handlers={}, storage=new Map();
   const context=vm.createContext({ TextEncoder, btoa: s=>Buffer.from(s).toString('base64'),
     document:{ documentElement:{},body:{},addEventListener(n,fn){handlers[n]=fn;},querySelector(){return null;},querySelectorAll(){return [];} },
     localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{},
-    exec:command=>new Promise(resolve=>pending.push({command,resolve})),setTimeout,clearTimeout,requestAnimationFrame(){},cancelAnimationFrame(){} });
+    exec:command=>new Promise(resolve=>pending.push({command,resolve})),setTimeout,clearTimeout,setInterval(){return 1;},requestAnimationFrame(){},cancelAnimationFrame(){} });
   vm.runInContext(source,context);
-  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,observationAIPrompt,communityIssueUrl,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,sharedResultsMarkup,startObservation})',context)};
+  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,observationAIPrompt,communityIssueUrl,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,sharedResultsMarkup,startObservation})',context)};
 }
 
 test('TXT export sections, DNS rules and JSON import preserve blacklist and whitelist semantics',()=>{
@@ -48,6 +48,40 @@ test('name/package matching requires an unambiguous application and escapes host
   assert.doesNotMatch(h.applicationResults(),/<img>/);assert.match(h.applicationResults(),/&lt;img&gt;/);
   h.state.appQuery='APP.OTHER.MARKET';h.resolveApplication();assert.equal(h.state.selectedApp.packageName,'app.other.market');
   assert.match(h.observationPanel(),/<option value="10" selected>/);assert.doesNotMatch(h.observationPanel(),/<option value="60"/);
+});
+
+test('manual application refresh finds an app installed after the catalogue was cached',async()=>{
+ const h=harness();let calls=0;
+ h.context.listApplications=async()=>{calls++;return calls===1?[{packageName:'com.coolapk.market',label:'酷安'}]:[{packageName:'com.coolapk.market',label:'酷安'},{packageName:'com.tencent.qqmusic',label:'QQ音乐'}];};
+ await h.loadApplications();await h.loadApplications();assert.equal(calls,1);
+ h.state.appQuery='QQ音乐';h.resolveApplication();assert.equal(h.state.selectedApp,null);
+ assert.match(h.observationPanel(),/data-action="apps-refresh"/);
+ const button={dataset:{action:'apps-refresh'}};
+ await h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});await new Promise(setImmediate);
+ assert.equal(calls,2);assert.equal(h.state.selectedApp.packageName,'com.tencent.qqmusic');
+});
+
+test('concurrent application refreshes share one host request and failed reads retain the valid catalogue',async()=>{
+ const h=harness();let calls=0,resolveRead;
+ h.context.listApplications=()=>{calls++;return new Promise(resolve=>{resolveRead=resolve;});};
+ const a=h.loadApplications(true),b=h.loadApplications(true);assert.equal(calls,1);
+ resolveRead([{packageName:'com.tencent.qqmusic',label:'QQ音乐'}]);await Promise.all([a,b]);
+ h.context.listApplications=async()=>{throw new Error('host unavailable');};await h.loadApplications(true);
+ assert.equal(h.state.apps[0].packageName,'com.tencent.qqmusic');assert.equal(h.state.appsError,'host unavailable');assert.equal(h.state.appsLoading,false);
+});
+
+test('returning to the visible observation page refreshes cached apps without polling other pages or active jobs',async()=>{
+ const h=harness();let calls=0;
+ vm.runInContext('refreshStatus=async()=>{}',h.context);
+ h.state.page='lists';h.state.appsLoaded=true;h.state.appQuery='QQ音乐';
+ h.context.listApplications=async()=>{calls++;return [{packageName:'com.tencent.qqmusic',label:'QQ音乐'}];};
+ h.context.document.hidden=false;h.handlers.visibilitychange();await new Promise(setImmediate);
+ assert.equal(calls,1);assert.equal(h.state.selectedApp.packageName,'com.tencent.qqmusic');
+ for(const scenario of [{hidden:true,page:'lists',busy:false},{hidden:false,page:'home',busy:false},{hidden:false,page:'lists',busy:true}]) {
+   Object.assign(h.state,{page:scenario.page,busy:scenario.busy});h.context.document.hidden=scenario.hidden;
+   h.handlers.visibilitychange();await new Promise(setImmediate);
+ }
+ assert.equal(calls,1);assert.equal(h.pending.length,0);
 });
 
 test('shared domain lists paginate and search updates only the result container',()=>{

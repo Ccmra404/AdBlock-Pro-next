@@ -330,7 +330,7 @@ function observationPanel() {
   const status = active ? `<div id="observe-progress" class="notice observe-progress" role="status">${icon('activity')}<span>记录中 · 约 ${remaining} 秒后分析。${esc(observation.appLabel || '目标应用')}已重新打开，请复现广告，然后返回此页。</span></div>` : '';
   const error = state.observationError ? `<div class="notice warn observe-error">${icon('info')}<span>${esc(state.observationError)}${observation?.id ? ` <button class="btn btn-plain" data-action="observe-retry">重试读取</button>` : ''}</span></div>` : '';
   const results = observation && !active && !state.observationError ? `<details id="observe-results" class="observe-results" ${state.observationResultsOpen ? 'open' : ''}><summary class="observe-results-head"><b>观察结果</b><span class="tag">${fmt(state.observationDomains.length)} 个新域名</span></summary><p class="field-help">${esc(observation.appLabel || '本次观察')} · 新域名只是时间段内的候选，手机后台应用也可能产生请求。筛选并勾选域名后，可复制给 AI、导入个人规则，或前往共享库提交候选。</p><div id="observation-selection-tools">${observationSelectionTools()}</div><div id="observation-list" class="observe-list">${observationRows()}</div></details>` : '';
-  return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">域名观察</h2><p class="section-sub">选择本机应用，自动重新打开并观察开屏请求</p></div>${tag('仅本机处理')}</div><p class="field-help observe-help">输入应用名称或包名并选择匹配项。开始后会重新打开这个应用，结束后返回本页查看。窗口内也可能包含后台应用的 DNS 请求，结果只是候选；原查询日志设置会恢复，结果不会上传。</p><div class="observe-controls"><label class="observe-app-label">本机应用<input id="observe-app" class="field" maxlength="255" placeholder="例如：酷安" autocomplete="off" value="${esc(state.appQuery)}"></label><label class="observe-duration-label">观察时长<select id="observe-duration" class="field">${['5','10','15','30'].map(n => `<option value="${n}" ${state.observeDuration === n ? 'selected' : ''}>${n} 秒</option>`).join('')}</select></label><button class="btn btn-primary" data-action="observe-start" ${active || !state.selectedApp ? 'disabled' : ''}>${active ? '观察中…' : '开始并打开应用'}</button></div><div id="observe-app-results" class="app-results">${applicationResults()}</div>${status}${error}${results}</section>`;
+  return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">域名观察</h2><p class="section-sub">选择本机应用，自动重新打开并观察开屏请求</p></div><div class="btn-row">${tag('仅本机处理')}<button class="btn" data-action="apps-refresh" ${state.busy || state.appsLoading ? 'disabled' : ''}>${state.appsLoading ? '读取中…' : '刷新应用'}</button></div></div><p class="field-help observe-help">输入应用名称或包名并选择匹配项。开始后会重新打开这个应用，结束后返回本页查看。窗口内也可能包含后台应用的 DNS 请求，结果只是候选；原查询日志设置会恢复，结果不会上传。</p><div class="observe-controls"><label class="observe-app-label">本机应用<input id="observe-app" class="field" maxlength="255" placeholder="例如：酷安" autocomplete="off" value="${esc(state.appQuery)}"></label><label class="observe-duration-label">观察时长<select id="observe-duration" class="field">${['5','10','15','30'].map(n => `<option value="${n}" ${state.observeDuration === n ? 'selected' : ''}>${n} 秒</option>`).join('')}</select></label><button class="btn btn-primary" data-action="observe-start" ${active || state.appsLoading || !state.selectedApp ? 'disabled' : ''}>${active ? '观察中…' : '开始并打开应用'}</button></div><div id="observe-app-results" class="app-results">${applicationResults()}</div>${status}${error}${results}</section>`;
 }
 function logsPage() {
   const filters = [['all', '全部'], ['running', '进行中'], ['failure', '提醒'], ['success', '成功']];
@@ -955,9 +955,9 @@ async function importPersonalFile(file) {
 }
 
 let applicationsPending = null;
-async function loadApplications() {
-  if (state.appsLoaded) return;
+async function loadApplications(force = false) {
   if (applicationsPending) return applicationsPending;
+  if (state.appsLoaded && !force) return;
   state.appsLoading = true; updateApplicationResults();
   applicationsPending = (async () => {
     try { state.apps = await listApplications(); state.appsLoaded = true; state.appsError = ''; }
@@ -981,12 +981,13 @@ function applicationResults() {
   if (state.appsLoading) return '<p class="field-help" role="status">正在匹配本机应用…</p>';
   if (state.appsError) return `<p class="field-help">${esc(state.appsError)} <button class="btn" data-action="apps-retry">重试</button></p>`;
   const matches = matchingApplications();
-  if (!matches.length) return '<p class="field-help">没有匹配应用，请检查名称或输入完整包名。</p>';
+  if (!matches.length) return '<p class="field-help">没有匹配应用。新安装的应用可点「刷新应用」，也可检查名称或输入完整包名。</p>';
   return matches.slice(0,8).map(app => `<button type="button" class="app-match ${state.selectedApp?.packageName === app.packageName ? 'selected' : ''}" data-action="app-select" data-package="${esc(app.packageName)}"><strong>${esc(app.label)}</strong><small>${esc(app.packageName)}</small></button>`).join('') + (matches.length > 8 ? '<p class="field-help">匹配项较多，请继续输入名称。</p>' : '');
 }
 function updateApplicationResults() {
   const node = $('#observe-app-results'); if (node) node.innerHTML = applicationResults();
-  const button = $('[data-action="observe-start"]'); if (button) button.disabled = state.busy || !state.selectedApp;
+  const button = $('[data-action="observe-start"]'); if (button) button.disabled = state.busy || state.appsLoading || !state.selectedApp;
+  const refresh = $('[data-action="apps-refresh"]'); if (refresh) { refresh.disabled = state.busy || state.appsLoading; refresh.textContent = state.appsLoading ? '读取中…' : '刷新应用'; }
 }
 
 function copyGkdLink() {
@@ -1081,7 +1082,8 @@ document.addEventListener('click', async event => {
       if (app) { state.selectedApp = app; state.appQuery = app.label; const field = $('#observe-app'); if (field) field.value = app.label; updateApplicationResults(); }
       break;
     }
-    case 'apps-retry': void loadApplications(); break;
+    case 'apps-refresh':
+    case 'apps-retry': void loadApplications(true); break;
     case 'copy-gkd-link': try { copyGkdLink(); toast('GKD 项目链接已复制'); } catch (e) { toast(e.message); } break;
     case 'diagnose': startDiagnosis().catch(e => toast(e.message)); break;
     case 'observe-start': startObservation().catch(e => toast(e.message)); break;
@@ -1243,4 +1245,8 @@ async function init() {
 }
 init();
 setInterval(() => { if (!state.busy && !document.hidden) void refreshStatus(true); }, 30000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden && !state.busy) void refreshStatus(true); });
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || state.busy) return;
+  void refreshStatus(true);
+  if (state.page === 'lists' && state.rulesView === 'local' && (state.appsLoaded || state.appQuery.trim())) void loadApplications(true);
+});
