@@ -10,7 +10,7 @@ function harness() {
     localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{},
     exec:command=>new Promise(resolve=>pending.push({command,resolve})),setTimeout,clearTimeout,requestAnimationFrame(){},cancelAnimationFrame(){} });
   vm.runInContext(source,context);
-  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,observationAIPrompt,observationContributionText,loadObservationResult,startJob,personalRulesPage,logsPage,sharedResultsMarkup,startObservation})',context)};
+  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,observationAIPrompt,communityIssueUrl,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,sharedResultsMarkup,startObservation})',context)};
 }
 
 test('TXT export sections, DNS rules and JSON import preserve blacklist and whitelist semantics',()=>{
@@ -56,6 +56,14 @@ test('shared domain lists paginate and search updates only the result container'
   h.state.sharedSearch='ads28'; assert.equal((h.sharedResultsMarkup().match(/class="rowitem"/g)||[]).length,1);
   assert.match(source, /matches\('#shared-search'\)[^\n]*renderSharedResults\(\)/);
   assert.doesNotMatch(source,/matches\('#shared-search'\)[^\n]*render\(true\)/);
+});
+
+test('shared rules page offers candidate submission instead of exporting the shared list',()=>{
+ const h=harness();h.state.sharedRules=['published.example'];
+ const page=h.sharedRulesPage();
+ assert.match(page,/data-action="shared-submit-candidate"/);
+ assert.doesNotMatch(page,/data-action="shared-export"|导出规则/);
+ assert.match(page,/手动提交/);assert.match(page,/维护者审核通过后才会进入共享规则/);
 });
 
 test('observation failure shows its real cause rather than the generic worker-lock message',async()=>{
@@ -104,13 +112,36 @@ test('observed domains can be selected in batches and exports contain only chose
  assert.match(panel,/data-action="observe-copy-ai"/);
  assert.match(panel,/data-action="observe-export"/);
  assert.match(panel,/data-action="observe-import-personal"/);
- assert.match(panel,/data-action="observe-share-copy"/);
+ assert.doesNotMatch(panel,/observe-share-copy|复制社区贡献内容/);
  assert.deepEqual(h.observationExportText(),'ads.example\n');
  const prompt=h.observationAIPrompt();
  assert.match(prompt,/ads\.example/);assert.doesNotMatch(prompt,/api\.example|Banking App|com\.private\.bank/);
- const contribution=h.observationContributionText();
- assert.match(contribution,/ads\.example/);assert.doesNotMatch(contribution,/api\.example|Banking App|com\.private\.bank/);
  assert.match(h.observationSelectionTools(),/1 个已选/);
+});
+
+test('shared submission link includes only selected observed domains and requires manual review',async()=>{
+ const h=harness(),toast={};
+ h.state.rulesView='shared';h.state.observation={appLabel:'Private Banking App',appPackage:'com.private.bank'};
+ h.state.observationDomains=[{domain:'ads.example'},{domain:'api.example'}];h.state.selectedObservationDomains=['ads.example'];
+ const url=new URL(h.communityIssueUrl());
+ assert.equal(url.origin,'https://github.com');assert.equal(url.pathname,'/Ccmra404/AdBlock-Pro-next/issues/new');
+ assert.equal(url.searchParams.get('template'),'shared-rule-candidate.md');
+ const body=url.searchParams.get('body');
+ assert.match(body,/ads\.example/);assert.doesNotMatch(body,/api\.example|Private Banking App|com\.private\.bank/);
+ assert.match(body,/维护者会检查/);assert.match(body,/原始 DNS 查询日志/);
+ h.context.document.querySelector=s=>s==='#toast'?toast:null;
+ h.context.navigator={clipboard:{writeText:async text=>{h.copied=text;}}};h.context.setTimeout=()=>1;
+ const button={dataset:{action:'shared-submit-candidate'}};
+ await h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});
+ assert.equal(h.copied,url.href);assert.match(toast.textContent,/手动提交/);
+});
+
+test('shared candidate submission without a selection returns to observation and explains what to do',async()=>{
+ const h=harness(),toast={};h.state.rulesView='shared';h.context.document.querySelector=s=>s==='#toast'?toast:null;
+ vm.runInContext('render=()=>{}',h.context);h.context.setTimeout=()=>1;
+ const button={dataset:{action:'shared-submit-candidate'}};
+ await h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});
+ assert.equal(h.state.rulesView,'local');assert.equal(h.state.observationResultsOpen,true);assert.match(toast.textContent,/先在域名观察结果中选择候选域名/);
 });
 
 test('TXT export downloads only selected valid domains',()=>{

@@ -213,7 +213,7 @@ function renderSharedResults() {
 function sharedRulesPage() {
   const syncing = state.job?.action === '--sync-shared';
   return `${heading('共享抓包规则库', '维护者确认后发布，各设备使用同一份公开名单', '<button class="btn" data-action="shared-back">返回个人规则</button>')}
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">共享规则</h2><p class="section-sub">10007、秋风纯广告和本规则库共同构成模块基础</p></div>${tag(`${state.sharedRules.length} 条`)}</div><p class="field-help">修订 ${esc(state.sharedRevision || '—')} · ${state.sharedUpdatedAt ? new Date(state.sharedUpdatedAt * 1000).toLocaleString('zh-CN') : '随模块预置'}。同步会读取 GitHub 上已确认的规则，保留本机个人黑白名单；放行名单可以覆盖共享规则。</p><div class="btn-row"><button class="btn btn-primary" data-action="shared-sync" ${syncing ? 'disabled' : ''}>${syncing ? '正在同步…' : '同步并应用'}</button><button class="btn" data-action="shared-export">导出规则</button></div>${state.sharedError ? `<div class="notice warn">${esc(state.sharedError)}</div>` : ''}<input id="shared-search" class="field" type="search" value="${esc(state.sharedSearch)}" placeholder="搜索共享域名" aria-label="搜索共享域名"><div id="shared-results">${sharedResultsMarkup()}</div></section>`;
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">共享规则</h2><p class="section-sub">10007、秋风纯广告和本规则库共同构成模块基础</p></div>${tag(`${state.sharedRules.length} 条`)}</div><p class="field-help">修订 ${esc(state.sharedRevision || '—')} · ${state.sharedUpdatedAt ? new Date(state.sharedUpdatedAt * 1000).toLocaleString('zh-CN') : '随模块预置'}。同步会读取 GitHub 上已确认的规则，保留本机个人黑白名单；放行名单可以覆盖共享规则。</p><div class="btn-row"><button class="btn btn-primary" data-action="shared-sync" ${syncing ? 'disabled' : ''}>${syncing ? '正在同步…' : '同步并应用'}</button><button class="btn" data-action="shared-submit-candidate">提交候选${selectedObservationDomains().length ? `（${fmt(selectedObservationDomains().length)}）` : ''}</button></div><p class="field-help">候选只包含你在域名观察中勾选的域名。按钮会复制 GitHub 草稿链接；检查内容后由你手动提交，维护者审核通过后才会进入共享规则。</p>${state.sharedError ? `<div class="notice warn">${esc(state.sharedError)}</div>` : ''}<input id="shared-search" class="field" type="search" value="${esc(state.sharedSearch)}" placeholder="搜索共享域名" aria-label="搜索共享域名"><div id="shared-results">${sharedResultsMarkup()}</div></section>`;
 }
 function managePage() {
   const s = state.status;
@@ -281,13 +281,17 @@ function observationSelectionTools() {
   const visible = state.observationDomains.slice(start, start + OBSERVATION_PAGE_SIZE).map(item => item.domain).filter(validObservedDomain);
   const allVisibleSelected = visible.length > 0 && visible.every(domain => selected.includes(domain));
   const disabled = selected.length ? '' : 'disabled';
-  return `<div class="observe-selection-tools"><div class="observe-selection-head"><b>${fmt(selected.length)} 个已选</b><button class="btn" data-action="observe-select-visible" ${visible.length ? '' : 'disabled'}>${allVisibleSelected ? '取消本页选择' : '全选本页'}</button><button class="btn" data-action="observe-clear-selection" ${disabled}>清空选择</button></div><div class="btn-row observe-export-actions"><button class="btn" data-action="observe-copy-domains" ${disabled}>复制域名</button><button class="btn" data-action="observe-export" ${disabled}>导出 TXT</button><button class="btn" data-action="observe-copy-ai" ${disabled}>复制给 AI 分析</button><button class="btn" data-action="observe-import-personal" ${disabled}>导入个人拦截规则</button><button class="btn" data-action="observe-share-copy" ${disabled}>复制社区贡献内容</button></div><p class="field-help">只导出你勾选的域名，不含应用名、设备标识或原始 DNS 日志。社区贡献需你主动提交并经审核。</p></div>`;
+  return `<div class="observe-selection-tools"><div class="observe-selection-head"><b>${fmt(selected.length)} 个已选</b><button class="btn" data-action="observe-select-visible" ${visible.length ? '' : 'disabled'}>${allVisibleSelected ? '取消本页选择' : '全选本页'}</button><button class="btn" data-action="observe-clear-selection" ${disabled}>清空选择</button></div><div class="btn-row observe-export-actions"><button class="btn" data-action="observe-copy-domains" ${disabled}>复制域名</button><button class="btn" data-action="observe-export" ${disabled}>导出 TXT</button><button class="btn" data-action="observe-copy-ai" ${disabled}>复制给 AI 分析</button><button class="btn" data-action="observe-import-personal" ${disabled}>导入个人拦截规则</button></div><p class="field-help">复制、导出和导入只处理勾选的域名，不含应用名、设备标识或原始 DNS 日志。提交共享候选请前往共享规则库。</p></div>`;
 }
 function observationAIPrompt() {
   return `请分析下面这些在短时 DNS 观察中出现的候选域名。观察期间可能混入后台应用请求，请将每项谨慎分为“疑似广告/跟踪”“疑似正常服务”“无法判断”，说明判断依据，不要声称仅凭域名可以确定。只返回输入中已有的域名，不要编造域名。最后只输出可导入的纯文本，不要代码围栏、解释文字或列表标记：\n[拦截名单]\n<仅放入有较强广告/跟踪证据的域名>\n\n[放行名单]\n<确认属于必要服务且用户希望放行的域名>\n\n候选域名：\n${selectedObservationDomains().join('\n')}`;
 }
-function observationContributionText() {
-  return selectedObservationDomains().join('\n');
+function communityIssueUrl() {
+  const domains = selectedObservationDomains();
+  if (!domains.length) throw new Error('请先在域名观察结果中选择候选域名');
+  const title = `[规则候选] ${domains.length} 个域名`;
+  const body = `## 候选域名\n\n每行一个完整域名。请只提交你愿意公开的域名。\n\n\`\`\`text\n${domains.join('\n')}\n\`\`\`\n\n## 观察说明\n\n来自短时 DNS 域名观察的候选，可能混入后台请求，尚待人工核验。\n\n## 隐私确认\n\n- [ ] 我检查过内容，只包含我愿意公开的域名与说明。\n- [ ] 我没有附上原始 DNS 查询日志、应用名称、设备标识、IP 地址、账号信息或其他个人数据。\n\n维护者会检查格式、重复项、误拦截风险及必要服务影响；未经审核的候选不会进入共享规则，也不会影响其他用户。`;
+  return `https://github.com/Ccmra404/AdBlock-Pro-next/issues/new?template=shared-rule-candidate.md&title=${encodeURIComponent(title)}&body=${encodeURIComponent(body)}`;
 }
 async function copyText(text) {
   if (!text) throw new Error('没有可复制的内容');
@@ -325,7 +329,7 @@ function observationPanel() {
   const remaining = active ? Math.max(0, Math.ceil((observation.startedAt + observation.duration * 1000 - Date.now()) / 1000)) : 0;
   const status = active ? `<div id="observe-progress" class="notice observe-progress" role="status">${icon('activity')}<span>记录中 · 约 ${remaining} 秒后分析。${esc(observation.appLabel || '目标应用')}已重新打开，请复现广告，然后返回此页。</span></div>` : '';
   const error = state.observationError ? `<div class="notice warn observe-error">${icon('info')}<span>${esc(state.observationError)}${observation?.id ? ` <button class="btn btn-plain" data-action="observe-retry">重试读取</button>` : ''}</span></div>` : '';
-  const results = observation && !active && !state.observationError ? `<details id="observe-results" class="observe-results" ${state.observationResultsOpen ? 'open' : ''}><summary class="observe-results-head"><b>观察结果</b><span class="tag">${fmt(state.observationDomains.length)} 个新域名</span></summary><p class="field-help">${esc(observation.appLabel || '本次观察')} · 新域名只是时间段内的候选，手机后台应用也可能产生请求。筛选并勾选域名后，可复制给 AI、导入个人规则或准备共享贡献。</p><div id="observation-selection-tools">${observationSelectionTools()}</div><div id="observation-list" class="observe-list">${observationRows()}</div></details>` : '';
+  const results = observation && !active && !state.observationError ? `<details id="observe-results" class="observe-results" ${state.observationResultsOpen ? 'open' : ''}><summary class="observe-results-head"><b>观察结果</b><span class="tag">${fmt(state.observationDomains.length)} 个新域名</span></summary><p class="field-help">${esc(observation.appLabel || '本次观察')} · 新域名只是时间段内的候选，手机后台应用也可能产生请求。筛选并勾选域名后，可复制给 AI、导入个人规则，或前往共享库提交候选。</p><div id="observation-selection-tools">${observationSelectionTools()}</div><div id="observation-list" class="observe-list">${observationRows()}</div></details>` : '';
   return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">域名观察</h2><p class="section-sub">选择本机应用，自动重新打开并观察开屏请求</p></div>${tag('仅本机处理')}</div><p class="field-help observe-help">输入应用名称或包名并选择匹配项。开始后会重新打开这个应用，结束后返回本页查看。窗口内也可能包含后台应用的 DNS 请求，结果只是候选；原查询日志设置会恢复，结果不会上传。</p><div class="observe-controls"><label class="observe-app-label">本机应用<input id="observe-app" class="field" maxlength="255" placeholder="例如：酷安" autocomplete="off" value="${esc(state.appQuery)}"></label><label class="observe-duration-label">观察时长<select id="observe-duration" class="field">${['5','10','15','30'].map(n => `<option value="${n}" ${state.observeDuration === n ? 'selected' : ''}>${n} 秒</option>`).join('')}</select></label><button class="btn btn-primary" data-action="observe-start" ${active || !state.selectedApp ? 'disabled' : ''}>${active ? '观察中…' : '开始并打开应用'}</button></div><div id="observe-app-results" class="app-results">${applicationResults()}</div>${status}${error}${results}</section>`;
 }
 function logsPage() {
@@ -845,17 +849,17 @@ function exportObservedDomains() {
   link.href = url; link.download = 'adblock-pro-observed-domains.txt'; link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-async function exportPersonalRules(kind = 'local') {
+async function exportPersonalRules() {
   if (window.ksu) {
-    const result = await runConfig('export-rules', kind);
+    const result = await runConfig('export-rules', 'local');
     const path = String(result.stdout || '').match(/exported_path=([^\r\n]+)/)?.[1];
     if (!path) throw new Error('未能确认导出文件，请检查下载目录权限');
     toast(`已导出到下载目录：${path.split('/').at(-1)}`);
     return;
   }
   const lines = ['# AdBlock Pro 个人规则', `# 导出日期：${new Date().toISOString().slice(0, 10)}`, '', '[拦截名单]', ...(state.lists.blacklist || []), '', '[放行名单]', ...(state.lists.whitelist || [])];
-  const blob = new Blob([kind === 'shared' ? state.sharedRules.join('\n') + '\n' : lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = kind === 'shared' ? 'adblock-pro-shared-rules.txt' : 'adblock-pro-personal-rules.txt'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'adblock-pro-personal-rules.txt'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 let sharedPending = null;
@@ -1063,7 +1067,14 @@ document.addEventListener('click', async event => {
     case 'shared-open': state.rulesView = 'shared'; pageFragments.delete('lists'); if (state.page !== 'lists') navigate('lists'); else render(true); void loadSharedRules(); break;
     case 'shared-back': state.rulesView = 'local'; render(true); break;
     case 'shared-sync': perform('--sync-shared'); break;
-    case 'shared-export': exportPersonalRules('shared').catch(e => toast(e.message)); break;
+    case 'shared-submit-candidate': {
+      if (!selectedObservationDomains().length) {
+        state.rulesView = 'local'; state.observationResultsOpen = true; render(true); toast('请先在域名观察结果中选择候选域名'); break;
+      }
+      try { await copyText(communityIssueUrl()); toast('GitHub 候选草稿链接已复制；检查内容后手动提交，审核通过后才会进入共享规则'); }
+      catch (e) { toast(e.message); }
+      break;
+    }
     case 'shared-page': state.sharedPage = Math.max(0, Number(button.dataset.page) || 0); renderSharedResults(); break;
     case 'app-select': {
       const app = state.apps.find(x => x.packageName === button.dataset.package);
@@ -1098,9 +1109,6 @@ document.addEventListener('click', async event => {
       break;
     case 'observe-copy-ai':
       try { await copyText(observationAIPrompt()); toast('已复制 AI 分析模板和所选域名'); } catch (e) { toast(e.message); }
-      break;
-    case 'observe-share-copy':
-      try { await copyText(observationContributionText()); toast('已复制共享贡献内容；请粘贴到 GitHub「共享规则候选」'); } catch (e) { toast(e.message); }
       break;
     case 'observe-import-personal': {
       const chosen = selectedObservationDomains();
