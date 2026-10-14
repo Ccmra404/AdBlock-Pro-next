@@ -1,6 +1,6 @@
 # v0.13.0 候选版验收记录
 
-目标版本为 `v0.13.0 / versionCode 46`。本次准备版本信息和验收记录，依赖尚未合并的 [PR #8](https://github.com/Ccmra404/AdBlock-Pro-next/pull/8) 和 [PR #10](https://github.com/Ccmra404/AdBlock-Pro-next/pull/10)。开发分支安装包保留 `-dev.<sha>` 标记；候选包不等于已发布的稳定版。
+目标版本为 `v0.13.0 / versionCode 46`。本次准备版本信息和验收记录，依赖尚未合并的 [PR #8](https://github.com/Ccmra404/AdBlock-Pro-next/pull/8)、[PR #10](https://github.com/Ccmra404/AdBlock-Pro-next/pull/10) 和 [PR #11](https://github.com/Ccmra404/AdBlock-Pro-next/pull/11)。开发分支安装包保留 `-dev.<sha>` 标记；候选包不等于已发布的稳定版。
 
 ## 包含的改动
 
@@ -10,6 +10,7 @@
 - 后台任务脱离管理器的应用冻结组并验证归属，防止临时观察被管理器退到后台时暂停；失败时不开始业务操作。
 - 保留 AdGuard Home DNS 架构、KernelSU/Magisk/APatch 兼容层、IPv4 接管及默认关闭的 IPv6 接管。
 - 手动发布流程增加预发布/正式版选择，默认预发布；正式版拒绝 rc/dev 标签，保留主分支、版本不可覆盖及安装包校验门禁。
+- 按维护者要求，首次安装的后台默认 `admin / password`，在设备上生成随机盐 bcrypt 哈希，仅监听本机。覆盖升级保留已有密码及配置；开放远程访问前先修改默认密码。
 
 ## 已有验收证据
 
@@ -23,6 +24,6 @@
 - 其他 ROM 或 Root 策略下的 cgroup 迁移权限仍需验证；遇到读取、迁移或确认失败时，任务明确失败且不启用临时观察日志。
 - 最新候选包的覆盖安装验收，以及新增复制、文件导出、导入和共享草稿在 Android 宿主中的完整操作验收。
 - 新增观察工作流的 Magisk/APatch 真机兼容性，以及 Wi-Fi/移动网络切换场景；CI 和旧版本验收不能替代这些结果。
-- PR #8、#10 和版本准备分支经过审查后进入同一主线，并对将要发布的确切 SHA 构建验证。
+- PR #8、#10、#11 和版本准备分支经过审查后进入同一主线，并对将要发布的确切 SHA 构建验证。
 
 本次不合并主线、不创建 Release、不改变用户配置、凭据或规则，不操作设备重启。修复复测仅热替换已备份的 worker 脚本。正式发布应走已授权的主分支手动流程，不覆盖既有 tag 或资产。
