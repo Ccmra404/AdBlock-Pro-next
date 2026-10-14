@@ -85,6 +85,9 @@ def exercise(engine, bootstrap):
                         time.sleep(0.1)
                 else:
                     raise RuntimeError('AdGuard Home API readiness timeout')
+                assert api('/querylog_info')['enabled'] is False, 'fresh config migration re-enabled query logging'
+                persisted_querylog = config.read_text().split('querylog:\n', 1)[1].split('statistics:\n', 1)[0]
+                assert 'file_enabled: false' in persisted_querylog, 'fresh config migration re-enabled disk query logging'
                 wait_until(lambda: blocked(domains[0]))
                 for domain in domains:
                     assert blocked(domain), 'bundled personal domain not applied: ' + domain
@@ -109,6 +112,7 @@ def exercise(engine, bootstrap):
                 wait_until(lambda: blocked('shared-refresh-regression.example') and not blocked(shared_domains[1]))
                 assert blocked('custom-regression.example'), 'shared refresh removed a personal rule'
                 assert blocked('native-regression.example'), 'shared refresh removed a native rule'
+                assert api('/querylog_info')['enabled'] is False, 'filter refresh altered query-log preference'
             finally:
                 process.terminate()
                 try:

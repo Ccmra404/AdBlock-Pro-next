@@ -57,3 +57,13 @@ test('shared domain lists paginate and search updates only the result container'
   assert.match(source, /matches\('#shared-search'\)[^\n]*renderSharedResults\(\)/);
   assert.doesNotMatch(source,/matches\('#shared-search'\)[^\n]*render\(true\)/);
 });
+
+test('observation failure shows its real cause rather than the generic worker-lock message',async()=>{
+ const h=harness();
+ vm.runInContext('refreshStatus=async()=>{}; loadLogs=async()=>{}; syncStatusView=()=>{}; render=()=>{}; toast=()=>{};',h.context);
+ h.context.setTimeout=cb=>{cb();return 1;};
+ const result=vm.runInContext("monitorJob('987','--observe')",h.context);
+ await new Promise(setImmediate);
+ h.pending.shift().resolve({errno:0,stdout:'[!] 查询日志正在写入磁盘。\n[!] Task failed or another DNS operation is already running (exit 1).\nJOB_DONE=1'});
+ assert.equal(await result,1);assert.equal(h.state.observationError,'[!] 查询日志正在写入磁盘。');
+});

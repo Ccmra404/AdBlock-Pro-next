@@ -12,6 +12,8 @@ import (
 )
 
 const initialConfig = `# Created on this device by AdBlock Pro. Do not upload this file.
+# Matches the bundled v0.107.79 core; avoid legacy migrations resetting querylog.
+schema_version: 34
 http:
   address: 127.0.0.1:3000
 users:

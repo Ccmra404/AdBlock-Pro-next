@@ -160,7 +160,7 @@ observe_capture() {
   ' "$AGH/bin/AdGuardHome.yaml" 2>/dev/null)
   if [ "$file_logging" != false ]; then
     rmdir "$OBS_DIR/lock" 2>/dev/null
-    echo '[!] Temporary observation requires AdGuard Home query-log file storage to be disabled.' >&2
+    echo '[!] 查询日志正在写入磁盘。请在 AdGuard Home 后台关闭磁盘存储后，再使用临时观察。' >&2
     return 1
   fi
   querylog_config || { rmdir "$OBS_DIR/lock" 2>/dev/null; echo '[!] Cannot read the current DNS query-log settings.' >&2; return 1; }

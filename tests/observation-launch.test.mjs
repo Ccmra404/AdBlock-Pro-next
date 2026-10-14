@@ -44,3 +44,10 @@ test('invalid package, missing launcher and unsupported duration cannot alter qu
   const f=fixture(t),r=f.run(...args);assert.notEqual(r.status,0);assert.equal(existsSync(f.trace),false);
  }
 });
+
+test('pre-existing disk query logging is refused without launching an app or changing preferences',t=>{
+ const f=fixture(t);
+ const yaml=path.join(path.dirname(f.trace),'runtime/bin/AdGuardHome.yaml');
+ writeFileSync(yaml,'querylog:\n  file_enabled: true\n');
+ const r=f.run(); assert.notEqual(r.status,0); assert.match(r.stderr,/磁盘/); assert.equal(existsSync(f.trace),false);
+});

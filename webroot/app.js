@@ -684,7 +684,8 @@ async function monitorJob(id, action) {
           localStorage.removeItem('abp-pending-job');
           localStorage.removeItem(OBSERVE_SESSION_KEY);
           state.observation = null;
-          state.observationError = body.split(/\r?\n/).filter(Boolean).filter(line => !line.startsWith('JOB_DONE=')).at(-1) || '观察失败，请查看运行日志。';
+          const outputLines = body.split(/\r?\n/).filter(Boolean).filter(line => !line.startsWith('JOB_DONE='));
+          state.observationError = outputLines.find(line => line.startsWith('[!]')) || outputLines.at(-1) || '观察失败，请查看运行日志。';
         }
       }
       if (action === '--update') progress(code === 0 ? '规则更新完成' : '更新失败，请查看日志', `耗时 ${Math.floor((Date.now() - start) / 1000)} 秒`, code === 0 ? 'done' : 'failed');
