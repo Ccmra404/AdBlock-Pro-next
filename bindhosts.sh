@@ -8,6 +8,8 @@ HISTORY=$STATE/dns-history
 OBS_DIR=$STATE/observations
 . "$MODDIR/scripts/compat.sh" || exit 1
 USER_FILTER=$AGH/bin/userfilters/adblock-pro-user-rules.txt
+SHARED_FILTER=$AGH/bin/userfilters/adblock-pro-shared-app-rules.txt
+RULE_STORE=$AGH/scripts/rule-store.sh
 umask 077
 . "$AGH/settings.conf" 2>/dev/null
 redir_port=${redir_port:-5591}
@@ -135,9 +137,17 @@ observe_abort() {
 observe_capture() {
   observe_seconds=$1
   observe_id=$2
-  case "$observe_seconds" in 30|60|90) ;; *) echo '[!] Observation duration must be 30, 60, or 90 seconds.' >&2; return 1 ;; esac
+  observe_package=${3:-}
+  case "$observe_seconds" in 5|10|15|30|60|90) ;; *) echo '[!] Invalid observation duration.' >&2; return 1 ;; esac
   case "$observe_id" in ''|*[!0-9]*) echo '[!] Invalid observation ID.' >&2; return 1 ;; esac
   [ ${#observe_id} -le 20 ] || { echo '[!] Invalid observation ID.' >&2; return 1; }
+  if [ -n "$observe_package" ]; then
+    [ ${#observe_package} -le 255 ] && printf '%s\n' "$observe_package" | "$BB" grep -Eq '^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$' || {
+      echo '[!] Invalid application package.' >&2; return 1;
+    }
+    observe_activity=$(cmd package resolve-activity --brief --user 0 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER "$observe_package" 2>/dev/null | "$BB" tail -n 1)
+    case "$observe_activity" in "$observe_package/"*) ;; *) echo '[!] 应用未安装或没有可启动入口，请重新选择。' >&2; return 1 ;; esac
+  fi
   mkdir -p "$OBS_DIR" || return 1
   chmod 700 "$OBS_DIR" 2>/dev/null
   if ! mkdir "$OBS_DIR/lock" 2>/dev/null; then echo '[!] A DNS observation is already active.' >&2; return 1; fi
@@ -175,7 +185,18 @@ observe_capture() {
   # Only keep a short, private API snapshot for the WebUI to parse locally.
   # The normal operation log never receives DNS queries or client addresses.
   echo "[进度] OBSERVE_START_EPOCH=$observe_started_at"
-  echo "[进度] 正在观察设备 DNS 域名，共 $observe_seconds 秒；请现在打开目标应用。"
+  if [ -n "$observe_package" ]; then
+    echo "[进度] 正在打开选定应用，共观察 $observe_seconds 秒。"
+    if ! am force-stop --user 0 "$observe_package" ||
+       ! am start --user 0 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER -n "$observe_activity" > "$OBS_DIR/$observe_id.launch.tmp" 2>&1 ||
+       "$BB" grep -q '^Error:' "$OBS_DIR/$observe_id.launch.tmp"; then
+      rm -f "$OBS_DIR/$observe_id.launch.tmp"
+      echo '[!] 应用启动失败，正在恢复原查询日志设置。' >&2; return 1;
+    fi
+    rm -f "$OBS_DIR/$observe_id.launch.tmp"
+  else
+    echo "[进度] 正在观察设备 DNS 域名，共 $observe_seconds 秒；请现在打开目标应用。"
+  fi
   sleep "$observe_seconds"
   observe_result="$OBS_DIR/$observe_id.result"
   if ! api GET '/querylog?limit=200' 15 > "$observe_result.tmp"; then
@@ -318,7 +339,7 @@ save_snapshot() {
   cp "$AGH/bin/AdGuardHome.yaml" "$stage/bin/AdGuardHome.yaml" || { rm -rf "$stage"; return 1; }
   [ ! -d "$AGH/bin/data/filters" ] || cp -R "$AGH/bin/data/filters" "$stage/bin/data/filters" || { rm -rf "$stage"; return 1; }
   [ ! -d "$AGH/bin/userfilters" ] || cp -R "$AGH/bin/userfilters" "$stage/bin/userfilters" || { rm -rf "$stage"; return 1; }
-  for file in sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
+  for file in sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
     [ ! -f "$STATE/$file" ] || cp "$STATE/$file" "$stage/state/$file" || { rm -rf "$stage"; return 1; }
   done
   [ ! -f "$STATE/profiles-initialized" ] || cp "$STATE/profiles-initialized" "$stage/state/profiles-initialized" || { rm -rf "$stage"; return 1; }
@@ -344,7 +365,7 @@ restore_snapshot() {
   rm -rf "$AGH/bin/data/filters" "$AGH/bin/userfilters"
   [ ! -d "$restore/bin/data/filters" ] || cp -R "$restore/bin/data/filters" "$AGH/bin/data/filters" || { rm -rf "$restore"; return 1; }
   [ ! -d "$restore/bin/userfilters" ] || cp -R "$restore/bin/userfilters" "$AGH/bin/userfilters" || { rm -rf "$restore"; return 1; }
-  for file in sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
+  for file in sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
     rm -f "$STATE/$file"
     [ ! -f "$restore/state/$file" ] || cp "$restore/state/$file" "$STATE/$file" || { rm -rf "$restore"; return 1; }
   done
@@ -457,6 +478,29 @@ write_personal_filter() {
   USER_RULE_COUNT=$($BB awk '!/^[[:space:]]*(!|#|$)/ { n++ } END { print n+0 }' "$USER_FILTER")
 }
 
+ensure_shared_filter() {
+  "$BB" sh "$RULE_STORE" init || return 1
+  shared_json=$(api GET /filtering/status 4) || return 1
+  if printf '%s' "$shared_json" | "$BB" grep -Eo '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | "$BB" cut -d '"' -f4 | "$BB" grep -Fxq "$SHARED_FILTER"; then return 0; fi
+  body=$(printf '{"name":"AdBlock Pro 共享抓包规则","url":"%s","whitelist":false}' "$SHARED_FILTER")
+  result=$(api POST /filtering/add_url "$body" 8 2>&1) && return 0
+  case "$result" in *"already added"*|*"already exists"*) return 0 ;; esac
+  printf '%s\n' "$result" >&2
+  return 1
+}
+
+sync_shared_rules() {
+  LAST_SNAPSHOT=
+  api GET /status 4 >/dev/null || return 1
+  save_snapshot || return 1
+  echo '[进度] 同步公开共享抓包规则'
+  "$BB" sh "$RULE_STORE" sync || return 1
+  ensure_shared_filter && api POST /filtering/refresh '{"whitelist":false}' 30 >/dev/null || {
+    update_failed '[!] 共享规则应用失败，正在保留上一版配置。'; return 1;
+  }
+  echo '[成功] 共享抓包规则已同步并应用；本机个人名单保留。'
+}
+
 sync_personal_filter() {
   marker="$STATE/user-filter-applied"
   write_personal_filter || return 1
@@ -490,6 +534,8 @@ update_rules() {
   api GET /status 4 >/dev/null || { echo '[!] DNS 服务没有响应；现有规则未更改。' >&2; return 1; }
   save_snapshot || { echo '[!] 无法保存更新前的规则快照。' >&2; return 1; }
   echo '[进度] 应用来源与黑白名单配置'
+  "$BB" sh "$RULE_STORE" sync || echo '[提醒] 共享库同步失败，继续使用随包或上次有效快照。'
+  ensure_shared_filter || { update_failed '[!] 共享抓包规则应用失败。'; return 1; }
   sync_sources || { update_failed '[!] 规则来源配置失败。'; return 1; }
   sync_personal_filter || { update_failed '[!] 个人黑白名单同步失败。'; return 1; }
   echo '[进度] 下载并校验规则源'
@@ -533,12 +579,20 @@ case "$1" in
     write_personal_filter || exit 1
     printf '[+] Rendered %s personal rules.\n' "$USER_RULE_COUNT"
     ;;
+  --ensure-shared) ensure_shared_filter ;;
+  --sync-shared)
+    if [ "${ABP_UPDATE_LOCKED:-0}" != 1 ]; then
+      export ABP_UPDATE_LOCKED=1
+      exec "$BB" flock -n "$STATE/update.lock" /system/bin/sh "$0" --sync-shared
+    fi
+    sync_shared_rules
+    ;;
   --status) status ;;
   --pause) "$AGH/scripts/tool.sh" stop ;;
   --resume)
     # start now reconciles a running resolver's listener and firewall state;
     # avoid an unnecessary DNS interruption when merely resuming.
-    "$AGH/scripts/tool.sh" start
+    "$AGH/scripts/tool.sh" start && ensure_shared_filter
     ;;
   --update)
     if [ "${ABP_UPDATE_LOCKED:-0}" != 1 ]; then
@@ -560,7 +614,7 @@ case "$1" in
     ;;
   --diagnose) diagnose ;;
   --storage-report) "$BB" sh "$AGH/scripts/footprint.sh" ;;
-  --observe) observe_capture "$2" "$3" ;;
+  --observe) observe_capture "$2" "$3" "${4:-}" ;;
   --recover-observation) recover_observation ;;
   --filtering)
     case "$2" in on) enabled=true ;; off) enabled=false ;; *) echo '[!] Expected on or off.' >&2; exit 1 ;; esac

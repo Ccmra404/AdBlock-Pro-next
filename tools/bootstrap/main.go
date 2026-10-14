@@ -40,6 +40,10 @@ filters:
     name: AWAvenue Ads Only
     id: 1791638912
   - enabled: true
+    url: /data/adb/adblockpro/bin/userfilters/adblock-pro-shared-app-rules.txt
+    name: AdBlock Pro Shared App Rules
+    id: 1791638914
+  - enabled: true
     url: /data/adb/adblockpro/bin/userfilters/adblock-pro-user-rules.txt
     name: AdBlock Pro Personal Rules
     id: 1791638913

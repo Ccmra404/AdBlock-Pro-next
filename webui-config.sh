@@ -11,7 +11,7 @@ ADGUARD=https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
 PROFILE_DIR=$DIR/profiles
 umask 077
 
-case "$1" in list-whitelist|list-blacklist|list-sources) ;; *)
+case "$1" in list-whitelist|list-blacklist|list-sources|shared-rules) ;; *)
   if [ "${ABP_CONFIG_LOCKED:-0}" != 1 ]; then
     export ABP_CONFIG_LOCKED=1
     exec "$BB" flock -n "$DIR/update.lock" "$BB" sh "$0" "$@"
@@ -68,7 +68,7 @@ remove_line() {
 mode_sources() {
   case "$1" in
     light|balanced|strict)
-      printf '%s\n' "$REWARD"
+      printf '%s\n' "$REWARD" "$AWA_ADS"
       [ ! -f "$PROFILE_DIR/$1.txt" ] || cat "$PROFILE_DIR/$1.txt"
       ;;
   esac
@@ -109,6 +109,15 @@ case "$1" in
   list-whitelist|list-blacklist)
     cat "$DIR/${1#list-}.txt" 2>/dev/null
     ;;
+  shared-rules)
+    "$BB" sh /data/adb/adblockpro/scripts/rule-store.sh show
+    ;;
+  import-lists)
+    "$BB" sh /data/adb/adblockpro/scripts/rule-store.sh import "$2"
+    ;;
+  export-rules)
+    "$BB" sh /data/adb/adblockpro/scripts/rule-store.sh export "$2" "$3"
+    ;;
   add-whitelist|add-blacklist)
     domain=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
     valid_domain "$domain" || { echo '[!] Invalid domain.' >&2; exit 1; }
@@ -143,7 +152,7 @@ case "$1" in
     read_mode
     profile=${4:-$mode}
     valid_profile "$profile" || { echo '[!] Invalid profile.' >&2; exit 1; }
-    [ "$2" != "$REWARD" ] || { [ "$3" = on ] && exit 0; echo '[!] 10007 is a fixed base rule source.' >&2; exit 1; }
+    case "$2" in "$REWARD"|"$AWA_ADS") [ "$3" = on ] && exit 0; echo '[!] This source is part of the fixed base.' >&2; exit 1 ;; esac
     if [ "$3" = off ]; then
       remove_line "$(profile_file "$profile")" "$2" || exit 1
     else
@@ -166,7 +175,7 @@ case "$1" in
     read_mode
     profile=${3:-$mode}
     valid_profile "$profile" || { echo '[!] Invalid profile.' >&2; exit 1; }
-    if [ "$2" = "$REWARD" ]; then echo '[+] 10007 is already included as a fixed base rule source.'; exit 0; fi
+    case "$2" in "$REWARD"|"$AWA_ADS") echo '[+] This source is already included in the fixed base.'; exit 0 ;; esac
     if ! is_builtin "$2"; then
       "$BB" touch "$DIR/custom-sources.txt" || exit 1
       if ! "$BB" grep -Fxq "$2" "$DIR/custom-sources.txt"; then
@@ -182,7 +191,7 @@ case "$1" in
   remove-source)
     valid_custom_url "$2" || { echo '[!] Invalid HTTPS source.' >&2; exit 1; }
     init_profiles || exit 1
-    [ "$2" != "$REWARD" ] || { echo '[!] The fixed 10007 base source cannot be deleted.' >&2; exit 1; }
+    case "$2" in "$REWARD"|"$AWA_ADS") echo '[!] Fixed base sources cannot be deleted.' >&2; exit 1 ;; esac
     remove_from_profiles "$2" || exit 1
     if ! is_builtin "$2"; then
       remove_line "$DIR/custom-sources.txt" "$2" || exit 1
@@ -219,7 +228,7 @@ case "$1" in
         } else if (url == awavenue) {
           id="awa"; label="秋风完整规则（旧订阅）"; removable="profile"
         } else if (url == awa_ads) {
-          id="awa"; label="秋风纯广告（约 655 条）"; removable="profile"
+          id="awa"; label="秋风纯广告（约 655 条）"; removable="base"
         } else if (url == antiad) {
           id="antiad"; label="anti-AD EasyList（约 9.5 万条）"; removable="profile"
         } else if (url == adrules) {

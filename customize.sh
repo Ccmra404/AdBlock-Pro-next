@@ -53,6 +53,7 @@ for file in action.sh module.prop service.sh uninstall.sh; do
   unzip -oq "$ZIPFILE" "$file" -d "$MODPATH" || fail "Cannot extract $file."
 done
 unzip -oq "$ZIPFILE" "webroot/*" -d "$MODPATH" || fail "Cannot extract WebUI files."
+unzip -oq "$ZIPFILE" "rules/*" -d "$MODPATH" || fail "Cannot extract the shared rule snapshot."
 for file in bindhosts.sh webui-config.sh webui-job.sh; do
   unzip -oq "$ZIPFILE" "$file" -d "$MODPATH" || fail "Cannot extract $file."
 done
@@ -159,6 +160,7 @@ if "$BB" grep -Fq "$user_filter" "$DATA_DIR/bin/AdGuardHome.yaml"; then
   printf '%s\n' "$user_filter" > "$STATE_DIR/user-filter-applied"
 fi
 "$BB" sh "$MODPATH/bindhosts.sh" --render-user-rules || fail "Cannot build the personal rule filter."
+ABP_MODULE_DIR="$MODPATH" "$BB" sh "$DATA_DIR/scripts/rule-store.sh" init || fail "Cannot prepare the shared app rules."
 
 "$BB" sh "$MODPATH/webui-config.sh" init-profiles || fail "Cannot migrate saved rule sources into the three profiles."
 

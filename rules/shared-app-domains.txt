@@ -1,0 +1,32 @@
+# AdBlock Pro maintainer-reviewed app ad domains
+# revision: 2026101401
+# Public domain list. Update the revision when reviewing a changed snapshot.
+adsmind.ugdtimg.com
+ads.app.qc-up.com
+ad-open2.fancydsp.com
+adx-bj.anythinktech.com
+api-access.pangolin-sdk-toutiao.com
+api-nxs-v4.mentamob.com
+api-v3.mentamob.com
+api.yunxish.com
+bid-adx2.vlion.cn
+bid.buluken.com
+c3.gdt.qq.com
+cdn.yunxish.com
+datk.anythinktech.com
+de.ad.gameley.com
+dsp-api-cn.metricslinks.com
+evt.bidex.cn
+jp.ad.gameley.com
+log-api.pangolin-sdk-toutiao-b.com
+mpcfg.fancydsp.com
+pgdt.ugdtimg.com
+rdelivery.qq.com
+sdk.adx.adwangmai.com
+sdk.e.qq.com
+sdkg.fancyapi.com
+sf3-fe-tos.pglstatp-toutiao.com
+td-nexus.advlion.com
+t2.fancyapi.com
+vt.bidex.cn
+yumao.puata.info

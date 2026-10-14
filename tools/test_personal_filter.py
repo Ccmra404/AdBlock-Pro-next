@@ -33,6 +33,11 @@ def exercise(engine, bootstrap):
         # device-specific personal block list in the public repository.
         domains = ['first-boot-regression.example', 'second-boot-regression.example']
         personal.write_text('\n'.join('||' + domain + '^' for domain in domains) + '\n')
+        shared = personal.with_name('adblock-pro-shared-app-rules.txt')
+        bundled = Path(__file__).resolve().parents[1] / 'rules/shared-app-domains.txt'
+        shared_domains = [row for row in bundled.read_text().splitlines() if row and not row.startswith('#')]
+        assert len(shared_domains) == 29
+        shared.write_text('\n'.join('||' + domain + '^' for domain in shared_domains) + '\n')
         text = config.read_text()
         assert 'url: /data/adb/adblockpro/bin/userfilters/adblock-pro-user-rules.txt' in text
         http_port, dns_port = free_port(), free_port()
@@ -42,7 +47,7 @@ def exercise(engine, bootstrap):
         # production sources remain unchanged in the generated installer.
         before, filters = text.split('filters:\n', 1)
         _, after = filters.split('querylog:\n', 1)
-        local = filters[filters.index('  - enabled: true\n    url: ' + str(personal)):].split('querylog:\n')[0]
+        local = filters[filters.index('  - enabled: true\n    url: ' + str(shared)):].split('querylog:\n')[0]
         text = before + 'filters:\n' + local + 'querylog:\n' + after
         text += 'user_rules:\n  - "||native-regression.example^"\n'
         config.write_text(text)
@@ -84,17 +89,26 @@ def exercise(engine, bootstrap):
                 for domain in domains:
                     assert blocked(domain), 'bundled personal domain not applied: ' + domain
                 assert blocked('native-regression.example')
+                for domain in shared_domains:
+                    assert blocked(domain), 'offline shared domain not applied: ' + domain
                 # A later personal-file change must be applied on refresh,
                 # without replacing native user_rules or doubling sources.
-                personal.write_text('||custom-regression.example^\n||allowed-regression.example^\n@@||allowed-regression.example^\n')
+                personal.write_text('||custom-regression.example^\n||allowed-regression.example^\n@@||allowed-regression.example^\n@@||' + shared_domains[0] + '^\n')
                 api('/filtering/refresh', {'whitelist': False, 'force': True})
                 wait_until(lambda: blocked('custom-regression.example') and not blocked(domains[0]))
                 assert blocked('custom-regression.example')
                 assert not blocked('allowed-regression.example')
                 assert not blocked(domains[0]), 'removed personal rule still active'
                 assert blocked('native-regression.example'), 'native custom rules overwritten'
+                assert not blocked(shared_domains[0]), 'personal whitelist cannot override shared filter'
                 filters = api('/filtering/status')['filters']
                 assert sum(item['url'] == str(personal) for item in filters) == 1
+                assert sum(item['url'] == str(shared) for item in filters) == 1
+                shared.write_text('||shared-refresh-regression.example^\n')
+                api('/filtering/refresh', {'whitelist': False, 'force': True})
+                wait_until(lambda: blocked('shared-refresh-regression.example') and not blocked(shared_domains[1]))
+                assert blocked('custom-regression.example'), 'shared refresh removed a personal rule'
+                assert blocked('native-regression.example'), 'shared refresh removed a native rule'
             finally:
                 process.terminate()
                 try:
