@@ -5,6 +5,19 @@ CONFIG=$MODDIR/webui-config.sh
 umask 077
 . "$MODDIR/scripts/compat.sh" || exit 1
 
+prepare_worker_cgroup() {
+  local worker_groups
+  [ -f /proc/self/cgroup ] || return 0
+  worker_groups=$("$BB" cat /proc/self/cgroup) || return 1
+  if printf '%s\n' "$worker_groups" | "$BB" grep -Eq '^0::/(apps/)?uid_[0-9]+(/|$)'; then
+    # nohup keeps the manager's freezer membership; move before spawning children.
+    { printf '%s\n' "$$" > /sys/fs/cgroup/cgroup.procs; } 2>/dev/null || return 1
+    worker_groups=$("$BB" cat /proc/self/cgroup) || return 1
+    printf '%s\n' "$worker_groups" | "$BB" grep -qx '0::/' || return 1
+  fi
+  return 0
+}
+
 # Keep only the last 200 completed operations. In-progress jobs have no .done.
 prune_jobs() {
   for file in "$DIR"/*.done; do
@@ -143,8 +156,13 @@ case "$1" in
   case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
   if [ "$3" = --observe ]; then case "$4" in 5|10|15|30|60|90) ;; *) exit 1;; esac; fi
   # Serialize privileged mutations from multiple WebUI sessions.
-  "$BB" flock -n "$DIR/worker.lock" "$BB" sh "$0" execute "$2" "$3" "$4" "${5:-}" >> "$DIR/$2.log" 2>&1
-  result=$?
+  if prepare_worker_cgroup; then
+    "$BB" flock -n "$DIR/worker.lock" "$BB" sh "$0" execute "$2" "$3" "$4" "${5:-}" >> "$DIR/$2.log" 2>&1
+    result=$?
+  else
+    echo '[!] Cannot leave the app freezer; operation was not started.' >> "$DIR/$2.log"
+    result=1
+  fi
   if [ "$result" != 0 ]; then
     echo "[!] Task failed or another DNS operation is already running (exit $result)." >> "$DIR/$2.log"
   fi
