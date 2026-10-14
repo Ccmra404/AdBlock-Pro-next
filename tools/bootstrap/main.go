@@ -12,6 +12,8 @@ import (
 )
 
 const initialConfig = `# Created on this device by AdBlock Pro. Do not upload this file.
+# Matches the bundled v0.107.79 core; avoid legacy migrations resetting querylog.
+schema_version: 34
 http:
   address: 127.0.0.1:3000
 users:
@@ -39,6 +41,10 @@ filters:
     url: https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt
     name: AWAvenue Ads Only
     id: 1791638912
+  - enabled: true
+    url: /data/adb/adblockpro/bin/userfilters/adblock-pro-shared-app-rules.txt
+    name: AdBlock Pro Shared App Rules
+    id: 1791638914
   - enabled: true
     url: /data/adb/adblockpro/bin/userfilters/adblock-pro-user-rules.txt
     name: AdBlock Pro Personal Rules

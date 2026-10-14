@@ -20,3 +20,37 @@ export function exec(command, options = {}) {
     }
   });
 }
+
+// Use the host's package catalogue; older hosts fall back to package names.
+export async function listApplications() {
+  const bridge = window.ksu;
+  let packages;
+  try {
+    const raw = typeof bridge?.listPackages === 'function' ? bridge.listPackages('user')
+      : typeof bridge?.listUserPackages === 'function' ? bridge.listUserPackages() : null;
+    packages = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch { packages = null; }
+  if (!Array.isArray(packages)) {
+    const result = await exec('pm list packages -3 --user 0');
+    if (Number(result.errno)) throw new Error('无法读取本机应用，请检查 Root 权限');
+    packages = String(result.stdout || '').split(/\r?\n/).map(x => x.replace(/^package:/, '').trim());
+  }
+  packages = [...new Set(packages)].filter(x => typeof x === 'string' && /^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/.test(x));
+  const apps = [];
+  for (let i = 0; i < packages.length; i += 40) {
+    const batch = packages.slice(i, i + 40);
+    let info = [];
+    try {
+      if (typeof bridge?.getPackagesInfo === 'function') {
+        const raw = bridge.getPackagesInfo(JSON.stringify(batch));
+        info = typeof raw === 'string' ? JSON.parse(raw) : raw;
+      }
+    } catch { info = []; }
+    for (const packageName of batch) {
+      const item = Array.isArray(info) && info.find(x => x?.packageName === packageName && !x.error);
+      apps.push({ packageName, label: String(item?.appLabel || packageName).slice(0, 255) });
+    }
+    if (i + 40 < packages.length) await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  return apps.sort((a, b) => a.label.localeCompare(b.label, 'zh-CN'));
+}

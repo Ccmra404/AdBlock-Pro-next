@@ -115,3 +115,10 @@ fi
     fi
   done
 ) >/dev/null 2>&1 &
+
+# Register the bundled shared filter on upgrades too, after crash protection
+# is running. No GitHub request or private-list migration occurs at boot.
+if [ -r /data/adb/adblockpro/bin/agh.pid ]; then
+  "$BB" sh "$MODDIR/bindhosts.sh" --ensure-shared >/dev/null 2>&1 ||
+    printf '%s [提醒] 共享抓包规则待应用；现有 DNS 核心继续运行。\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> /data/adb/adblockpro/history.log
+fi

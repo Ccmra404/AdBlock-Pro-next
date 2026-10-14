@@ -78,7 +78,7 @@ esac
       if [ "$ticks" -gt "\${PASSES:-1}" ]; then rm -f "$MODDIR/disable"; rmdir "$MODDIR"; fi
     }`,
     'kill() { echo unexpected-kill >> "$CALLS"; return 1; }',
-    service.slice(monitorStart)
+    service.slice(monitorStart, service.indexOf('# Register the bundled shared filter', monitorStart))
       .replaceAll('/data/adb/adblockpro', shellPath(agh))
       .replaceAll('/data/adb/bindhosts_personal', shellPath(state))
       .replaceAll('/proc/', shellPath(proc) + '/')

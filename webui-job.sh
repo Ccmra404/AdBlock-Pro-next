@@ -21,7 +21,9 @@ prune_jobs() {
 case "$1" in
  config)
   case "$2" in
-   list-whitelist|list-blacklist) ;;
+   list-whitelist|list-blacklist|shared-rules) ;;
+   import-lists) case "$3" in ''|*[!A-Za-z0-9+/=]*) exit 1 ;; esac; [ ${#3} -le 98304 ] || exit 1 ;;
+   export-rules) case "$3" in local|shared) ;; *) exit 1 ;; esac ;;
    list-sources) case "$3" in ''|light|balanced|strict) ;; *) exit 1;; esac ;;
    add-whitelist|add-blacklist|remove-whitelist|remove-blacklist) echo "$3" | "$BB" grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' || exit 1 ;;
    auto-update|autostart) case "$3" in on|off) ;; *) exit 1;; esac ;;
@@ -34,7 +36,7 @@ case "$1" in
   # Serialize configuration writes with DNS worker operations across WebUI
   # sessions. Reads intentionally remain non-blocking.
   case "$2" in
-   list-whitelist|list-blacklist|list-sources) ;;
+   list-whitelist|list-blacklist|list-sources|shared-rules) ;;
    *)
     if [ "${ABP_JOB_CONFIG_LOCKED:-0}" != 1 ]; then
      mkdir -p "$DIR" || exit 1
@@ -47,18 +49,21 @@ case "$1" in
    set-source) result=$(sh "$CONFIG" "$2" "$3" "$4" "$5" 2>&1); event_id=$6 ;;
    add-source) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$5 ;;
    list-sources) result=$(sh "$CONFIG" "$2" "$3" 2>&1); event_id='' ;;
+   shared-rules) result=$(sh "$CONFIG" "$2" 2>&1); event_id='' ;;
+   export-rules) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$4 ;;
    *) result=$(sh "$CONFIG" "$2" "$3" 2>&1); event_id=$4 ;;
   esac
   code=$?
   printf '%s\n' "$result"
   case "$2" in
-   add-whitelist|add-blacklist|remove-whitelist|remove-blacklist|auto-update|autostart|set-mode|set-source|add-source|remove-source) loggable=1 ;;
+   add-whitelist|add-blacklist|remove-whitelist|remove-blacklist|import-lists|export-rules|auto-update|autostart|set-mode|set-source|add-source|remove-source) loggable=1 ;;
    *) loggable=0 ;;
   esac
   case "$event_id" in ''|*[!0-9]*) loggable=0 ;; esac
   if [ "$loggable" = 1 ] && [ ${#event_id} -le 20 ]; then
    mkdir -p "$DIR" || exit "$code"
-   printf '%s\n%s\n' "$2" "$3" > "$DIR/$event_id.action.tmp" && mv "$DIR/$event_id.action.tmp" "$DIR/$event_id.action" || exit "$code"
+   argument=$3; [ "$2" != import-lists ] || argument=''
+   printf '%s\n%s\n' "$2" "$argument" > "$DIR/$event_id.action.tmp" && mv "$DIR/$event_id.action.tmp" "$DIR/$event_id.action" || exit "$code"
    printf '%s\n' "$result" > "$DIR/$event_id.log.tmp" && mv "$DIR/$event_id.log.tmp" "$DIR/$event_id.log" || exit "$code"
    printf '%s\n' "$code" > "$DIR/$event_id.done.tmp" && mv "$DIR/$event_id.done.tmp" "$DIR/$event_id.done" || exit "$code"
   fi
@@ -119,26 +124,26 @@ case "$1" in
  start)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
+  case "$3" in --update|--sync-shared|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
   case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
-  if [ "$3" = --observe ]; then case "$4" in 30|60|90) ;; *) exit 1;; esac; fi
+  if [ "$3" = --observe ]; then case "$4" in 5|10|15|30|60|90) ;; *) exit 1;; esac; fi
   if [ "$3" = --rollback-history ]; then echo "$4" | "$BB" grep -Eq '^[0-9]{14}-[0-9]+$' || exit 1; fi
   mkdir -p "$DIR" || exit 1
   # Atomic exclusive creation rejects a duplicate job ID.
   ( set -C; : > "$DIR/$2.log" ) 2>/dev/null || exit 1
   printf '%s\n%s\n' "$3" "$4" > "$DIR/$2.action.tmp" && mv "$DIR/$2.action.tmp" "$DIR/$2.action" || exit 1
   case "$3" in --observe) echo "准备临时观察 $4 秒 DNS 域名…" > "$DIR/$2.log" ;; *) echo '任务已提交，正在等待下载或校验结果…' > "$DIR/$2.log" ;; esac
-  "$BB" nohup "$BB" sh "$0" worker "$2" "$3" "$4" </dev/null >/dev/null 2>&1 &
+  "$BB" nohup "$BB" sh "$0" worker "$2" "$3" "$4" "${5:-}" </dev/null >/dev/null 2>&1 &
   echo started
   ;;
  worker)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
+  case "$3" in --update|--sync-shared|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
   case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
-  if [ "$3" = --observe ]; then case "$4" in 30|60|90) ;; *) exit 1;; esac; fi
+  if [ "$3" = --observe ]; then case "$4" in 5|10|15|30|60|90) ;; *) exit 1;; esac; fi
   # Serialize privileged mutations from multiple WebUI sessions.
-  "$BB" flock -n "$DIR/worker.lock" "$BB" sh "$0" execute "$2" "$3" "$4" >> "$DIR/$2.log" 2>&1
+  "$BB" flock -n "$DIR/worker.lock" "$BB" sh "$0" execute "$2" "$3" "$4" "${5:-}" >> "$DIR/$2.log" 2>&1
   result=$?
   if [ "$result" != 0 ]; then
     echo "[!] Task failed or another DNS operation is already running (exit $result)." >> "$DIR/$2.log"
@@ -153,9 +158,9 @@ case "$1" in
  execute)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1 ;; esac
+  case "$3" in --update|--sync-shared|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1 ;; esac
   if [ "$3" = --observe ]; then
-    exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$4" "$2"
+    exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$4" "$2" "${5:-}"
   else
     exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$4"
   fi

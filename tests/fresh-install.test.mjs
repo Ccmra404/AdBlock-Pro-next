@@ -16,6 +16,7 @@ function installFixture(t, family, preference, failWrite = false) {
     .replaceAll('/data/adb/modules/AdGuardHome', shellPath(path.join(root.dir, 'absent')));
   const files = ['action.sh', 'module.prop', 'service.sh', 'uninstall.sh', 'bindhosts.sh', 'webui-config.sh', 'webui-job.sh',
     'settings.conf', 'config-blacklist.txt', 'config-whitelist.txt',
+    'rules/shared-app-domains.txt',
     ...readdirSync(new URL('../scripts/', import.meta.url)).map(name => 'scripts/' + name),
     ...readdirSync(new URL('../webroot/', import.meta.url)).map(name => 'webroot/' + name)];
   for (const file of files) {
@@ -52,6 +53,9 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     const rules = readFileSync(personal, 'utf8').split('\n').filter(row => row.startsWith('||'));
     assert.equal(rules.length, defaults.length);
     assert.deepEqual(defaults, []);
+    const shared = readFileSync(path.join(f.runtime, 'bin/userfilters/adblock-pro-shared-app-rules.txt'), 'utf8');
+    assert.equal(shared.split('\n').filter(row => row.startsWith('||')).length, 29);
+    assert.match(shared, /\|\|adsmind\.ugdtimg\.com\^/);
     assert.deepEqual(rules, [...new Set(defaults.map(domain => '||' + domain + '^'))].sort());
     assert.match(readFileSync(path.join(f.runtime, 'bin/AdGuardHome.yaml'), 'utf8'), new RegExp('url: ' + shellPath(personal).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.equal(readFileSync(path.join(f.state, 'user-filter-applied'), 'utf8').trim(), shellPath(personal));
@@ -61,6 +65,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     writeFileSync(path.join(f.state, 'dns-takeover'), 'off\n');
     const again = f.install(); assert.equal(again.status, 0, again.stderr + again.stdout);
     assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), 'custom.personal.example\ncustom.personal.example\n');
+    assert.equal(readFileSync(path.join(f.runtime, 'bin/userfilters/adblock-pro-shared-app-rules.txt'), 'utf8'), shared);
     assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'off\n');
     assert.match(again.stdout, /DNS takeover: off \(preserved\)/);
     assert.equal(readFileSync(personal, 'utf8').split('||custom.personal.example^').length, 2);

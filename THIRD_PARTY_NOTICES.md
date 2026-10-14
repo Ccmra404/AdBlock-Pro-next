@@ -6,4 +6,4 @@ This project includes or redistributes the following upstream components and rul
 - **10007 filter snapshot**: `bin/data/filters/10007.txt`, from https://github.com/lingeringsound/10007_auto. Repository license metadata reports GPL-3.0.
 - **AWAvenue Ads Rule snapshot**: `bin/data/filters/1791638912.txt`, from https://github.com/TG-Twilight/AWAvenue-Ads-Rule. Repository license metadata reports GPL-3.0.
 
-See each upstream repository for its complete license and current source. The original AdBlock Pro code is licensed under GPL-3.0-only; the personal domain list is not bundled in this public repository.
+See each upstream repository for its complete license and current source. The original AdBlock Pro code is licensed under GPL-3.0-only. The maintainer-approved public app-domain snapshot is included at `rules/shared-app-domains.txt`; local personal lists, credentials and device query logs are not included.

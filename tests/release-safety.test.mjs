@@ -26,7 +26,7 @@ test('changes to every installable file family trigger ARM64 package validation'
   for (const pattern of [
     'tools/bootstrap/**', 'customize.sh', 'module.prop', 'action.sh',
     'service.sh', 'uninstall.sh', 'bindhosts.sh', 'webui-config.sh',
-    'webui-job.sh', 'scripts/**', 'settings.conf', 'webroot/**',
+    'webui-job.sh', 'scripts/**', 'rules/**', 'settings.conf', 'webroot/**',
     'META-INF/**', 'bin/AdGuardHome', 'bin/data/filters/**',
   ]) {
     assert(triggers.includes('"' + pattern + '"'), pattern + ' must trigger packaging');

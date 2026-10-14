@@ -1,4 +1,4 @@
-import { exec } from './kernelsu.js';
+import { exec, listApplications } from './kernelsu.js';
 
 const MODULE_DIR = '/data/adb/modules/bindhosts_personal';
 const COMMAND = `sh ${MODULE_DIR}/bindhosts.sh`;
@@ -7,13 +7,14 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', logFilter: 'all', profileEditor: 'balanced' };
+Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', sharedUpdatedAt: 0, sharedError: '', sharedLoaded: false, sharedSearch: '', sharedPage: 0, apps: [], appsLoaded: false, appsLoading: false, appsError: '', appQuery: '', selectedApp: null, observeDuration: '10', observationResultsOpen: false });
 const pages = { home: '总览', rules: '规则管理', lists: '名单', manage: '设置', logs: '运行日志' };
 const LOG_PAGE_SIZE = 10;
 const OBSERVATION_PAGE_SIZE = 10;
 const LIST_PAGE_SIZE = 10;
 const LIST_PAGINATION_THRESHOLD = 20;
 const LOG_CACHE_MS = 15000;
-const modes = { light: ['轻量', '仅基础规则'], balanced: ['均衡', '基础 + 秋风纯广告'], strict: ['严格', '基础 + anti-AD'] };
+const modes = { light: ['轻量', '基础规则'], balanced: ['均衡', '基础 + 自选来源'], strict: ['严格', '基础 + anti-AD'] };
 const OBSERVE_SESSION_KEY = 'abp-observation-session';
 let lastJobId = 0;
 function nextJobId() { lastJobId = Math.max(Date.now(), lastJobId + 1); return String(lastJobId); }
@@ -142,13 +143,15 @@ function homePage() {
 }
 function sourceRows() {
   if (!state.sources.length) return `<div class="empty-state">${esc(state.sourceError || '正在读取规则来源…')}</div>`;
-  return state.sources.map(source => {
+  const rows = state.sources.map(source => {
     const base = source.removable === 'base';
     const enabled = source.enabled === 'enabled';
     const status = base ? '固定基础' : enabled ? '本档启用' : source.configured === 'configured' ? '本档停用' : '未加入本档';
     const actions = base ? '' : `<div class="source-actions"><button class="btn" data-action="source-toggle" data-url="${esc(source.url)}" data-enabled="${source.enabled}">${enabled ? '从本档移除' : '加入本档'}</button><button class="btn btn-danger" data-action="source-delete" data-url="${esc(source.url)}">${source.removable === 'removable' ? '删除来源' : '全部移除'}</button></div>`;
     return `<div class="source-row" data-source-url="${esc(source.url)}"><div class="source-copy"><strong>${esc(source.label)}</strong><small>${esc(source.url)}</small></div><span class="tag ${enabled ? 'green' : ''}">${status}</span>${actions}</div>`;
   }).join('');
+  const shared = state.status?.dns_filter_json?.filters?.find(x => x.url?.endsWith('/adblock-pro-shared-app-rules.txt'));
+  return rows + `<div class="source-row"><div class="source-copy"><strong>共享抓包规则</strong><small>维护者确认的应用广告域名 · ${shared ? fmt(shared.rules_count) + ' 条已加载' : '随模块预置'}</small></div>${tag('固定基础')}<button class="btn" data-action="shared-open">查看</button></div>`;
 }
 function ruleList(kind) {
   const items = state.lists[kind] || [];
@@ -185,14 +188,32 @@ function rulesPage() {
   const selectedCount = state.sources.filter(source => source.enabled === 'enabled' && source.removable !== 'base').length;
   return `${heading('规则管理', '来源、更新与历史回滚')}
     <div class="stack"><section id="update-progress" class="panel progress-card hidden" aria-live="polite"><div class="panel-head"><b class="section-title">规则更新</b><span id="update-elapsed" class="small muted"></span></div><div id="update-stage" class="small">等待任务</div><div class="progress-track"><span class="progress-bar"></span></div><p id="update-help" class="field-help">下载期间本页面仍可切换；不要重复启动更新。</p></section>
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">规则档位与订阅</h2><p class="section-sub">固定基础：10007 快照与个人黑白名单；各档可独立选择来源</p></div><span class="tag" data-source-count>${state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : `${selectedCount} 个附加源`}</span></div><div class="choice-row profile-tabs">${profileTabs}</div><p class="field-help profile-hint">正在编辑${profileNames[state.profileEditor]}档。编辑档与已选运行档位分开；手动来源会保留在对应档位，切换模式不会删掉配置。来源更改须点击更新后生效。</p><div id="source-list" class="source-list">${sourceRows()}</div><form id="source-form" class="btn-row"><input class="field" name="url" type="url" placeholder="导入 HTTPS 来源并加入当前档" autocapitalize="none" required><button class="btn" type="submit">导入到本档</button></form><p id="rules-feedback" class="field-help" aria-live="polite">列表规模是 2026-10-10 核验快照，源会变化，实际以内存 RSS 和加载条目为准。AdRules DNS 约 20 万条，默认不启用；建议一次只添加一个大型来源。更新失败仍保留上一版规则。</p><div class="divider"></div><div class="btn-row"><button class="btn btn-primary" data-action="update">立即检查并更新</button><select id="history-select" class="field" aria-label="选择要恢复的规则历史"><option value="">选择历史版本</option>${(s?.history || []).map(item => { const [key, count] = item.split(':'); return `<option value="${esc(key)}">${esc(key.slice(0,4)+'-'+key.slice(4,6)+'-'+key.slice(6,8)+' '+key.slice(8,10)+':'+key.slice(10,12))} · ${fmt(count)} 条</option>`; }).join('')}</select><button class="btn btn-danger" data-action="rollback">恢复</button></div></section>
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">规则档位与订阅</h2><p class="section-sub">固定基础：10007、秋风纯广告与共享抓包规则；各档可独立选择附加源</p></div><span class="tag" data-source-count>${state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : `${selectedCount} 个附加源`}</span></div><div class="choice-row profile-tabs">${profileTabs}</div><p class="field-help profile-hint">正在编辑${profileNames[state.profileEditor]}档。编辑档与已选运行档位分开；手动来源会保留在对应档位，切换模式不会删掉配置。来源更改须点击更新后生效。</p><div id="source-list" class="source-list">${sourceRows()}</div><form id="source-form" class="btn-row"><input class="field" name="url" type="url" placeholder="导入 HTTPS 来源并加入当前档" autocapitalize="none" required><button class="btn" type="submit">导入到本档</button></form><p id="rules-feedback" class="field-help" aria-live="polite">列表规模是 2026-10-10 核验快照，源会变化，实际以内存 RSS 和加载条目为准。AdRules DNS 约 20 万条，默认不启用；建议一次只添加一个大型来源。更新失败仍保留上一版规则。</p><div class="divider"></div><div class="btn-row"><button class="btn btn-primary" data-action="update">立即检查并更新</button><select id="history-select" class="field" aria-label="选择要恢复的规则历史"><option value="">选择历史版本</option>${(s?.history || []).map(item => { const [key, count] = item.split(':'); return `<option value="${esc(key)}">${esc(key.slice(0,4)+'-'+key.slice(4,6)+'-'+key.slice(6,8)+' '+key.slice(8,10)+':'+key.slice(10,12))} · ${fmt(count)} 条</option>`; }).join('')}</select><button class="btn btn-danger" data-action="rollback">恢复</button></div></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">域名检查</h2><p class="section-sub">查询域名当前是否命中 AdGuard Home 规则</p></div></div><form id="domain-form" class="btn-row"><input class="field" name="domain" placeholder="例如 ads.example.com" autocapitalize="none" required><button class="btn" type="submit">检查</button></form><p id="domain-result" class="field-help">检查结果由设备本地过滤服务返回。</p></section></div>`;
 }
 function personalRulesPage() {
+  if (state.rulesView === 'shared') return sharedRulesPage();
   const blocked = state.lists.blacklist || [];
   const allowed = state.lists.whitelist || [];
-  return `${heading('个人规则', '查看、搜索和维护本机拦截与放行名单', '<button class="btn" data-action="personal-rules-export">导出 TXT</button>')}
-    <div class="stack"><section class="panel personal-summary"><div class="panel-head"><div><h2 class="section-title">名单概览</h2><p class="section-sub">仅统计本机个人规则，不含订阅规则和 DNS 查询记录</p></div>${tag(`${blocked.length + allowed.length} 条`)}</div><div class="personal-counts"><div><strong>${fmt(blocked.length)}</strong><span>拦截域名</span></div><div><strong>${fmt(allowed.length)}</strong><span>放行域名</span></div></div></section><div class="twocol">${ruleList('blacklist')}${ruleList('whitelist')}</div></div>`;
+  return `${heading('个人规则', '本机名单独立保存；共享抓包规则供各设备同步', '<div class="btn-row"><button class="btn" data-action="personal-rules-import">导入</button><button class="btn" data-action="personal-rules-export">导出</button></div>')}<input id="personal-rules-file" type="file" accept=".txt,.json,text/plain,application/json" hidden>
+    <div class="stack">${observationPanel()}<section class="panel personal-summary"><div class="panel-head"><div><h2 class="section-title">名单概览</h2><p class="section-sub">仅统计本机个人规则，不含订阅规则和 DNS 查询记录</p></div>${tag(`${blocked.length + allowed.length} 条`)}</div><div class="personal-counts"><div><strong>${fmt(blocked.length)}</strong><span>拦截域名</span></div><div><strong>${fmt(allowed.length)}</strong><span>放行域名</span></div></div></section><div class="twocol">${ruleList('blacklist')}${ruleList('whitelist')}</div><button type="button" class="panel shared-entry" data-action="shared-open"><span>${icon('globe')}<strong>共享抓包规则库</strong></span><span>查看与同步 ${icon('external')}</span></button></div>`;
+}
+function sharedResultsMarkup() {
+  const query = state.sharedSearch.trim().toLowerCase();
+  const matches = state.sharedRules.filter(x => x.includes(query));
+  const pageCount = Math.max(1, Math.ceil(matches.length / LIST_PAGE_SIZE));
+  state.sharedPage = Math.min(state.sharedPage, pageCount - 1);
+  const start = state.sharedPage * LIST_PAGE_SIZE;
+  const rows = matches.slice(start, start + LIST_PAGE_SIZE).map(domain => row('globe', domain, '', '')).join('');
+  return `<div class="rows">${rows || `<div class="empty-state">${state.sharedLoaded ? '没有符合条件的域名' : '正在读取共享规则…'}</div>`}</div><nav class="logs-pagination" aria-label="共享规则分页"><button class="btn" data-action="shared-page" data-page="${state.sharedPage - 1}" ${state.sharedPage === 0 ? 'disabled' : ''}>上一页</button><span>${state.sharedPage + 1} / ${pageCount} 页 · ${matches.length} 条</span><button class="btn" data-action="shared-page" data-page="${state.sharedPage + 1}" ${state.sharedPage >= pageCount - 1 ? 'disabled' : ''}>下一页</button></nav>`;
+}
+function renderSharedResults() {
+  const node = $('#shared-results'); if (node) node.innerHTML = sharedResultsMarkup();
+}
+function sharedRulesPage() {
+  const syncing = state.job?.action === '--sync-shared';
+  return `${heading('共享抓包规则库', '维护者确认后发布，各设备使用同一份公开名单', '<button class="btn" data-action="shared-back">返回个人规则</button>')}
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">共享规则</h2><p class="section-sub">10007、秋风纯广告和本规则库共同构成模块基础</p></div>${tag(`${state.sharedRules.length} 条`)}</div><p class="field-help">修订 ${esc(state.sharedRevision || '—')} · ${state.sharedUpdatedAt ? new Date(state.sharedUpdatedAt * 1000).toLocaleString('zh-CN') : '随模块预置'}。同步会读取 GitHub 上已确认的规则，保留本机个人黑白名单；放行名单可以覆盖共享规则。</p><div class="btn-row"><button class="btn btn-primary" data-action="shared-sync" ${syncing ? 'disabled' : ''}>${syncing ? '正在同步…' : '同步并应用'}</button><button class="btn" data-action="shared-export">导出规则</button></div>${state.sharedError ? `<div class="notice warn">${esc(state.sharedError)}</div>` : ''}<input id="shared-search" class="field" type="search" value="${esc(state.sharedSearch)}" placeholder="搜索共享域名" aria-label="搜索共享域名"><div id="shared-results">${sharedResultsMarkup()}</div></section>`;
 }
 function managePage() {
   const s = state.status;
@@ -201,7 +222,7 @@ function managePage() {
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">运行维护</h2><p class="section-sub">诊断结果统一保存在运行日志中</p></div></div><div class="btn-row"><button class="btn" data-action="diagnose">${icon('activity')} 运行诊断</button><button class="btn" data-action="restart">${icon('refresh')} 重启 DNS 核心</button><button class="btn btn-danger" data-action="disable-takeover">${icon('power')} 紧急解除接管</button><button class="btn" data-nav="logs">查看运行日志</button></div></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">管理入口</h2><p class="section-sub">规则高级配置由 AdGuard Home 原生后台提供</p></div></div><div class="action-grid"><a class="action-card" href="http://127.0.0.1:3000/" target="_blank" rel="noopener">${icon('external')}<span class="action-text"><strong>AdGuard Home 后台</strong><small>订阅、上游 DNS 与查询日志</small></span></a><button type="button" class="action-card" data-action="copy-gkd-link">${icon('activity')}<span class="action-text"><strong>GKD 项目</strong><small>复制项目链接，在浏览器中查看</small></span></button></div><p class="field-help">WebUI 不保存或展示 AdGuard Home 管理密码；首次登录凭据由安装包单独提供。</p></section></div>`;
 }
-const actionNames = { '--update': '规则更新', '--pause': '暂停过滤核心', '--resume': '启动过滤核心', '--rollback': '恢复规则', '--rollback-history': '恢复历史规则', '--filtering': '过滤开关', '--takeover': 'DNS 接管', '--restart': '重启 DNS 核心', '--diagnose': '环境诊断', '--observe': '域名观察', diagnose: '环境诊断', 'set-mode': '切换过滤模式', 'set-source': '切换规则来源', 'add-source': '导入规则来源', 'remove-source': '删除规则来源', 'add-whitelist': '添加白名单', 'remove-whitelist': '删除白名单', 'add-blacklist': '添加黑名单', 'remove-blacklist': '删除黑名单', 'auto-update': '自动更新设置', autostart: '开机运行设置' };
+const actionNames = { '--sync-shared': '同步共享规则', 'import-lists': '导入个人名单', 'export-rules': '导出规则', '--update': '规则更新', '--pause': '暂停过滤核心', '--resume': '启动过滤核心', '--rollback': '恢复规则', '--rollback-history': '恢复历史规则', '--filtering': '过滤开关', '--takeover': 'DNS 接管', '--restart': '重启 DNS 核心', '--diagnose': '环境诊断', '--observe': '域名观察', diagnose: '环境诊断', 'set-mode': '切换过滤模式', 'set-source': '切换规则来源', 'add-source': '导入规则来源', 'remove-source': '删除规则来源', 'add-whitelist': '添加白名单', 'remove-whitelist': '删除白名单', 'add-blacklist': '添加黑名单', 'remove-blacklist': '删除黑名单', 'auto-update': '自动更新设置', autostart: '开机运行设置' };
 function logRow(line) {
   const [id, status, action, argument, summary] = line.split('\t');
   if (!/^\d{1,20}$/.test(id || '')) return '';
@@ -252,7 +273,7 @@ function observationRows() {
   const visible = state.observationDomains.slice(start, start + OBSERVATION_PAGE_SIZE);
   return `${visible.map(item => {
     const classification = classifyObservedDomain(item);
-    const action = classification.add ? `<button class="btn" data-action="observe-add" data-domain="${esc(item.domain)}">加入个人规则</button>` : '';
+    const action = `<div class="btn-row">${classification.add ? `<button class="btn" data-action="observe-add" data-domain="${esc(item.domain)}">拦截</button>` : ''}${!domainInList(item.domain, state.lists.whitelist) ? `<button class="btn" data-action="observe-allow" data-domain="${esc(item.domain)}">放行</button>` : ''}</div>`;
     return `<div class="observe-row"><div class="observe-copy"><strong>${esc(item.domain)}</strong><small>${fmt(item.count)} 次请求${item.filterId ? ` · 规则 ${esc(item.filterId)}` : ''}</small></div>${tag(classification.label, classification.tone)}${action}</div>`;
   }).join('')}<nav class="observe-pagination logs-pagination" aria-label="观察结果分页"><button class="btn" data-action="observe-page" data-page="${state.observationPage - 1}" ${state.observationPage === 0 ? 'disabled' : ''}>上一页</button><span>第 ${state.observationPage + 1} / ${pageCount} 页 · ${start + 1}–${start + visible.length} 条，共 ${candidateCount} 条</span><button class="btn" data-action="observe-page" data-page="${state.observationPage + 1}" ${state.observationPage >= pageCount - 1 ? 'disabled' : ''}>下一页</button></nav>${state.observationDomains.length > 50 ? `<p class="field-help">按请求次数排序，只显示前 50 个高频候选；共发现 ${fmt(state.observationDomains.length)} 个域名。</p>` : ''}`;
 }
@@ -260,16 +281,15 @@ function observationPanel() {
   const observation = state.observation;
   const active = observation?.active && state.job?.action === '--observe';
   const remaining = active ? Math.max(0, Math.ceil((observation.startedAt + observation.duration * 1000 - Date.now()) / 1000)) : 0;
-  const status = active ? `<div id="observe-progress" class="notice observe-progress" role="status">${icon('activity')}<span>记录中 · 约 ${remaining} 秒后分析。现在打开${esc(observation.appLabel || '目标应用')}并复现广告，然后返回此页。</span></div>` : '';
+  const status = active ? `<div id="observe-progress" class="notice observe-progress" role="status">${icon('activity')}<span>记录中 · 约 ${remaining} 秒后分析。${esc(observation.appLabel || '目标应用')}已重新打开，请复现广告，然后返回此页。</span></div>` : '';
   const error = state.observationError ? `<div class="notice warn observe-error">${icon('info')}<span>${esc(state.observationError)}${observation?.id ? ` <button class="btn btn-plain" data-action="observe-retry">重试读取</button>` : ''}</span></div>` : '';
-  const results = observation && !active && !state.observationError ? `<div class="observe-results"><div class="observe-results-head"><b>观察结果</b><span class="tag">${fmt(state.observationDomains.length)} 个新域名</span></div><p class="field-help">${esc(observation.appLabel || '本次观察')} · 新域名只是时间段内的候选，手机后台应用也可能产生请求。加入个人规则会拦截该域名，规则更新后生效。</p><div id="observation-list" class="observe-list">${observationRows()}</div></div>` : '';
-  return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">域名观察</h2><p class="section-sub">临时查看新 DNS 域名，结束后恢复原查询日志设置</p></div>${tag('仅本机处理')}</div><p class="field-help observe-help">开始后立即切到目标应用并复现广告，再返回此页。观察窗口内会看到整台手机的 DNS 请求，无法精确归因到单个应用；不写入 AdGuard Home 日志文件，结果短暂保存在设备私有目录，不会上传。</p><div class="observe-controls"><label class="observe-app-label">应用标记<input id="observe-app" class="field" maxlength="40" placeholder="例如：目标应用" value="${esc(observation?.appLabel || '')}"></label><label class="observe-duration-label">观察时长<select id="observe-duration" class="field"><option value="30">30 秒</option><option value="60" selected>60 秒</option><option value="90">90 秒</option></select></label><button class="btn btn-primary" data-action="observe-start" ${active ? 'disabled' : ''}>${active ? '观察中…' : '开始观察'}</button></div>${status}${error}${results}</section>`;
+  const results = observation && !active && !state.observationError ? `<details id="observe-results" class="observe-results" ${state.observationResultsOpen ? 'open' : ''}><summary class="observe-results-head"><b>观察结果</b><span class="tag">${fmt(state.observationDomains.length)} 个新域名</span></summary><p class="field-help">${esc(observation.appLabel || '本次观察')} · 新域名只是时间段内的候选，手机后台应用也可能产生请求。加入个人规则会拦截该域名，规则更新后生效。</p><div id="observation-list" class="observe-list">${observationRows()}</div></details>` : '';
+  return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">域名观察</h2><p class="section-sub">选择本机应用，自动重新打开并观察开屏请求</p></div>${tag('仅本机处理')}</div><p class="field-help observe-help">输入应用名称或包名并选择匹配项。开始后会重新打开这个应用，结束后返回本页查看。窗口内也可能包含后台应用的 DNS 请求，结果只是候选；原查询日志设置会恢复，结果不会上传。</p><div class="observe-controls"><label class="observe-app-label">本机应用<input id="observe-app" class="field" maxlength="255" placeholder="例如：酷安" autocomplete="off" value="${esc(state.appQuery)}"></label><label class="observe-duration-label">观察时长<select id="observe-duration" class="field">${['5','10','15','30'].map(n => `<option value="${n}" ${state.observeDuration === n ? 'selected' : ''}>${n} 秒</option>`).join('')}</select></label><button class="btn btn-primary" data-action="observe-start" ${active || !state.selectedApp ? 'disabled' : ''}>${active ? '观察中…' : '开始并打开应用'}</button></div><div id="observe-app-results" class="app-results">${applicationResults()}</div>${status}${error}${results}</section>`;
 }
 function logsPage() {
   const filters = [['all', '全部'], ['running', '进行中'], ['failure', '提醒'], ['success', '成功']];
   return `${heading('运行日志', '统一查看模块操作与环境诊断')}
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">操作记录</h2><p class="section-sub">最近最多 120 条 · 每页 10 条 · 不保存 DNS 请求详情</p></div><div class="btn-row log-head-actions"><button class="btn" data-action="logs-refresh">刷新</button><button class="btn" data-action="logs-export">导出</button></div></div><div class="notice">${icon('info')}<span>观察结果仅用于辅助判断；域名可能来自手机后台应用，确认后才会加入个人规则。</span></div><div class="log-tools"><input id="log-search" class="field" type="search" placeholder="搜索操作日志" value="${esc(state.logSearch)}"><div class="log-filters">${filters.map(([key, label]) => `<button class="log-filter ${state.logFilter === key ? 'selected' : ''}" data-filter="${key}">${label}</button>`).join('')}</div><button class="btn btn-danger" data-action="logs-clear">清空</button></div><div id="log-list" class="log-list">${logListMarkup()}</div></section>
-    ${observationPanel()}`;
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">操作记录</h2><p class="section-sub">最近最多 120 条 · 每页 10 条 · 不保存 DNS 请求详情</p></div><div class="btn-row log-head-actions"><button class="btn" data-action="logs-refresh">刷新</button><button class="btn" data-action="logs-export">导出</button></div></div><div class="log-tools"><input id="log-search" class="field" type="search" placeholder="搜索操作日志" value="${esc(state.logSearch)}"><div class="log-filters">${filters.map(([key, label]) => `<button class="log-filter ${state.logFilter === key ? 'selected' : ''}" data-filter="${key}">${label}</button>`).join('')}</div><button class="btn btn-danger" data-action="logs-clear">清空</button></div><div id="log-list" class="log-list">${logListMarkup()}</div></section>`;
 }
 function render(preservePageCache = false) {
   // Full state changes invalidate detached pages; ordinary navigation retains them.
@@ -521,7 +541,7 @@ async function loadList(kind, force = false) {
   try {
     const result = await runConfig(`list-${kind}`);
     if (requestId !== listRequestIds[kind]) return;
-    state.lists[kind] = (result.stdout || '').split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+    state.lists[kind] = [...new Set((result.stdout || '').split(/\r?\n/).map(x => x.trim().toLowerCase()).filter(x => x && !x.startsWith('#')))];
     listCacheTime[kind] = Date.now();
     delete state.listErrors[kind];
   } catch (error) {
@@ -650,6 +670,10 @@ async function monitorJob(id, action) {
       state.logsLoadedAt = 0;
       await Promise.allSettled([refreshStatus(true, true), loadLogs(true)]);
       const code = Number(done[1]);
+      if (action === '--update' || action === '--sync-shared') {
+        state.sharedLoaded = false;
+        if (state.page === 'lists' && state.rulesView === 'shared') await loadSharedRules(true);
+      }
       if (action === '--observe') {
         if (code === 0) {
           try { await loadObservationResult(id); localStorage.removeItem('abp-pending-job'); }
@@ -658,13 +682,14 @@ async function monitorJob(id, action) {
           localStorage.removeItem('abp-pending-job');
           localStorage.removeItem(OBSERVE_SESSION_KEY);
           state.observation = null;
-          state.observationError = body.split(/\r?\n/).filter(Boolean).filter(line => !line.startsWith('JOB_DONE=')).at(-1) || '观察失败，请查看运行日志。';
+          const outputLines = body.split(/\r?\n/).filter(Boolean).filter(line => !line.startsWith('JOB_DONE='));
+          state.observationError = outputLines.find(line => line.startsWith('[!]')) || outputLines.at(-1) || '观察失败，请查看运行日志。';
         }
       }
       if (action === '--update') progress(code === 0 ? '规则更新完成' : '更新失败，请查看日志', `耗时 ${Math.floor((Date.now() - start) / 1000)} 秒`, code === 0 ? 'done' : 'failed');
       state.job = null; setBusy(false);
       syncStatusView();
-      if (action === '--observe') render();
+      if (action === '--observe' || (state.page === 'lists' && state.rulesView === 'shared')) render();
       toast(action === '--observe' ? (code === 0 ? `观察完成，发现 ${fmt(state.observationDomains.length)} 个新域名` : '域名观察失败') : (code === 0 ? '操作已完成' : '操作失败，请查看运行日志'));
       return code;
     }
@@ -675,7 +700,7 @@ async function monitorJob(id, action) {
       const progressNode = $('#observe-progress span');
       if (progressNode && state.observation) {
         const remaining = Math.max(0, Math.ceil((state.observation.startedAt + state.observation.duration * 1000 - Date.now()) / 1000));
-        progressNode.textContent = `记录中 · 约 ${remaining} 秒后分析。现在打开${state.observation.appLabel || '目标应用'}并复现广告，然后返回此页。`;
+        progressNode.textContent = `记录中 · 约 ${remaining} 秒后分析。${state.observation.appPackage ? '已打开' : '请打开'}${state.observation.appLabel || '目标应用'}并复现广告，然后返回此页。`;
       }
     }
   }
@@ -689,12 +714,12 @@ async function startJob(action, argument = '', metadata = {}) {
   jobStarting = true;
   const id = nextJobId();
   let result;
-  try { result = await exec(`${JOB} start ${id} ${action}${argument ? ` ${shellArg(argument)}` : ''}`); }
+  try { result = await exec(`${JOB} start ${id} ${action}${argument ? ` ${shellArg(argument)}` : ''}${action === '--observe' && metadata.appPackage ? ` ${shellArg(metadata.appPackage)}` : ''}`); }
   finally { jobStarting = false; }
   if (Number(result.errno) !== 0) throw new Error(textOf(result) || '无法启动后台任务');
   if (action === '--observe') {
-    state.observation = { id, startedAt: Date.now(), duration: Number(argument), appLabel: String(metadata.appLabel || ''), active: true };
-    state.observationDomains = []; state.observationPage = 0; state.observationError = '';
+    state.observation = { id, startedAt: Date.now(), duration: Number(argument), appLabel: String(metadata.appLabel || ''), appPackage: String(metadata.appPackage || ''), active: true };
+    state.observationDomains = []; state.observationPage = 0; state.observationError = ''; state.observationResultsOpen = false;
     localStorage.setItem(OBSERVE_SESSION_KEY, JSON.stringify(state.observation));
   }
   state.job = { id, action }; localStorage.setItem('abp-pending-job', `${id}:${action}`);
@@ -736,6 +761,7 @@ async function loadObservationResult(id) {
   if (!Number.isFinite(Number(saved.startedAt))) throw new Error('观察时间信息已丢失，请重新观察。');
   state.observationDomains = parseObservedDomains(result.stdout || '', Number(saved.startedAt));
   state.observationPage = 0;
+  state.observationResultsOpen = false;
   state.observation = { ...saved, id, active: false };
   state.observationError = '';
   localStorage.removeItem(OBSERVE_SESSION_KEY);
@@ -744,9 +770,10 @@ async function loadObservationResult(id) {
 }
 async function startObservation() {
   if (state.status?.state !== 'active') { toast('DNS 核心未运行，请先在总览确认服务状态'); return; }
-  const appLabel = $('#observe-app')?.value.trim() || '';
-  const duration = $('#observe-duration')?.value || '60';
-  await startJob('--observe', duration, { appLabel });
+  if (!state.selectedApp) { toast('请输入并选择匹配的本机应用'); return; }
+  const duration = $('#observe-duration')?.value || '10';
+  if (!['5','10','15','30'].includes(duration)) throw new Error('请选择有效观察时长');
+  await startJob('--observe', duration, { appLabel: state.selectedApp.label, appPackage: state.selectedApp.packageName });
 }
 function confirm(title, message, yesLabel, onYes) {
   const modal = $('#modal');
@@ -766,10 +793,122 @@ async function exportLogs() {
   const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json;charset=utf-8' });
   const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'adblock-pro-operation-logs.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-function exportPersonalRules() {
+async function exportPersonalRules(kind = 'local') {
+  if (window.ksu) {
+    const result = await runConfig('export-rules', kind);
+    const path = String(result.stdout || '').match(/exported_path=([^\r\n]+)/)?.[1];
+    if (!path) throw new Error('未能确认导出文件，请检查下载目录权限');
+    toast(`已导出到下载目录：${path.split('/').at(-1)}`);
+    return;
+  }
   const lines = ['# AdBlock Pro 个人规则', `# 导出日期：${new Date().toISOString().slice(0, 10)}`, '', '[拦截名单]', ...(state.lists.blacklist || []), '', '[放行名单]', ...(state.lists.whitelist || [])];
-  const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'adblock-pro-personal-rules.txt'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const blob = new Blob([kind === 'shared' ? state.sharedRules.join('\n') + '\n' : lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = kind === 'shared' ? 'adblock-pro-shared-rules.txt' : 'adblock-pro-personal-rules.txt'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+let sharedPending = null;
+async function loadSharedRules(force = false) {
+  if (!force && state.sharedLoaded) return;
+  if (sharedPending) return sharedPending;
+  sharedPending = (async () => {
+    try {
+      const result = await exec(`${JOB} config shared-rules`);
+      if (Number(result.errno)) throw new Error(textOf(result) || '无法读取共享规则');
+      const lines = String(result.stdout || '').split(/\r?\n/);
+      state.sharedRules = [...new Set(lines.filter(x => x.startsWith('domain\t')).map(x => x.slice(7)).filter(validObservedDomain))];
+      state.sharedRevision = lines.find(x => x.startsWith('revision='))?.slice(9) || '';
+      state.sharedUpdatedAt = Number(lines.find(x => x.startsWith('updated_at='))?.slice(11)) || 0;
+      state.sharedLoaded = true; state.sharedError = '';
+    } catch (error) { state.sharedError = error.message; }
+    if (state.page === 'lists' && state.rulesView === 'shared') render(true);
+  })();
+  try { await sharedPending; } finally { sharedPending = null; }
+}
+
+function parsePersonalImport(text) {
+  if (new TextEncoder().encode(text).length > 65536) throw new Error('文件不能超过 64 KB，请拆分后导入');
+  const result = { blacklist: [], whitelist: [] };
+  const raw = text.replace(/^\uFEFF/, '').trim();
+  if (raw.startsWith('{')) {
+    let data; try { data = JSON.parse(raw); } catch { throw new Error('JSON 格式无效'); }
+    if (!data || (data.format && data.format !== 'adblock-pro-personal-rules') || (data.version !== undefined && data.version !== 1) || (!Array.isArray(data.blacklist) && !Array.isArray(data.whitelist))) throw new Error('请使用个人名单 JSON 或导出的 TXT 文件');
+    for (const kind of ['blacklist','whitelist']) {
+      if (data[kind] !== undefined && !Array.isArray(data[kind])) throw new Error('名单字段必须是数组');
+      result[kind] = data[kind] || [];
+    }
+  } else {
+    let kind = 'blacklist';
+    for (const line of raw.split(/\r?\n/)) {
+      const value = line.trim();
+      if (!value || /^[#!]/.test(value)) continue;
+      if (value === '[拦截名单]') { kind = 'blacklist'; continue; }
+      if (value === '[放行名单]') { kind = 'whitelist'; continue; }
+      if (/^@@\|\|[^\s]+\^$/.test(value)) result.whitelist.push(value.slice(4,-1));
+      else if (/^\|\|[^\s]+\^$/.test(value)) result.blacklist.push(value.slice(2,-1));
+      else result[kind].push(value);
+    }
+  }
+  for (const kind of ['blacklist','whitelist']) {
+    result[kind] = result[kind].map(value => {
+      if (typeof value !== 'string') throw new Error('名单只能包含域名文本');
+      const domain = value.trim().toLowerCase().replace(/\.$/, '');
+      if (!validObservedDomain(domain)) throw new Error('名单包含无效域名，请检查文件后重试');
+      return domain;
+    });
+    result[kind] = [...new Set(result[kind])];
+  }
+  if (!result.blacklist.length && !result.whitelist.length) throw new Error('文件中没有可导入的域名');
+  if (result.blacklist.length + result.whitelist.length > 5000) throw new Error('单次最多导入 5,000 条域名');
+  return result;
+}
+async function importPersonalFile(file) {
+  if (!file) return;
+  if (state.busy) throw new Error('请先等待当前操作完成');
+  setBusy(true);
+  try {
+  if (file.size > 65536) throw new Error('文件不能超过 64 KB，请拆分后导入');
+  const lists = parsePersonalImport(await file.text());
+  const wire = [...lists.blacklist.map(x => `B\t${x}`), ...lists.whitelist.map(x => `W\t${x}`)].join('\n') + '\n';
+  if (wire.length > 65536) throw new Error('域名数据过大，请拆分后导入');
+  await runConfig('import-lists', btoa(wire));
+  await Promise.all([loadList('blacklist', true), loadList('whitelist', true)]);
+  render(); toast('已合并导入，现有名单保留；执行规则更新后生效');
+  } finally { setBusy(false); }
+}
+
+let applicationsPending = null;
+async function loadApplications() {
+  if (state.appsLoaded) return;
+  if (applicationsPending) return applicationsPending;
+  state.appsLoading = true; updateApplicationResults();
+  applicationsPending = (async () => {
+    try { state.apps = await listApplications(); state.appsLoaded = true; state.appsError = ''; }
+    catch (error) { state.appsError = error.message || '无法读取应用，请检查宿主权限'; }
+    finally { state.appsLoading = false; resolveApplication(); updateApplicationResults(); }
+  })();
+  try { await applicationsPending; } finally { applicationsPending = null; }
+}
+function matchingApplications() {
+  const query = state.appQuery.trim().normalize('NFKC').toLowerCase();
+  return query ? state.apps.filter(x => x.label.normalize('NFKC').toLowerCase().includes(query) || x.packageName.toLowerCase().includes(query)) : [];
+}
+function resolveApplication() {
+  const matches = matchingApplications();
+  const query = state.appQuery.trim().normalize('NFKC').toLowerCase();
+  const exact = matches.filter(x => x.label.normalize('NFKC').toLowerCase() === query || x.packageName.toLowerCase() === query);
+  state.selectedApp = exact.length === 1 ? exact[0] : matches.length === 1 ? matches[0] : null;
+}
+function applicationResults() {
+  if (!state.appQuery.trim()) return '<p class="field-help">输入名称匹配本机应用。旧宿主没有名称接口时，可输入应用包名。</p>';
+  if (state.appsLoading) return '<p class="field-help" role="status">正在匹配本机应用…</p>';
+  if (state.appsError) return `<p class="field-help">${esc(state.appsError)} <button class="btn" data-action="apps-retry">重试</button></p>`;
+  const matches = matchingApplications();
+  if (!matches.length) return '<p class="field-help">没有匹配应用，请检查名称或输入完整包名。</p>';
+  return matches.slice(0,8).map(app => `<button type="button" class="app-match ${state.selectedApp?.packageName === app.packageName ? 'selected' : ''}" data-action="app-select" data-package="${esc(app.packageName)}"><strong>${esc(app.label)}</strong><small>${esc(app.packageName)}</small></button>`).join('') + (matches.length > 8 ? '<p class="field-help">匹配项较多，请继续输入名称。</p>' : '');
+}
+function updateApplicationResults() {
+  const node = $('#observe-app-results'); if (node) node.innerHTML = applicationResults();
+  const button = $('[data-action="observe-start"]'); if (button) button.disabled = state.busy || !state.selectedApp;
 }
 
 function copyGkdLink() {
@@ -791,7 +930,7 @@ function schedulePageLoad(page) {
     setTimeout(() => {
       if (epoch !== navigationEpoch || state.page !== page) return;
       if (page === 'rules') void loadSources();
-      else if (page === 'lists') void Promise.allSettled([loadList('whitelist'), loadList('blacklist')]);
+      else if (page === 'lists') { if (state.rulesView === 'shared') void loadSharedRules(); else void Promise.allSettled([loadList('whitelist'), loadList('blacklist')]); }
       else if (page === 'logs' && (!state.logsLoaded || Date.now() - state.logsLoadedAt >= LOG_CACHE_MS)) void loadLogs().catch(() => {});
     }, 0);
   });
@@ -845,7 +984,19 @@ document.addEventListener('click', async event => {
   if (button.dataset.filter) { state.logFilter = button.dataset.filter; state.logPage = 0; $$('.log-filter').forEach(x => x.classList.toggle('selected', x === button)); renderLogList(); return; }
   switch (button.dataset.action) {
     case 'theme': state.theme = state.theme === 'dark' ? 'light' : 'dark'; localStorage.setItem('abp-theme', state.theme); document.documentElement.dataset.theme = state.theme; break;
-    case 'personal-rules-export': exportPersonalRules(); toast('个人规则已导出为 TXT'); break;
+    case 'personal-rules-export': exportPersonalRules().catch(e => toast(e.message)); break;
+    case 'personal-rules-import': $('#personal-rules-file')?.click(); break;
+    case 'shared-open': state.rulesView = 'shared'; pageFragments.delete('lists'); if (state.page !== 'lists') navigate('lists'); else render(true); void loadSharedRules(); break;
+    case 'shared-back': state.rulesView = 'local'; render(true); break;
+    case 'shared-sync': perform('--sync-shared'); break;
+    case 'shared-export': exportPersonalRules('shared').catch(e => toast(e.message)); break;
+    case 'shared-page': state.sharedPage = Math.max(0, Number(button.dataset.page) || 0); renderSharedResults(); break;
+    case 'app-select': {
+      const app = state.apps.find(x => x.packageName === button.dataset.package);
+      if (app) { state.selectedApp = app; state.appQuery = app.label; const field = $('#observe-app'); if (field) field.value = app.label; updateApplicationResults(); }
+      break;
+    }
+    case 'apps-retry': void loadApplications(); break;
     case 'copy-gkd-link': try { copyGkdLink(); toast('GKD 项目链接已复制'); } catch (e) { toast(e.message); } break;
     case 'diagnose': startDiagnosis().catch(e => toast(e.message)); break;
     case 'observe-start': startObservation().catch(e => toast(e.message)); break;
@@ -855,11 +1006,14 @@ document.addEventListener('click', async event => {
       catch (e) { state.observationError = `${e.message} 结果会在设备上短暂保留，可重试读取。`; render(); }
       break;
     }
-    case 'observe-add': {
+    case 'observe-add':
+    case 'observe-allow': {
       const domain = button.dataset.domain;
       if (!validObservedDomain(domain)) { toast('域名格式无效'); break; }
-      confirm('加入个人黑名单？', `加入后会拦截 ${domain} 及其子域名。名单保存后，执行规则更新才会应用到 DNS。`, '加入个人规则', async () => {
-        try { await runConfig('add-blacklist', domain); await loadList('blacklist', true); resetListView('blacklist'); render(); toast('已加入个人规则；执行规则更新后生效'); }
+      const kind = button.dataset.action === 'observe-allow' ? 'whitelist' : 'blacklist';
+      const label = kind === 'whitelist' ? '放行' : '拦截';
+      confirm(`加入个人${kind === 'whitelist' ? '白' : '黑'}名单？`, `加入后会${label} ${domain} 及其子域名。名单保存后，执行规则更新才会应用到 DNS。`, `确认${label}`, async () => {
+        try { await runConfig(`add-${kind}`, domain); await loadList(kind, true); resetListView(kind); render(); toast(`已加入${label}名单；执行规则更新后生效`); }
         catch (error) { toast(error.message || '加入失败'); }
       });
       break;
@@ -891,6 +1045,12 @@ document.addEventListener('click', async event => {
 
 document.addEventListener('change', async event => {
   const input = event.target;
+  if (input.matches('#personal-rules-file')) {
+    try { if (!state.busy) await importPersonalFile(input.files?.[0]); } catch (error) { toast(error.message); }
+    finally { input.value = ''; }
+    return;
+  }
+  if (input.matches('#observe-duration')) { state.observeDuration = input.value; return; }
   if (!input.matches('[data-toggle]') || state.busy) return;
   const key = input.dataset.toggle;
   const value = input.checked ? 'on' : 'off';
@@ -929,9 +1089,15 @@ document.addEventListener('submit', async event => {
     try { const result = await exec(`${COMMAND} --check-domain ${shellArg(domain)}`); if (Number(result.errno)) throw new Error(textOf(result)); output.textContent = textOf(result) || '查询完成'; } catch (e) { output.textContent = `检查失败：${e.message}`; }
   }
 });
-document.addEventListener('input', event => { if (event.target.matches('#log-search')) filterLogs(); if (event.target.matches('.list-search')) filterLists(event.target); });
+document.addEventListener('input', event => {
+  if (event.target.matches('#log-search')) filterLogs();
+  if (event.target.matches('.list-search')) filterLists(event.target);
+  if (event.target.matches('#shared-search')) { state.sharedSearch = event.target.value; state.sharedPage = 0; renderSharedResults(); }
+  if (event.target.matches('#observe-app')) { state.appQuery = event.target.value; resolveApplication(); updateApplicationResults(); void loadApplications(); }
+});
 document.addEventListener('toggle', async event => {
   const details = event.target;
+  if (details.matches('#observe-results')) { state.observationResultsOpen = details.open; return; }
   if (!details.matches('.log-command-details') || !details.open || details.dataset.loaded === 'true' || details.dataset.loading === 'true') return;
   details.dataset.loading = 'true'; const output = $('.log-command-output', details); output.textContent = '正在读取命令输出…';
   try { const result = await exec(`${JOB} detail ${details.dataset.logId}`); if (Number(result.errno)) throw new Error(textOf(result)); output.textContent = result.stdout || '该操作没有额外输出'; details.dataset.loaded = 'true'; } catch (e) { output.textContent = `读取失败：${e.message}`; } finally { delete details.dataset.loading; }
@@ -944,7 +1110,7 @@ async function init() {
   const pending = localStorage.getItem('abp-pending-job');
   if (pending) {
     const [id, action] = pending.split(':');
-    if (/^\d{1,20}$/.test(id) && ['--update','--pause','--resume','--rollback','--rollback-history','--filtering','--takeover','--restart','--diagnose','--observe'].includes(action)) {
+    if (/^\d{1,20}$/.test(id) && ['--update','--sync-shared','--pause','--resume','--rollback','--rollback-history','--filtering','--takeover','--restart','--diagnose','--observe'].includes(action)) {
       if (action === '--observe') {
         try { state.observation = JSON.parse(localStorage.getItem(OBSERVE_SESSION_KEY) || 'null'); } catch { state.observation = null; }
         if (!state.observation || state.observation.id !== id) state.observation = { id, startedAt: Date.now(), duration: 60, appLabel: '', active: true };

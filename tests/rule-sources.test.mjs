@@ -59,7 +59,8 @@ test('switching from balanced to light cannot reuse the other profile enabled so
   const fetch = fixture(t, { balanced: awaAds + '\n' + custom + '\n', customSources: custom + '\n' });
   const light = fetch('light');
   assert.equal(light.find(x => x.url === base).enabled, 'enabled');
-  assert.equal(light.find(x => x.url === awaAds).enabled, 'disabled');
+  assert.equal(light.find(x => x.url === awaAds).enabled, 'enabled');
+  assert.equal(light.find(x => x.url === awaAds).removable, 'base');
   assert.equal(light.find(x => x.url === custom).enabled, 'disabled');
   assert.equal(light.find(x => x.url === custom).configured, 'catalog');
 });
@@ -68,7 +69,7 @@ test('empty profile files still output the complete catalog', t => {
   const fetch = fixture(t);
   const sources = fetch('strict');
   assert.equal(sources.length, 6);
-  assert.equal(sources.filter(x => x.enabled === 'enabled').length, 1);
+  assert.equal(sources.filter(x => x.enabled === 'enabled').length, 2);
   assert.equal(sources.find(x => x.url === base).enabled, 'enabled');
   assert.equal(sources.find(x => x.url === antiAd).enabled, 'disabled');
 });
