@@ -2,15 +2,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
-const source=readFileSync(new URL('../webroot/app.js',import.meta.url),'utf8').replace(/^import[^\n]*\n/,'').replace(/\ninit\(\);[\s\S]*$/,'\n');
+const source=readFileSync(new URL('../webroot/app.js',import.meta.url),'utf8').replace(/^import[^\n]*\n/,'').replace(/\ninit\(\);/,'\n');
 function harness() {
   const pending=[], handlers={}, storage=new Map();
   const context=vm.createContext({ TextEncoder, btoa: s=>Buffer.from(s).toString('base64'),
     document:{ documentElement:{},body:{},addEventListener(n,fn){handlers[n]=fn;},querySelector(){return null;},querySelectorAll(){return [];} },
     localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{},
-    exec:command=>new Promise(resolve=>pending.push({command,resolve})),setTimeout,clearTimeout,requestAnimationFrame(){},cancelAnimationFrame(){} });
+    exec:command=>new Promise(resolve=>pending.push({command,resolve})),setTimeout,clearTimeout,setInterval(){return 1;},requestAnimationFrame(){},cancelAnimationFrame(){} });
   vm.runInContext(source,context);
-  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,loadList,loadSharedRules,resolveApplication,applicationResults,observationPanel,observationRows,personalRulesPage,logsPage,sharedResultsMarkup,startObservation})',context)};
+  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,observationAIPrompt,communityIssueUrl,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,sharedResultsMarkup,startObservation})',context)};
 }
 
 test('TXT export sections, DNS rules and JSON import preserve blacklist and whitelist semantics',()=>{
@@ -23,7 +23,7 @@ test('TXT export sections, DNS rules and JSON import preserve blacklist and whit
 
 test('invalid and excessive imports are rejected before executing any native command',()=>{
   const h=harness();
-  for(const text of ['<script>alert(1)</script>','valid.example\nbad;command.example','[拦截名单]\n', '{"blacklist":[12]}', '{"version":0,"blacklist":["ads.example"]}', 'x'.repeat(65537)]) assert.throws(()=>h.parsePersonalImport(text));
+  for(const text of ['<script>alert(1)</script>','valid.example\nbad;command.example','[拦截名单]\n', '{"blacklist":[12]}', '{"version":0,"blacklist":["ads.example"]}', '[拦截名单]\nshared.example\n[放行名单]\nshared.example', 'x'.repeat(65537)]) assert.throws(()=>h.parsePersonalImport(text));
   assert.equal(h.pending.length,0);
 });
 
@@ -50,12 +50,54 @@ test('name/package matching requires an unambiguous application and escapes host
   assert.match(h.observationPanel(),/<option value="10" selected>/);assert.doesNotMatch(h.observationPanel(),/<option value="60"/);
 });
 
+test('manual application refresh finds an app installed after the catalogue was cached',async()=>{
+ const h=harness();let calls=0;
+ h.context.listApplications=async()=>{calls++;return calls===1?[{packageName:'com.coolapk.market',label:'酷安'}]:[{packageName:'com.coolapk.market',label:'酷安'},{packageName:'com.tencent.qqmusic',label:'QQ音乐'}];};
+ await h.loadApplications();await h.loadApplications();assert.equal(calls,1);
+ h.state.appQuery='QQ音乐';h.resolveApplication();assert.equal(h.state.selectedApp,null);
+ assert.match(h.observationPanel(),/data-action="apps-refresh"/);
+ const button={dataset:{action:'apps-refresh'}};
+ await h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});await new Promise(setImmediate);
+ assert.equal(calls,2);assert.equal(h.state.selectedApp.packageName,'com.tencent.qqmusic');
+});
+
+test('concurrent application refreshes share one host request and failed reads retain the valid catalogue',async()=>{
+ const h=harness();let calls=0,resolveRead;
+ h.context.listApplications=()=>{calls++;return new Promise(resolve=>{resolveRead=resolve;});};
+ const a=h.loadApplications(true),b=h.loadApplications(true);assert.equal(calls,1);
+ resolveRead([{packageName:'com.tencent.qqmusic',label:'QQ音乐'}]);await Promise.all([a,b]);
+ h.context.listApplications=async()=>{throw new Error('host unavailable');};await h.loadApplications(true);
+ assert.equal(h.state.apps[0].packageName,'com.tencent.qqmusic');assert.equal(h.state.appsError,'host unavailable');assert.equal(h.state.appsLoading,false);
+});
+
+test('returning to the visible observation page refreshes cached apps without polling other pages or active jobs',async()=>{
+ const h=harness();let calls=0;
+ vm.runInContext('refreshStatus=async()=>{}',h.context);
+ h.state.page='lists';h.state.appsLoaded=true;h.state.appQuery='QQ音乐';
+ h.context.listApplications=async()=>{calls++;return [{packageName:'com.tencent.qqmusic',label:'QQ音乐'}];};
+ h.context.document.hidden=false;h.handlers.visibilitychange();await new Promise(setImmediate);
+ assert.equal(calls,1);assert.equal(h.state.selectedApp.packageName,'com.tencent.qqmusic');
+ for(const scenario of [{hidden:true,page:'lists',busy:false},{hidden:false,page:'home',busy:false},{hidden:false,page:'lists',busy:true}]) {
+   Object.assign(h.state,{page:scenario.page,busy:scenario.busy});h.context.document.hidden=scenario.hidden;
+   h.handlers.visibilitychange();await new Promise(setImmediate);
+ }
+ assert.equal(calls,1);assert.equal(h.pending.length,0);
+});
+
 test('shared domain lists paginate and search updates only the result container',()=>{
   const h=harness();h.state.sharedRules=Array.from({length:29},(_,i)=>`ads${i}.example`);h.state.sharedLoaded=true;
   assert.equal((h.sharedResultsMarkup().match(/class="rowitem"/g)||[]).length,10);
   h.state.sharedSearch='ads28'; assert.equal((h.sharedResultsMarkup().match(/class="rowitem"/g)||[]).length,1);
   assert.match(source, /matches\('#shared-search'\)[^\n]*renderSharedResults\(\)/);
   assert.doesNotMatch(source,/matches\('#shared-search'\)[^\n]*render\(true\)/);
+});
+
+test('shared rules page offers candidate submission instead of exporting the shared list',()=>{
+ const h=harness();h.state.sharedRules=['published.example'];
+ const page=h.sharedRulesPage();
+ assert.match(page,/data-action="shared-submit-candidate"/);
+ assert.doesNotMatch(page,/data-action="shared-export"|导出规则/);
+ assert.match(page,/手动提交/);assert.match(page,/维护者审核通过后才会进入共享规则/);
 });
 
 test('observation failure shows its real cause rather than the generic worker-lock message',async()=>{
@@ -91,6 +133,114 @@ test('results start collapsed, preserve the user toggle across renders, and offe
  assert.match(h.personalRulesPage(),/<details id="observe-results" class="observe-results" open>/);
  assert.equal(h.pending.length,0,'opening results does not run another native command');
  h.state.lists.whitelist=['ads.example'];assert.doesNotMatch(h.observationRows(),/data-action="observe-allow"/);
+});
+
+test('observed domains can be selected in batches and exports contain only chosen domains',()=>{
+ const h=harness();
+ h.state.observation={id:'123',active:false,appLabel:'Banking App',appPackage:'com.private.bank'};
+ h.state.observationDomains=[{domain:'ads.example',count:2},{domain:'api.example',count:1}];
+ h.state.selectedObservationDomains=['ads.example','invalid;example','ads.example'];
+ assert.deepEqual(Array.from(h.selectedObservationDomains()),['ads.example']);
+ const panel=h.observationPanel();
+ assert.match(panel,/data-action="observe-select-visible"/);
+ assert.match(panel,/data-action="observe-copy-ai"/);
+ assert.match(panel,/data-action="observe-export"/);
+ assert.match(panel,/data-action="observe-import-personal"/);
+ assert.doesNotMatch(panel,/observe-share-copy|复制社区贡献内容/);
+ assert.deepEqual(h.observationExportText(),'ads.example\n');
+ const prompt=h.observationAIPrompt();
+ assert.match(prompt,/ads\.example/);assert.doesNotMatch(prompt,/api\.example|Banking App|com\.private\.bank/);
+ assert.match(h.observationSelectionTools(),/1 个已选/);
+});
+
+test('shared submission link includes only selected observed domains and requires manual review',async()=>{
+ const h=harness(),toast={};
+ h.state.rulesView='shared';h.state.observation={appLabel:'Private Banking App',appPackage:'com.private.bank'};
+ h.state.observationDomains=[{domain:'ads.example'},{domain:'api.example'}];h.state.selectedObservationDomains=['ads.example'];
+ const url=new URL(h.communityIssueUrl());
+ assert.equal(url.origin,'https://github.com');assert.equal(url.pathname,'/Ccmra404/AdBlock-Pro-next/issues/new');
+ assert.equal(url.searchParams.get('template'),'shared-rule-candidate.md');
+ const body=url.searchParams.get('body');
+ assert.match(body,/ads\.example/);assert.doesNotMatch(body,/api\.example|Private Banking App|com\.private\.bank/);
+ assert.match(body,/维护者会检查/);assert.match(body,/原始 DNS 查询日志/);
+ h.context.document.querySelector=s=>s==='#toast'?toast:null;
+ h.context.navigator={clipboard:{writeText:async text=>{h.copied=text;}}};h.context.setTimeout=()=>1;
+ const button={dataset:{action:'shared-submit-candidate'}};
+ await h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});
+ assert.equal(h.copied,url.href);assert.match(toast.textContent,/手动提交/);
+});
+
+test('shared candidate submission without a selection returns to observation and explains what to do',async()=>{
+ const h=harness(),toast={};h.state.rulesView='shared';h.context.document.querySelector=s=>s==='#toast'?toast:null;
+ vm.runInContext('render=()=>{}',h.context);h.context.setTimeout=()=>1;
+ const button={dataset:{action:'shared-submit-candidate'}};
+ await h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});
+ assert.equal(h.state.rulesView,'local');assert.equal(h.state.observationResultsOpen,true);assert.match(toast.textContent,/先在域名观察结果中选择候选域名/);
+});
+
+test('TXT export downloads only selected valid domains',()=>{
+ const h=harness(),downloads=[];h.state.observationDomains=[{domain:'ads.example'},{domain:'service.example'}];h.state.selectedObservationDomains=['ads.example','invalid;domain'];
+ h.context.Blob=class {constructor(parts,options){this.parts=parts;this.options=options;}};
+ h.context.URL={createObjectURL:blob=>{h.downloadBlob=blob;return 'blob:test';},revokeObjectURL(){}};
+ h.context.document.createElement=()=>({click(){downloads.push({href:this.href,download:this.download});}});
+ h.context.setTimeout=()=>1;h.exportObservedDomains();
+ assert.deepEqual(downloads,[{href:'blob:test',download:'adblock-pro-observed-domains.txt'}]);
+ assert.equal(h.downloadBlob.parts[0],'ads.example\n');assert.equal(h.downloadBlob.options.type,'text/plain;charset=utf-8');
+});
+
+test('a new observation clears old selection and loaded results cannot revive it',async()=>{
+ const h=harness();h.state.selectedObservationDomains=['ads.example'];h.context.setTimeout=()=>1;vm.runInContext('render=()=>{}',h.context);
+ const starting=h.startJob('--observe','10',{appLabel:'Test App',appPackage:'com.test.app'});
+ h.pending.shift().resolve({errno:0,stdout:'started'});await starting;
+ assert.deepEqual(Array.from(h.state.selectedObservationDomains),[]);
+ h.state.selectedObservationDomains=['ads.example'];h.state.observation={id:'123',startedAt:1000,active:true};
+ const loading=h.loadObservationResult('123');
+ h.pending.shift().resolve({errno:0,stdout:JSON.stringify([{time:'1970-01-01T00:00:02Z',question:{name:'ads.example'}}])});await new Promise(setImmediate);
+ h.pending.shift().resolve({errno:0,stdout:'cleaned'});await loading;
+ assert.deepEqual(Array.from(h.state.selectedObservationDomains),[]);
+ assert.deepEqual(Array.from(h.state.observationDomains,domain=>domain.domain),['ads.example']);
+});
+
+test('community candidate template requires privacy review and maintainer validation',()=>{
+ const template=readFileSync(new URL('../.github/ISSUE_TEMPLATE/shared-rule-candidate.md',import.meta.url),'utf8');
+ assert.match(template,/name: 共享规则候选/);assert.match(template,/原始 DNS 查询日志/);
+ assert.match(template,/未经审核的候选不会进入共享规则/);
+});
+
+test('selected observed domains are imported only after explicit confirmation and do not override whitelist entries',async()=>{
+ const h=harness(),modal={},toast={};
+ h.state.observationDomains=[{domain:'ads.example',count:2},{domain:'allowed.example',count:1}];
+ h.state.selectedObservationDomains=['ads.example','allowed.example'];
+ h.state.lists.whitelist=['allowed.example'];
+ h.context.document.querySelector=s=>s==='#modal'?modal:s==='#toast'?toast:null;
+ h.context.setTimeout=()=>1;
+ vm.runInContext('render=()=>{}',h.context);
+ const button={dataset:{action:'observe-import-personal'}};
+ await h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});
+ assert.equal(h.pending.length,0);assert.match(modal.innerHTML,/加入个人拦截名单/);
+ const confirmed=modal.callback();
+ assert.match(h.pending[0].command,/import-lists/);
+ const encoded=h.pending[0].command.match(/import-lists '([^']+)'/)[1];
+ assert.equal(Buffer.from(encoded,'base64').toString(),'B\tads.example\n');
+ h.pending.shift().resolve({errno:0,stdout:'saved'});await new Promise(setImmediate);
+ assert.match(h.pending[0].command,/config list-blacklist/);
+ h.pending.shift().resolve({errno:0,stdout:'ads.example\n'});await new Promise(setImmediate);
+ h.pending.shift().resolve({errno:0,stdout:'allowed.example\n'});await confirmed;
+ assert.deepEqual(Array.from(h.state.selectedObservationDomains),[]);
+ assert.match(toast.textContent,/已加入个人拦截名单/);
+});
+
+test('AI or manual TXT import previews additions and skips existing or overlapping entries until confirmed',async()=>{
+ const h=harness(),modal={},toast={};h.state.lists.blacklist=['ads.example'];h.state.lists.whitelist=['login.example'];
+ h.context.document.querySelector=s=>s==='#modal'?modal:s==='#toast'?toast:null;h.context.setTimeout=()=>1;vm.runInContext('render=()=>{}',h.context);
+ await h.importPersonalFile({size:100,text:async()=> '[拦截名单]\nads.example\nnew.example\n[放行名单]\nlogin.example\napi.login.example\nallow.example'});
+ assert.equal(h.pending.length,0);assert.match(modal.innerHTML,/新增拦截 1 个、放行 1 个；跳过现有名单重复或冲突项 3 个/);
+ const importing=modal.callback();assert.match(h.pending[0].command,/import-lists/);
+ const encoded=h.pending[0].command.match(/import-lists '([^']+)'/)[1];assert.equal(Buffer.from(encoded,'base64').toString(),'B\tnew.example\nW\tallow.example\n');
+ h.pending.shift().resolve({errno:0,stdout:'saved'});await new Promise(setImmediate);
+ h.pending.shift().resolve({errno:0,stdout:'ads.example\nnew.example\n'});await new Promise(setImmediate);
+ h.pending.shift().resolve({errno:0,stdout:'login.example\nallow.example\n'});await importing;
+ assert.match(toast.textContent,/已导入 2 个个人规则/);
 });
 
 test('allowing an observed domain confirms first, then saves the whitelist and refreshes its count',async()=>{
