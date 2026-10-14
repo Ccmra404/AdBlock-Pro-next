@@ -7,7 +7,7 @@ const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', logFilter: 'all', profileEditor: 'balanced' };
-Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', sharedUpdatedAt: 0, sharedError: '', sharedLoaded: false, sharedSearch: '', sharedPage: 0, apps: [], appsLoaded: false, appsLoading: false, appsError: '', appQuery: '', selectedApp: null, observeDuration: '10' });
+Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', sharedUpdatedAt: 0, sharedError: '', sharedLoaded: false, sharedSearch: '', sharedPage: 0, apps: [], appsLoaded: false, appsLoading: false, appsError: '', appQuery: '', selectedApp: null, observeDuration: '10', observationResultsOpen: false });
 const pages = { home: '总览', rules: '规则管理', lists: '名单', manage: '设置', logs: '运行日志' };
 const LOG_PAGE_SIZE = 10;
 const OBSERVATION_PAGE_SIZE = 10;
@@ -196,8 +196,7 @@ function personalRulesPage() {
   const blocked = state.lists.blacklist || [];
   const allowed = state.lists.whitelist || [];
   return `${heading('个人规则', '本机名单独立保存；共享抓包规则供各设备同步', '<div class="btn-row"><button class="btn" data-action="personal-rules-import">导入</button><button class="btn" data-action="personal-rules-export">导出</button></div>')}<input id="personal-rules-file" type="file" accept=".txt,.json,text/plain,application/json" hidden>
-    <button type="button" class="panel shared-entry" data-action="shared-open"><span>${icon('globe')}<strong>共享抓包规则库</strong></span><span>查看与同步 ${icon('external')}</span></button>
-    <div class="stack"><section class="panel personal-summary"><div class="panel-head"><div><h2 class="section-title">名单概览</h2><p class="section-sub">仅统计本机个人规则，不含订阅规则和 DNS 查询记录</p></div>${tag(`${blocked.length + allowed.length} 条`)}</div><div class="personal-counts"><div><strong>${fmt(blocked.length)}</strong><span>拦截域名</span></div><div><strong>${fmt(allowed.length)}</strong><span>放行域名</span></div></div></section><div class="twocol">${ruleList('blacklist')}${ruleList('whitelist')}</div></div>`;
+    <div class="stack">${observationPanel()}<section class="panel personal-summary"><div class="panel-head"><div><h2 class="section-title">名单概览</h2><p class="section-sub">仅统计本机个人规则，不含订阅规则和 DNS 查询记录</p></div>${tag(`${blocked.length + allowed.length} 条`)}</div><div class="personal-counts"><div><strong>${fmt(blocked.length)}</strong><span>拦截域名</span></div><div><strong>${fmt(allowed.length)}</strong><span>放行域名</span></div></div></section><div class="twocol">${ruleList('blacklist')}${ruleList('whitelist')}</div><button type="button" class="panel shared-entry" data-action="shared-open"><span>${icon('globe')}<strong>共享抓包规则库</strong></span><span>查看与同步 ${icon('external')}</span></button></div>`;
 }
 function sharedResultsMarkup() {
   const query = state.sharedSearch.trim().toLowerCase();
@@ -274,7 +273,7 @@ function observationRows() {
   const visible = state.observationDomains.slice(start, start + OBSERVATION_PAGE_SIZE);
   return `${visible.map(item => {
     const classification = classifyObservedDomain(item);
-    const action = classification.add ? `<button class="btn" data-action="observe-add" data-domain="${esc(item.domain)}">加入个人规则</button>` : '';
+    const action = `<div class="btn-row">${classification.add ? `<button class="btn" data-action="observe-add" data-domain="${esc(item.domain)}">拦截</button>` : ''}${!domainInList(item.domain, state.lists.whitelist) ? `<button class="btn" data-action="observe-allow" data-domain="${esc(item.domain)}">放行</button>` : ''}</div>`;
     return `<div class="observe-row"><div class="observe-copy"><strong>${esc(item.domain)}</strong><small>${fmt(item.count)} 次请求${item.filterId ? ` · 规则 ${esc(item.filterId)}` : ''}</small></div>${tag(classification.label, classification.tone)}${action}</div>`;
   }).join('')}<nav class="observe-pagination logs-pagination" aria-label="观察结果分页"><button class="btn" data-action="observe-page" data-page="${state.observationPage - 1}" ${state.observationPage === 0 ? 'disabled' : ''}>上一页</button><span>第 ${state.observationPage + 1} / ${pageCount} 页 · ${start + 1}–${start + visible.length} 条，共 ${candidateCount} 条</span><button class="btn" data-action="observe-page" data-page="${state.observationPage + 1}" ${state.observationPage >= pageCount - 1 ? 'disabled' : ''}>下一页</button></nav>${state.observationDomains.length > 50 ? `<p class="field-help">按请求次数排序，只显示前 50 个高频候选；共发现 ${fmt(state.observationDomains.length)} 个域名。</p>` : ''}`;
 }
@@ -284,14 +283,13 @@ function observationPanel() {
   const remaining = active ? Math.max(0, Math.ceil((observation.startedAt + observation.duration * 1000 - Date.now()) / 1000)) : 0;
   const status = active ? `<div id="observe-progress" class="notice observe-progress" role="status">${icon('activity')}<span>记录中 · 约 ${remaining} 秒后分析。${esc(observation.appLabel || '目标应用')}已重新打开，请复现广告，然后返回此页。</span></div>` : '';
   const error = state.observationError ? `<div class="notice warn observe-error">${icon('info')}<span>${esc(state.observationError)}${observation?.id ? ` <button class="btn btn-plain" data-action="observe-retry">重试读取</button>` : ''}</span></div>` : '';
-  const results = observation && !active && !state.observationError ? `<div class="observe-results"><div class="observe-results-head"><b>观察结果</b><span class="tag">${fmt(state.observationDomains.length)} 个新域名</span></div><p class="field-help">${esc(observation.appLabel || '本次观察')} · 新域名只是时间段内的候选，手机后台应用也可能产生请求。加入个人规则会拦截该域名，规则更新后生效。</p><div id="observation-list" class="observe-list">${observationRows()}</div></div>` : '';
+  const results = observation && !active && !state.observationError ? `<details id="observe-results" class="observe-results" ${state.observationResultsOpen ? 'open' : ''}><summary class="observe-results-head"><b>观察结果</b><span class="tag">${fmt(state.observationDomains.length)} 个新域名</span></summary><p class="field-help">${esc(observation.appLabel || '本次观察')} · 新域名只是时间段内的候选，手机后台应用也可能产生请求。加入个人规则会拦截该域名，规则更新后生效。</p><div id="observation-list" class="observe-list">${observationRows()}</div></details>` : '';
   return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">域名观察</h2><p class="section-sub">选择本机应用，自动重新打开并观察开屏请求</p></div>${tag('仅本机处理')}</div><p class="field-help observe-help">输入应用名称或包名并选择匹配项。开始后会重新打开这个应用，结束后返回本页查看。窗口内也可能包含后台应用的 DNS 请求，结果只是候选；原查询日志设置会恢复，结果不会上传。</p><div class="observe-controls"><label class="observe-app-label">本机应用<input id="observe-app" class="field" maxlength="255" placeholder="例如：酷安" autocomplete="off" value="${esc(state.appQuery)}"></label><label class="observe-duration-label">观察时长<select id="observe-duration" class="field">${['5','10','15','30'].map(n => `<option value="${n}" ${state.observeDuration === n ? 'selected' : ''}>${n} 秒</option>`).join('')}</select></label><button class="btn btn-primary" data-action="observe-start" ${active || !state.selectedApp ? 'disabled' : ''}>${active ? '观察中…' : '开始并打开应用'}</button></div><div id="observe-app-results" class="app-results">${applicationResults()}</div>${status}${error}${results}</section>`;
 }
 function logsPage() {
   const filters = [['all', '全部'], ['running', '进行中'], ['failure', '提醒'], ['success', '成功']];
   return `${heading('运行日志', '统一查看模块操作与环境诊断')}
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">操作记录</h2><p class="section-sub">最近最多 120 条 · 每页 10 条 · 不保存 DNS 请求详情</p></div><div class="btn-row log-head-actions"><button class="btn" data-action="logs-refresh">刷新</button><button class="btn" data-action="logs-export">导出</button></div></div><div class="notice">${icon('info')}<span>观察结果仅用于辅助判断；域名可能来自手机后台应用，确认后才会加入个人规则。</span></div><div class="log-tools"><input id="log-search" class="field" type="search" placeholder="搜索操作日志" value="${esc(state.logSearch)}"><div class="log-filters">${filters.map(([key, label]) => `<button class="log-filter ${state.logFilter === key ? 'selected' : ''}" data-filter="${key}">${label}</button>`).join('')}</div><button class="btn btn-danger" data-action="logs-clear">清空</button></div><div id="log-list" class="log-list">${logListMarkup()}</div></section>
-    ${observationPanel()}`;
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">操作记录</h2><p class="section-sub">最近最多 120 条 · 每页 10 条 · 不保存 DNS 请求详情</p></div><div class="btn-row log-head-actions"><button class="btn" data-action="logs-refresh">刷新</button><button class="btn" data-action="logs-export">导出</button></div></div><div class="log-tools"><input id="log-search" class="field" type="search" placeholder="搜索操作日志" value="${esc(state.logSearch)}"><div class="log-filters">${filters.map(([key, label]) => `<button class="log-filter ${state.logFilter === key ? 'selected' : ''}" data-filter="${key}">${label}</button>`).join('')}</div><button class="btn btn-danger" data-action="logs-clear">清空</button></div><div id="log-list" class="log-list">${logListMarkup()}</div></section>`;
 }
 function render(preservePageCache = false) {
   // Full state changes invalidate detached pages; ordinary navigation retains them.
@@ -721,7 +719,7 @@ async function startJob(action, argument = '', metadata = {}) {
   if (Number(result.errno) !== 0) throw new Error(textOf(result) || '无法启动后台任务');
   if (action === '--observe') {
     state.observation = { id, startedAt: Date.now(), duration: Number(argument), appLabel: String(metadata.appLabel || ''), appPackage: String(metadata.appPackage || ''), active: true };
-    state.observationDomains = []; state.observationPage = 0; state.observationError = '';
+    state.observationDomains = []; state.observationPage = 0; state.observationError = ''; state.observationResultsOpen = false;
     localStorage.setItem(OBSERVE_SESSION_KEY, JSON.stringify(state.observation));
   }
   state.job = { id, action }; localStorage.setItem('abp-pending-job', `${id}:${action}`);
@@ -763,6 +761,7 @@ async function loadObservationResult(id) {
   if (!Number.isFinite(Number(saved.startedAt))) throw new Error('观察时间信息已丢失，请重新观察。');
   state.observationDomains = parseObservedDomains(result.stdout || '', Number(saved.startedAt));
   state.observationPage = 0;
+  state.observationResultsOpen = false;
   state.observation = { ...saved, id, active: false };
   state.observationError = '';
   localStorage.removeItem(OBSERVE_SESSION_KEY);
@@ -1007,11 +1006,14 @@ document.addEventListener('click', async event => {
       catch (e) { state.observationError = `${e.message} 结果会在设备上短暂保留，可重试读取。`; render(); }
       break;
     }
-    case 'observe-add': {
+    case 'observe-add':
+    case 'observe-allow': {
       const domain = button.dataset.domain;
       if (!validObservedDomain(domain)) { toast('域名格式无效'); break; }
-      confirm('加入个人黑名单？', `加入后会拦截 ${domain} 及其子域名。名单保存后，执行规则更新才会应用到 DNS。`, '加入个人规则', async () => {
-        try { await runConfig('add-blacklist', domain); await loadList('blacklist', true); resetListView('blacklist'); render(); toast('已加入个人规则；执行规则更新后生效'); }
+      const kind = button.dataset.action === 'observe-allow' ? 'whitelist' : 'blacklist';
+      const label = kind === 'whitelist' ? '放行' : '拦截';
+      confirm(`加入个人${kind === 'whitelist' ? '白' : '黑'}名单？`, `加入后会${label} ${domain} 及其子域名。名单保存后，执行规则更新才会应用到 DNS。`, `确认${label}`, async () => {
+        try { await runConfig(`add-${kind}`, domain); await loadList(kind, true); resetListView(kind); render(); toast(`已加入${label}名单；执行规则更新后生效`); }
         catch (error) { toast(error.message || '加入失败'); }
       });
       break;
@@ -1095,6 +1097,7 @@ document.addEventListener('input', event => {
 });
 document.addEventListener('toggle', async event => {
   const details = event.target;
+  if (details.matches('#observe-results')) { state.observationResultsOpen = details.open; return; }
   if (!details.matches('.log-command-details') || !details.open || details.dataset.loaded === 'true' || details.dataset.loading === 'true') return;
   details.dataset.loading = 'true'; const output = $('.log-command-output', details); output.textContent = '正在读取命令输出…';
   try { const result = await exec(`${JOB} detail ${details.dataset.logId}`); if (Number(result.errno)) throw new Error(textOf(result)); output.textContent = result.stdout || '该操作没有额外输出'; details.dataset.loaded = 'true'; } catch (e) { output.textContent = `读取失败：${e.message}`; } finally { delete details.dataset.loading; }

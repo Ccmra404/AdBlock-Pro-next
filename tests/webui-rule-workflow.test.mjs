@@ -10,7 +10,7 @@ function harness() {
     localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{},
     exec:command=>new Promise(resolve=>pending.push({command,resolve})),setTimeout,clearTimeout,requestAnimationFrame(){},cancelAnimationFrame(){} });
   vm.runInContext(source,context);
-  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,loadList,loadSharedRules,resolveApplication,applicationResults,observationPanel,personalRulesPage,sharedResultsMarkup,startObservation})',context)};
+  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,loadList,loadSharedRules,resolveApplication,applicationResults,observationPanel,observationRows,personalRulesPage,logsPage,sharedResultsMarkup,startObservation})',context)};
 }
 
 test('TXT export sections, DNS rules and JSON import preserve blacklist and whitelist semantics',()=>{
@@ -67,4 +67,43 @@ test('observation failure shows its real cause rather than the generic worker-lo
  await new Promise(setImmediate);
  h.pending.shift().resolve({errno:0,stdout:'[!] 查询日志正在写入磁盘。\n[!] Task failed or another DNS operation is already running (exit 1).\nJOB_DONE=1'});
  assert.equal(await result,1);assert.equal(h.state.observationError,'[!] 查询日志正在写入磁盘。');
+});
+
+
+test('domain observation leads personal lists and is absent from the operation log page',()=>{
+ const h=harness(), lists=h.personalRulesPage();
+ assert(lists.indexOf('>域名观察</h2>')<lists.indexOf('class="panel personal-summary"'));
+ assert(lists.indexOf('class="panel personal-summary"')<lists.indexOf('data-action="shared-open"'));
+ assert(lists.indexOf('data-list-results="whitelist"')<lists.indexOf('data-action="shared-open"'));
+ assert.equal((lists.match(/id="observe-app"/g)||[]).length,1);
+ h.state.logs=['1000\tsuccess\t--observe\t10\tObservation completed'];
+ const logs=h.logsPage();assert.match(logs,/域名观察/);assert.match(logs,/Observation completed/);
+ assert.doesNotMatch(logs,/id="observe-app"|id="observe-duration"|data-action="observe-start"/);
+});
+
+test('results start collapsed, preserve the user toggle across renders, and offer safe allow actions',async()=>{
+ const h=harness();h.state.observation={id:'123',active:false,appLabel:'酷安'};
+ h.state.observationDomains=[{domain:'ads.example',count:2,reason:'FilteredBlackList',filterId:123}];
+ assert.match(h.observationPanel(),/<details id="observe-results" class="observe-results" >/);
+ assert.doesNotMatch(h.observationPanel(),/<details[^>]*\sopen(?:\s|>)/);
+ assert.match(h.observationPanel(),/data-action="observe-allow"/);assert.doesNotMatch(h.observationRows(),/data-action="observe-add"/);
+ await h.handlers.toggle({target:{matches:s=>s==='#observe-results',open:true}});
+ assert.match(h.personalRulesPage(),/<details id="observe-results" class="observe-results" open>/);
+ assert.equal(h.pending.length,0,'opening results does not run another native command');
+ h.state.lists.whitelist=['ads.example'];assert.doesNotMatch(h.observationRows(),/data-action="observe-allow"/);
+});
+
+test('allowing an observed domain confirms first, then saves the whitelist and refreshes its count',async()=>{
+ const h=harness(),modal={},toast={};
+ h.context.document.querySelector=s=>s==='#modal'?modal:s==='#toast'?toast:null;
+ h.context.setTimeout=()=>1;
+ vm.runInContext('render=()=>{}',h.context);
+ const button={dataset:{action:'observe-allow',domain:'ads.example'}};
+ await h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});
+ assert.equal(h.pending.length,0);assert.match(modal.innerHTML,/加入个人白名单/);
+ const confirmed=modal.callback();assert.match(h.pending[0].command,/config add-whitelist 'ads.example'/);
+ h.pending.shift().resolve({errno:0,stdout:'saved'});await new Promise(setImmediate);
+ assert.match(h.pending[0].command,/config list-whitelist/);
+ h.pending.shift().resolve({errno:0,stdout:'ads.example\n'});await confirmed;
+ assert.deepEqual(Array.from(h.state.lists.whitelist),['ads.example']);assert.match(toast.textContent,/放行名单/);
 });
