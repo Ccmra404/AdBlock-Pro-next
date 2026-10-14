@@ -60,7 +60,8 @@ test('shared domain lists paginate and search updates only the result container'
 
 test('observation failure shows its real cause rather than the generic worker-lock message',async()=>{
  const h=harness();
- vm.runInContext('refreshStatus=async()=>{}; loadLogs=async()=>{}; syncStatusView=()=>{}; render=()=>{}; toast=()=>{};',h.context);
+ vm.runInContext('refreshStatus=async()=>{}; loadLogs=async()=>{}; syncStatusView=()=>{}; render=()=>{};',h.context);
+ h.context.document.querySelector=selector=>selector==='#toast'?{}:null;
  h.context.setTimeout=cb=>{cb();return 1;};
  const result=vm.runInContext("monitorJob('987','--observe')",h.context);
  await new Promise(setImmediate);
