@@ -5,7 +5,7 @@
 AdBlock Pro 在手机本地运行 [AdGuard Home](https://github.com/AdguardTeam/AdGuardHome)，通过模块管理的 DNS 重定向、订阅规则和个人黑白名单，过滤广告及部分跟踪域名。项目提供适配手机与平板的 Root WebUI，让规则、开关、日志和诊断尽量集中在一个界面完成。
 
 > [!IMPORTANT]
-> **新仓库源码基线：`v0.13.0-rc.3`（versionCode 45）。** 旧仓库的 Release 资产不会自动迁移；新仓库当前没有可安装包。重新验收并发布 ARM64 ZIP 前，请勿将 GitHub 自动下载的 Source code ZIP 当成可安装模块。
+> **当前已发布 `v0.13.0`（versionCode 46）。** 从 [Releases](https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest) 下载 ARM64 模块 ZIP。GitHub 自动生成的 `Source code` 压缩包不是可安装模块；兼容性与验证范围以对应版本说明为准。
 
 **项目定位：** 优先兼顾国内 Android 应用的日常兼容性、可维护的过滤规则，以及异常情况下的 DNS 可用性。不追求“规则条数越多越好”，也不承诺拦截所有应用广告。
 
