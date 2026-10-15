@@ -162,7 +162,7 @@ fi
 "$BB" sh "$MODPATH/bindhosts.sh" --render-user-rules || fail "Cannot build the personal rule filter."
 ABP_MODULE_DIR="$MODPATH" "$BB" sh "$DATA_DIR/scripts/rule-store.sh" init || fail "Cannot prepare the shared app rules."
 
-"$BB" sh "$MODPATH/webui-config.sh" init-profiles || fail "Cannot migrate saved rule sources into the three profiles."
+"$BB" sh "$MODPATH/webui-config.sh" init-sources || fail "Cannot initialize editable rule source preferences."
 
 rm -f "$MODPATH/config-blacklist.txt" "$MODPATH/config-whitelist.txt"
 chmod 700 "$DATA_DIR" "$DATA_DIR/scripts" "$DATA_DIR/bin/userfilters" 2>/dev/null

@@ -96,7 +96,7 @@ test('navigation does not call KernelSU before the first rendered frame', () => 
   assert.equal(h.pending.length, 0);
   h.timers.shift()();
   assert.equal(h.pending.length, 1);
-  assert.match(h.pending[0].command, /config list-sources balanced/);
+  assert.match(h.pending[0].command, /config list-sources(?:\s|$)/);
 });
 
 test('rapid navigation cancels the previous tab native load', () => {

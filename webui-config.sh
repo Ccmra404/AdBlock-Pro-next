@@ -9,6 +9,9 @@ ANTIAD=https://anti-ad.net/easylist.txt
 ADRULES=https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt
 ADGUARD=https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
 PROFILE_DIR=$DIR/profiles
+SOURCES_V2=$DIR/sources-v2.txt
+SOURCE_NAMES=$DIR/source-names.tsv
+SHARED_SOURCE=shared
 umask 077
 
 case "$1" in list-whitelist|list-blacklist|list-sources|shared-rules) ;; *)
@@ -32,10 +35,24 @@ valid_custom_url() {
 is_builtin() {
   case "$1" in "$REWARD"|"$AWAVENUE"|"$AWA_ADS"|"$ANTIAD"|"$ADRULES"|"$ADGUARD") return 0 ;; *) return 1 ;; esac
 }
+valid_source_ref() {
+  [ "$1" = "$SHARED_SOURCE" ] || valid_custom_url "$1"
+}
+valid_source_name() {
+  name_length=$(printf '%s' "$1" | wc -c | tr -d '[:space:]')
+  [ "$name_length" -ge 1 ] && [ "$name_length" -le 192 ] || return 1
+  line_count=$(printf '%s' "$1" | wc -l | tr -d '[:space:]'); [ "$line_count" -eq 0 ] || return 1
+  clean_length=$(printf '%s' "$1" | "$BB" tr -d '[:cntrl:]' | wc -c | tr -d '[:space:]'); [ "$clean_length" -eq "$name_length" ] || return 1
+  return 0
+}
 source_id() {
-  case "$1" in "$REWARD") printf '10007' ;; "$AWAVENUE"|"$AWA_ADS") printf 'awa' ;; "$ANTIAD") printf 'antiad' ;; "$ADRULES") printf 'adrules' ;; "$ADGUARD") printf 'adguard' ;; *) printf 'custom' ;; esac
+  case "$1" in "$REWARD") printf '10007' ;; "$AWAVENUE") printf 'awa-full' ;; "$AWA_ADS") printf 'awa-ads' ;; "$ANTIAD") printf 'antiad' ;; "$ADRULES") printf 'adrules' ;; "$ADGUARD") printf 'adguard' ;; "$SHARED_SOURCE") printf 'shared' ;; *) printf 'custom' ;; esac
 }
 source_label() {
+  if [ -f "$SOURCE_NAMES" ]; then
+    custom_name=$("$BB" awk -F '\t' -v url="$1" '$1==url { print substr($0,index($0,"\t")+1); exit }' "$SOURCE_NAMES")
+    [ -z "$custom_name" ] || { printf '%s' "$custom_name"; return; }
+  fi
   case "$1" in
     "$REWARD") printf '10007 基础广告规则' ;;
     "$AWAVENUE") printf '秋风完整规则（旧订阅）' ;;
@@ -43,6 +60,7 @@ source_label() {
     "$ANTIAD") printf 'anti-AD EasyList（约 9.5 万条）' ;;
     "$ADRULES") printf 'AdRules DNS（约 20 万条 · 高内存）' ;;
     "$ADGUARD") printf 'AdGuard DNS' ;;
+    "$SHARED_SOURCE") printf '共享抓包规则' ;;
     *) printf '自定义规则源' ;;
   esac
 }
@@ -73,6 +91,24 @@ mode_sources() {
       ;;
   esac
 }
+init_sources() {
+  [ -f "$SOURCES_V2" ] && return 0
+  init_profiles || return 1
+  read_mode
+  tmp="$SOURCES_V2.tmp.$$"
+  mode_sources "$mode" > "$tmp" || { rm -f "$tmp"; return 1; }
+  printf '%s\n' "$SHARED_SOURCE" >> "$tmp" || { rm -f "$tmp"; return 1; }
+  "$BB" sort -u "$tmp" -o "$tmp" || { rm -f "$tmp"; return 1; }
+  chmod 600 "$tmp" && mv "$tmp" "$SOURCES_V2"
+}
+source_is_selected() {
+  [ -f "$SOURCES_V2" ] && "$BB" grep -Fxq "$1" "$SOURCES_V2"
+}
+save_source_names() {
+  names_tmp="$SOURCE_NAMES.tmp.$$"
+  { [ ! -f "$SOURCE_NAMES" ] || "$BB" awk -F '\t' -v url="$1" '$1 != url { print }' "$SOURCE_NAMES"; printf '%s\t%s\n' "$1" "$2"; } > "$names_tmp" || { rm -f "$names_tmp"; return 1; }
+  chmod 600 "$names_tmp" && mv "$names_tmp" "$SOURCE_NAMES"
+}
 
 init_profiles() {
   [ -f "$DIR/profiles-initialized" ] && return 0
@@ -102,6 +138,10 @@ remove_from_profiles() {
 }
 
 case "$1" in
+  init-sources)
+    init_sources || { echo '[!] Could not initialize editable rule sources.' >&2; exit 1; }
+    echo '[+] Editable rule sources initialized; existing preferences and personal lists are preserved.'
+    ;;
   init-profiles)
     init_profiles || { echo '[!] Could not initialize rule profiles.' >&2; exit 1; }
     echo '[+] Rule profiles initialized; base and personal rules remain shared.'
@@ -146,103 +186,96 @@ case "$1" in
     echo "[+] Blocking profile set to $2; run an update to apply it."
     ;;
   set-source)
-    valid_custom_url "$2" || { echo '[!] Invalid HTTPS source.' >&2; exit 1; }
+    valid_source_ref "$2" || { echo '[!] Invalid rule source.' >&2; exit 1; }
     case "$3" in on|off) ;; *) echo '[!] Source state must be on or off.' >&2; exit 1 ;; esac
-    init_profiles || exit 1
-    read_mode
-    profile=${4:-$mode}
-    valid_profile "$profile" || { echo '[!] Invalid profile.' >&2; exit 1; }
-    case "$2" in "$REWARD"|"$AWA_ADS") [ "$3" = on ] && exit 0; echo '[!] This source is part of the fixed base.' >&2; exit 1 ;; esac
+    init_sources || exit 1
     if [ "$3" = off ]; then
-      remove_line "$(profile_file "$profile")" "$2" || exit 1
+      remove_line "$SOURCES_V2" "$2" || exit 1
     else
-      remove_line "$DIR/disabled-sources.txt" "$2" || exit 1
-      if ! is_builtin "$2"; then
-        "$BB" touch "$DIR/custom-sources.txt" || exit 1
-        "$BB" grep -Fxq "$2" "$DIR/custom-sources.txt" || {
-          count=$(wc -l < "$DIR/custom-sources.txt")
-          [ "$count" -lt 10 ] || { echo '[!] At most 10 custom sources are supported.' >&2; exit 1; }
-          append_line "$DIR/custom-sources.txt" "$2" || exit 1
-        }
-      fi
-      append_line "$(profile_file "$profile")" "$2" || exit 1
+      if [ "$2" != "$SHARED_SOURCE" ] && ! is_builtin "$2"; then append_line "$DIR/custom-sources.txt" "$2" || exit 1; fi
+      append_line "$SOURCES_V2" "$2" || exit 1
     fi
-    echo "[+] Source assignment saved for $profile; run an update to apply it."
+    echo "[+] $(source_label "$2") source state saved; run a rule update to apply it."
     ;;
   add-source)
     valid_custom_url "$2" || { echo '[!] Enter a valid HTTPS source URL.' >&2; exit 1; }
-    init_profiles || exit 1
-    read_mode
-    profile=${3:-$mode}
-    valid_profile "$profile" || { echo '[!] Invalid profile.' >&2; exit 1; }
-    case "$2" in "$REWARD"|"$AWA_ADS") echo '[+] This source is already included in the fixed base.'; exit 0 ;; esac
-    if ! is_builtin "$2"; then
-      "$BB" touch "$DIR/custom-sources.txt" || exit 1
-      if ! "$BB" grep -Fxq "$2" "$DIR/custom-sources.txt"; then
-        count=$(wc -l < "$DIR/custom-sources.txt")
-        [ "$count" -lt 10 ] || { echo '[!] At most 10 custom sources are supported.' >&2; exit 1; }
-        append_line "$DIR/custom-sources.txt" "$2" || exit 1
-      fi
+    init_sources || exit 1
+    name=$3
+    case "$name" in light|balanced|strict|'') name=$(source_label "$2") ;; esac
+    valid_source_name "$name" || { echo '[!] Source name must be 1–64 characters without control characters.' >&2; exit 1; }
+    if ! is_builtin "$2" && ! "$BB" grep -Fxq "$2" "$DIR/custom-sources.txt" 2>/dev/null; then
+      count=$(wc -l < "$DIR/custom-sources.txt" 2>/dev/null); [ -n "$count" ] || count=0
+      [ "$count" -lt 10 ] || { echo '[!] At most 10 custom sources are supported.' >&2; exit 1; }
+      append_line "$DIR/custom-sources.txt" "$2" || exit 1
     fi
-    remove_line "$DIR/disabled-sources.txt" "$2" || exit 1
-    append_line "$(profile_file "$profile")" "$2" || exit 1
-    echo "[+] $(source_label "$2") assigned to $profile; run an update to apply it."
+    save_source_names "$2" "$name" || exit 1
+    append_line "$SOURCES_V2" "$2" || exit 1
+    echo "[+] $(source_label "$2") imported; run a rule update to apply it."
     ;;
   remove-source)
-    valid_custom_url "$2" || { echo '[!] Invalid HTTPS source.' >&2; exit 1; }
-    init_profiles || exit 1
-    case "$2" in "$REWARD"|"$AWA_ADS") echo '[!] Fixed base sources cannot be deleted.' >&2; exit 1 ;; esac
-    remove_from_profiles "$2" || exit 1
-    if ! is_builtin "$2"; then
+    valid_source_ref "$2" || { echo '[!] Invalid rule source.' >&2; exit 1; }
+    init_sources || exit 1
+    remove_line "$SOURCES_V2" "$2" || exit 1
+    if [ "$2" != "$SHARED_SOURCE" ] && ! is_builtin "$2"; then
       remove_line "$DIR/custom-sources.txt" "$2" || exit 1
+      if [ -f "$SOURCE_NAMES" ]; then "$BB" awk -F '\t' -v url="$2" '$1 != url { print }' "$SOURCE_NAMES" > "$SOURCE_NAMES.tmp.$$" && chmod 600 "$SOURCE_NAMES.tmp.$$" && mv "$SOURCE_NAMES.tmp.$$" "$SOURCE_NAMES" || exit 1; fi
     fi
-    remove_line "$DIR/sources.txt" "$2" || exit 1
-    echo '[+] Source deleted from every profile; run an update to apply it.'
+    echo '[+] Source removed; current DNS rules will change after the next update.'
+    ;;
+  rename-source)
+    valid_source_ref "$2" && valid_source_name "$3" || { echo '[!] Invalid source name.' >&2; exit 1; }
+    init_sources || exit 1
+    save_source_names "$2" "$3" || exit 1
+    echo "[+] Source renamed to $(source_label "$2"); run a rule update to apply it."
+    ;;
+  source-name)
+    valid_source_ref "$2" || exit 1
+    source_label "$2"
     ;;
   list-sources)
-    read_mode
-    profile=${2:-$mode}
-    valid_profile "$profile" || { echo '[!] Invalid profile.' >&2; exit 1; }
-    catalog="$DIR/.abp-catalog.$$"; configured="$DIR/.abp-configured.$$"
-    printf '%s\n' "$REWARD" "$AWAVENUE" "$AWA_ADS" "$ANTIAD" "$ADRULES" "$ADGUARD" > "$catalog"
-    mode_sources "$profile" > "$configured"
+    init_sources || exit 1
+    catalog="$DIR/.abp-catalog.$$"; selected="$DIR/.abp-selected.$$"
+    printf '%s\n' "$REWARD" "$AWAVENUE" "$AWA_ADS" "$ANTIAD" "$ADRULES" "$ADGUARD" "$SHARED_SOURCE" > "$catalog"
     [ ! -f "$DIR/custom-sources.txt" ] || cat "$DIR/custom-sources.txt" >> "$catalog"
-    for item in light balanced strict; do
-      [ ! -f "$(profile_file "$item")" ] || cat "$(profile_file "$item")" >> "$catalog"
-    done
-    "$BB" sort -u "$configured" -o "$configured" || { rm -f "$catalog" "$configured"; exit 1; }
-    "$BB" sort -u "$catalog" -o "$catalog" || { rm -f "$catalog" "$configured"; exit 1; }
-    printf 'mode\t%s\n' "$profile"
-    # One awk process replaces two grep processes per catalog entry. This
-    # avoids repeated fork/exec overhead when the WebUI opens Rule Management.
+    cat "$SOURCES_V2" >> "$catalog"
+    cp "$SOURCES_V2" "$selected" || { rm -f "$catalog" "$selected"; exit 1; }
+    "$BB" sort -u "$catalog" -o "$catalog" || { rm -f "$catalog" "$selected"; exit 1; }
+    "$BB" sort -u "$selected" -o "$selected" || { rm -f "$catalog" "$selected"; exit 1; }
+    printf 'mode\tbalanced\n'
     "$BB" awk \
       -v reward="$REWARD" -v awavenue="$AWAVENUE" -v awa_ads="$AWA_ADS" \
-      -v antiad="$ANTIAD" -v adrules="$ADRULES" -v adguard="$ADGUARD" '
+      -v antiad="$ANTIAD" -v adrules="$ADRULES" -v adguard="$ADGUARD" -v shared="$SHARED_SOURCE" '
       FILENAME == ARGV[1] { if ($0 != "") selected[$0] = 1; next }
       $0 != "" {
         url = $0
         enabled = (url in selected) ? "enabled" : "disabled"
         configured = (url in selected) ? "configured" : "catalog"
         if (url == reward) {
-          id="10007"; label="10007 基础广告规则"; removable="base"
+          id="10007"
         } else if (url == awavenue) {
-          id="awa"; label="秋风完整规则（旧订阅）"; removable="profile"
+          id="awa-full"
         } else if (url == awa_ads) {
-          id="awa"; label="秋风纯广告（约 655 条）"; removable="base"
+          id="awa-ads"
         } else if (url == antiad) {
-          id="antiad"; label="anti-AD EasyList（约 9.5 万条）"; removable="profile"
+          id="antiad"
         } else if (url == adrules) {
-          id="adrules"; label="AdRules DNS（约 20 万条 · 高内存）"; removable="profile"
+          id="adrules"
         } else if (url == adguard) {
-          id="adguard"; label="AdGuard DNS"; removable="profile"
+          id="adguard"
+        } else if (url == shared) {
+          id="shared"
         } else {
-          id="custom"; label="自定义规则源"; removable="removable"
+          id="custom"
         }
-        printf "source\t%s\t%s\t%s\t%s\t%s\t%s\n", id, label, url, enabled, configured, removable
+        printf "source\t%s\t%s\t%s\t%s\t%s\n", id, url, enabled, configured, "removable"
       }
-    ' "$configured" "$catalog"
+    ' "$selected" "$catalog" | while IFS="$(printf '\t')" read -r kind id url enabled configured removable; do
+      [ "$kind" = source ] || continue
+      label=$(source_label "$url")
+      printf 'source\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$label" "$url" "$enabled" "$configured" "$removable"
+    done
     result=$?
-    rm -f "$catalog" "$configured"
+    rm -f "$catalog" "$selected"
     [ "$result" -eq 0 ] || exit "$result"
     ;;
   *) echo '[!] Unsupported configuration action.' >&2; exit 1 ;;
