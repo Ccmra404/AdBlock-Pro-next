@@ -96,8 +96,24 @@ test('shared rules page offers candidate submission instead of exporting the sha
  const h=harness();h.state.sharedRules=['published.example'];
  const page=h.sharedRulesPage();
  assert.match(page,/data-action="shared-submit-candidate"/);
+ assert.match(page,/data-action="shared-source-add">加入规则来源/);
  assert.doesNotMatch(page,/data-action="shared-export"|导出规则/);
  assert.match(page,/手动提交/);assert.match(page,/维护者审核通过后才会进入共享规则/);
+});
+
+test('restoring the shared source saves it and immediately refreshes the source list',async()=>{
+ const h=harness(),toast={textContent:'',hidden:true};
+ h.context.document.querySelector=s=>s==='#toast'?toast:null;h.context.setTimeout=()=>1;
+ const button={dataset:{action:'shared-source-add'}};
+ const click=h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});
+ assert.match(h.pending[0].command,/config set-source 'shared' 'on' 'balanced'/);
+ h.pending.shift().resolve({errno:0,stdout:'[+] 共享抓包规则 source state saved'});
+ await new Promise(setImmediate);
+ assert.match(h.pending[0].command,/config list-sources/);
+ h.pending.shift().resolve({errno:0,stdout:'mode\tbalanced\nsource\tshared\t共享抓包规则\tshared\tenabled\tconfigured\tremovable\n'});
+ await click;
+ assert.equal(h.state.sources[0].url,'shared');
+ assert.match(toast.textContent,/共享规则来源已加入/);
 });
 
 test('observation failure shows its real cause rather than the generic worker-lock message',async()=>{
@@ -136,6 +152,24 @@ test('rule source page has no tiers and makes every bundled or custom source man
  assert.match(page,/data-action="source-delete"/);assert.match(page,/data-action="source-rename-open"/);
  assert.match(page,/data-action="source-url-open"/);
  assert.match(page,/name="name" maxlength="64"/);assert.match(page,/name="url"/);
+});
+
+test('confirmed source removal invalidates cached rows and reloads the source list',async()=>{
+ const h=harness(),modal={},toast={textContent:'',hidden:true};
+ h.state.sources=[{id:'shared',label:'共享抓包规则',url:'shared',enabled:'enabled',removable:'removable'}];
+ h.context.document.querySelector=s=>s==='#modal'?modal:s==='#toast'?toast:null;h.context.setTimeout=()=>1;
+ const button={dataset:{action:'source-delete',url:'shared'}};
+ await h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});
+ assert.match(modal.innerHTML,/移除后会从列表隐藏/);
+ const remove=modal.callback();
+ assert.match(h.pending[0].command,/config remove-source 'shared'/);
+ h.pending.shift().resolve({errno:0,stdout:'removed'});
+ await new Promise(setImmediate);
+ assert.match(h.pending[0].command,/config list-sources/);
+ h.pending.shift().resolve({errno:0,stdout:'mode\tbalanced\n'});
+ await remove;
+ assert.deepEqual(Array.from(h.state.sources),[]);
+ assert.match(toast.textContent,/规则来源已移除/);
 });
 
 test('operation log page can copy recent detailed task output',async()=>{

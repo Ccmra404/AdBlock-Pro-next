@@ -77,7 +77,7 @@ test('existing source URLs migrate in place, preserve custom names and selection
   assert.match(readFileSync(path.join(f.dir, 'source-names.tsv'), 'utf8'), /My AWA list/);
 });
 
-test('every bundled source and shared rules can be disabled and removed', t => {
+test('removing bundled sources hides them from the source list and they can be imported again', t => {
   const f = fixture(t);
   assert.equal(f.run('set-source', base, 'off', 'balanced').status, 0);
   assert.equal(f.run('set-source', shared, 'off', 'balanced').status, 0);
@@ -85,8 +85,13 @@ test('every bundled source and shared rules can be disabled and removed', t => {
   assert.equal(f.list().find(x => x.url === shared).enabled, 'disabled');
   assert.equal(f.run('remove-source', base).status, 0);
   assert.equal(f.run('remove-source', shared).status, 0);
-  assert.equal(f.list().find(x => x.url === base).configured, 'catalog');
-  assert.equal(f.list().find(x => x.url === shared).configured, 'catalog');
+  assert.equal(f.list().some(x => x.url === base), false);
+  assert.equal(f.list().some(x => x.url === shared), false);
+  assert.deepEqual(readFileSync(path.join(f.dir, 'removed-sources.txt'), 'utf8').trim().split('\n').sort(), [base, shared].sort());
+  assert.equal(f.run('add-source', base, '10007').status, 0);
+  assert.equal(f.run('set-source', shared, 'on', 'balanced').status, 0);
+  assert.equal(f.list().find(x => x.url === base).enabled, 'enabled');
+  assert.equal(f.list().find(x => x.url === shared).enabled, 'enabled');
 });
 
 test('custom subscriptions can be added, renamed, removed, and re-added with a name', t => {

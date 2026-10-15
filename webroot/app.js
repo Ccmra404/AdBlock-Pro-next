@@ -211,7 +211,7 @@ function renderSharedResults() {
 function sharedRulesPage() {
   const syncing = state.job?.action === '--sync-shared';
   return `${heading('共享抓包规则库', '维护者确认后发布，各设备使用同一份公开名单', '<button class="btn" data-action="shared-back">返回个人规则</button>')}
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">共享规则</h2><p class="section-sub">10007、秋风 AdGuard 全规则和本规则库共同构成模块基础</p></div>${tag(`${state.sharedRules.length} 条`)}</div><p class="field-help">修订 ${esc(state.sharedRevision || '—')} · ${state.sharedUpdatedAt ? new Date(state.sharedUpdatedAt * 1000).toLocaleString('zh-CN') : '随模块预置'}。同步会读取 GitHub 上已确认的规则，保留本机个人黑白名单；放行名单可以覆盖共享规则。</p><div class="btn-row"><button class="btn btn-primary" data-action="shared-sync" ${syncing ? 'disabled' : ''}>${syncing ? '正在同步…' : '同步并应用'}</button><button class="btn" data-action="shared-submit-candidate">提交候选${selectedObservationDomains().length ? `（${fmt(selectedObservationDomains().length)}）` : ''}</button></div><p class="field-help">候选只包含你在域名观察中勾选的域名。按钮会复制 GitHub 草稿链接；检查内容后由你手动提交，维护者审核通过后才会进入共享规则。</p>${state.sharedError ? `<div class="notice warn">${esc(state.sharedError)}</div>` : ''}<input id="shared-search" class="field" type="search" value="${esc(state.sharedSearch)}" placeholder="搜索共享域名" aria-label="搜索共享域名"><div id="shared-results">${sharedResultsMarkup()}</div></section>`;
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">共享规则</h2><p class="section-sub">10007、秋风 AdGuard 全规则和本规则库共同构成模块基础</p></div>${tag(`${state.sharedRules.length} 条`)}</div><p class="field-help">修订 ${esc(state.sharedRevision || '—')} · ${state.sharedUpdatedAt ? new Date(state.sharedUpdatedAt * 1000).toLocaleString('zh-CN') : '随模块预置'}。同步会读取 GitHub 上已确认的规则，保留本机个人黑白名单；放行名单可以覆盖共享规则。</p><div class="btn-row"><button class="btn btn-primary" data-action="shared-sync" ${syncing ? 'disabled' : ''}>${syncing ? '正在同步…' : '同步并应用'}</button><button class="btn" data-action="shared-source-add">加入规则来源</button><button class="btn" data-action="shared-submit-candidate">提交候选${selectedObservationDomains().length ? `（${fmt(selectedObservationDomains().length)}）` : ''}</button></div><p class="field-help">候选只包含你在域名观察中勾选的域名。按钮会复制 GitHub 草稿链接；检查内容后由你手动提交，维护者审核通过后才会进入共享规则。</p>${state.sharedError ? `<div class="notice warn">${esc(state.sharedError)}</div>` : ''}<input id="shared-search" class="field" type="search" value="${esc(state.sharedSearch)}" placeholder="搜索共享域名" aria-label="搜索共享域名"><div id="shared-results">${sharedResultsMarkup()}</div></section>`;
 }
 function managePage() {
   const s = state.status;
@@ -1046,6 +1046,11 @@ document.addEventListener('click', async event => {
     case 'shared-open': state.rulesView = 'shared'; pageFragments.delete('lists'); if (state.page !== 'lists') navigate('lists'); else render(true); void loadSharedRules(); break;
     case 'shared-back': state.rulesView = 'local'; render(true); break;
     case 'shared-sync': perform('--sync-shared'); break;
+    case 'shared-source-add': {
+      try { await runConfig('set-source', 'shared', 'on', 'balanced'); invalidateSources(); await loadSources(); toast('共享规则来源已加入；执行更新后生效'); }
+      catch (e) { toast(e.message); }
+      break;
+    }
     case 'shared-submit-candidate': {
       if (!selectedObservationDomains().length) {
         state.rulesView = 'local'; state.observationResultsOpen = true; render(true); toast('请先在域名观察结果中选择候选域名'); break;
@@ -1125,7 +1130,7 @@ document.addEventListener('click', async event => {
       break;
     }
     case 'source-delete': {
-      const url = button.dataset.url; confirm('移除这条规则来源？', '下次更新时会从当前过滤配置移除；随包来源仍可重新导入，自定义来源将从列表删除。', '移除来源', async () => { try { await runConfig('remove-source', url); state.sourceRenameUrl = ''; state.sourceEditUrl = ''; invalidateSources(); await loadSources(); toast('规则来源已移除；当前规则将在更新后改变'); } catch (e) { toast(e.message); } }); break;
+      const url = button.dataset.url; confirm('移除这条规则来源？', '移除后会从列表隐藏，下一次规则更新时生效。内置来源可重新添加，共享来源可在共享规则库中恢复。', '移除来源', async () => { try { await runConfig('remove-source', url); state.sourceRenameUrl = ''; state.sourceEditUrl = ''; invalidateSources(); await loadSources(); toast('规则来源已移除；当前规则将在更新后改变'); } catch (e) { toast(e.message); } }); break;
     }
     case 'source-rename-open': state.sourceRenameUrl = button.dataset.url; state.sourceEditUrl = ''; updateSourcesView(); break;
     case 'source-rename-cancel': state.sourceRenameUrl = ''; updateSourcesView(); break;

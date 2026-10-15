@@ -339,7 +339,7 @@ save_snapshot() {
   cp "$AGH/bin/AdGuardHome.yaml" "$stage/bin/AdGuardHome.yaml" || { rm -rf "$stage"; return 1; }
   [ ! -d "$AGH/bin/data/filters" ] || cp -R "$AGH/bin/data/filters" "$stage/bin/data/filters" || { rm -rf "$stage"; return 1; }
   [ ! -d "$AGH/bin/userfilters" ] || cp -R "$AGH/bin/userfilters" "$stage/bin/userfilters" || { rm -rf "$stage"; return 1; }
-  for file in sources-v2.txt source-names.tsv sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
+  for file in sources-v2.txt source-names.tsv removed-sources.txt sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
     [ ! -f "$STATE/$file" ] || cp "$STATE/$file" "$stage/state/$file" || { rm -rf "$stage"; return 1; }
   done
   [ ! -f "$STATE/profiles-initialized" ] || cp "$STATE/profiles-initialized" "$stage/state/profiles-initialized" || { rm -rf "$stage"; return 1; }
@@ -365,7 +365,7 @@ restore_snapshot() {
   rm -rf "$AGH/bin/data/filters" "$AGH/bin/userfilters"
   [ ! -d "$restore/bin/data/filters" ] || cp -R "$restore/bin/data/filters" "$AGH/bin/data/filters" || { rm -rf "$restore"; return 1; }
   [ ! -d "$restore/bin/userfilters" ] || cp -R "$restore/bin/userfilters" "$AGH/bin/userfilters" || { rm -rf "$restore"; return 1; }
-  for file in sources-v2.txt source-names.tsv sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
+  for file in sources-v2.txt source-names.tsv removed-sources.txt sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
     rm -f "$STATE/$file"
     [ ! -f "$restore/state/$file" ] || cp "$restore/state/$file" "$STATE/$file" || { rm -rf "$restore"; return 1; }
   done

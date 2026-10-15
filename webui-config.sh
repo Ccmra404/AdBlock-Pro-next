@@ -13,6 +13,7 @@ ADGUARD=https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
 PROFILE_DIR=$DIR/profiles
 SOURCES_V2=$DIR/sources-v2.txt
 SOURCE_NAMES=$DIR/source-names.tsv
+REMOVED_SOURCES=$DIR/removed-sources.txt
 SHARED_SOURCE=shared
 umask 077
 
@@ -235,6 +236,7 @@ case "$1" in
     else
       if [ "$2" != "$SHARED_SOURCE" ] && ! is_builtin "$2"; then append_line "$DIR/custom-sources.txt" "$2" || exit 1; fi
       append_line "$SOURCES_V2" "$2" || exit 1
+      remove_line "$REMOVED_SOURCES" "$2" || exit 1
     fi
     echo "[+] $(source_label "$2") source state saved; run a rule update to apply it."
     ;;
@@ -251,6 +253,7 @@ case "$1" in
     fi
     save_source_names "$2" "$name" || exit 1
     append_line "$SOURCES_V2" "$2" || exit 1
+    remove_line "$REMOVED_SOURCES" "$2" || exit 1
     echo "[+] $(source_label "$2") imported; run a rule update to apply it."
     ;;
   remove-source)
@@ -261,6 +264,7 @@ case "$1" in
       remove_line "$DIR/custom-sources.txt" "$2" || exit 1
       if [ -f "$SOURCE_NAMES" ]; then "$BB" awk -F '\t' -v url="$2" '$1 != url { print }' "$SOURCE_NAMES" > "$SOURCE_NAMES.tmp.$$" && chmod 600 "$SOURCE_NAMES.tmp.$$" && mv "$SOURCE_NAMES.tmp.$$" "$SOURCE_NAMES" || exit 1; fi
     fi
+    append_line "$REMOVED_SOURCES" "$2" || exit 1
     echo '[+] Source removed; current DNS rules will change after the next update.'
     ;;
   rename-source)
@@ -311,13 +315,21 @@ case "$1" in
     ;;
   list-sources)
     init_sources || exit 1
-    catalog="$DIR/.abp-catalog.$$"; selected="$DIR/.abp-selected.$$"
+    catalog="$DIR/.abp-catalog.$$"; selected="$DIR/.abp-selected.$$"; visible="$DIR/.abp-visible.$$"
     printf '%s\n' "$REWARD" "$AWAVENUE" "$SHARED_SOURCE" > "$catalog"
     [ ! -f "$DIR/custom-sources.txt" ] || cat "$DIR/custom-sources.txt" >> "$catalog"
     cat "$SOURCES_V2" >> "$catalog"
     cp "$SOURCES_V2" "$selected" || { rm -f "$catalog" "$selected"; exit 1; }
     "$BB" sort -u "$catalog" -o "$catalog" || { rm -f "$catalog" "$selected"; exit 1; }
     "$BB" sort -u "$selected" -o "$selected" || { rm -f "$catalog" "$selected"; exit 1; }
+    if [ -f "$REMOVED_SOURCES" ]; then
+      "$BB" awk '
+        FILENAME == ARGV[1] { if ($0 != "") removed[$0] = 1; next }
+        FILENAME == ARGV[2] { if ($0 != "") selected[$0] = 1; next }
+        $0 != "" && (!($0 in removed) || ($0 in selected)) { print }
+      ' "$REMOVED_SOURCES" "$selected" "$catalog" > "$visible" || { rm -f "$catalog" "$selected" "$visible"; exit 1; }
+      mv "$visible" "$catalog" || { rm -f "$catalog" "$selected" "$visible"; exit 1; }
+    fi
     printf 'mode\tbalanced\n'
     "$BB" awk \
       -v reward="$REWARD" -v awavenue="$AWAVENUE" \
@@ -350,7 +362,7 @@ case "$1" in
       printf 'source\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$label" "$url" "$enabled" "$configured" "$removable"
     done
     result=$?
-    rm -f "$catalog" "$selected"
+    rm -f "$catalog" "$selected" "$visible"
     [ "$result" -eq 0 ] || exit "$result"
     ;;
   *) echo '[!] Unsupported configuration action.' >&2; exit 1 ;;
