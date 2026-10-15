@@ -16,7 +16,8 @@
   - [ARM64 ZIP 构建](https://github.com/Ccmra404/AdBlock-Pro-next/actions/runs/38689977478)
 - 用户确认更换后的两条默认规则订阅链接已测试正常；本轮设备连通性复核也得到 HTTP 200。未把连通性检查描述成完整更新应用测试。
 - 小米 Pad 8 Pro（KernelSU/ReSukiSu）已安装并重启过前一功能包，验证应用匹配、自动打开和观察结果展示。管理器后台冻结导致观察延迟的问题曾通过 worker 热替换复测修复；这不等于本候选完整包已再次安装验收。
-- 本地 Node 回归：240 项通过、1 项 Linux 专属跳过、0 失败；Python：23 项通过。Bash 与 Go 的独立验证交由服务器在本候选 SHA 上运行。
+- GitHub ARM64 包检查在候选代码提交 `609b555` 上通过：Go 1.23 `go test ./...`、17 个 Shell 脚本的 `bash -n`、Node 241 项和 Python 23 项均通过，ARM64 ZIP 校验成功。本地 Node 回归为 240 项通过、1 项 Linux 专属跳过；Python 23 项通过。
+- 服务器对同一提交的独立检查中，17 个 Shell 脚本语法检查通过；服务器没有安装 Go，故其本地 `go test` 未执行成功。Go 结果以上述 GitHub ARM64 工作流实际执行结果为准。
 
 ## 尚未覆盖
 
