@@ -62,7 +62,7 @@ AdBlock Pro 的默认设计**只接管 IPv4 明文 DNS**，并不尝试强制覆
 
 **为什么不能直接下载仓库 ZIP 安装？**
 
-为了避免上传个人凭据及设备配置，仓库没有提交安装时需要的 `config/admin.auth` 和 `bin/AdGuardHome.yaml`。现在通过 `.github/workflows/release.yml` 自动构建完整 ARM64 安装包：首次安装时，安装程序在**本机独立生成** API 密码和对应的 bcrypt 哈希配置；已安装设备的配置不会被覆盖。直接压缩仓库并不会包括打包时编译的安装初始化工具，因此不可直接安装。
+为了避免上传设备配置，仓库没有提交安装时需要的 `admin.auth` 和 `bin/AdGuardHome.yaml`。通过 `.github/workflows/release.yml` 构建完整 ARM64 安装包：首次安装默认账号为 `admin`，密码为 `password`，安装程序在**本机生成带随机盐的 bcrypt 哈希**，运行文件权限为 `0600`；已安装设备的账号和配置不会被覆盖。直接压缩仓库不会包括打包时编译的安装初始化工具，因此不可直接安装。
 
 安装时通过对应 Root 管理器选择完整模块 ZIP，完成后按要求重启。KernelSU 与 APatch 可以从管理器打开模块 WebUI；Magisk 用户需使用兼容 `ksu.exec` 的 WebUI 宿主。本项目尚未针对所有机型与 Android 版本完成兼容性测试；先保留可恢复的旧版本或备份更稳妥。
 
@@ -102,7 +102,7 @@ boot_network_wait=20
 4. **系统设置**：控制 DNS 接管、开机自启、自动更新，并进入原生 AdGuard Home 后台。
 5. **运行日志**：查看模块任务结果、诊断信息；使用短时域名观察辅助排查漏拦截。
 
-原生 AdGuard Home 管理界面在本机 **`http://127.0.0.1:3000/`**。它与 AdBlock Pro WebUI 是两个不同的管理界面：前者负责 DNS 引擎的高级功能，后者负责模块级来源、个人名单与维护操作。后台登录使用安装时在本机生成的独立凭据。可用 root 终端通过 `cat /data/adb/adblockpro/admin.auth` 查看 `admin:密码`，切勿上传到公开仓库。
+原生 AdGuard Home 管理界面在本机 **`http://127.0.0.1:3000/`**。它与 AdBlock Pro WebUI 是两个不同的管理界面：前者负责 DNS 引擎的高级功能，后者负责模块级来源、个人名单与维护操作。首次安装默认使用 `admin / password`；覆盖升级保留旧账号和密码。后台仅监听本机，若自行开放远程访问，请先修改默认密码。现有设备可用 root 终端通过 `cat /data/adb/adblockpro/admin.auth` 查看实际的 `账号:密码`，不要公开此文件或设备配置。
 
 ### 常用排查命令
 

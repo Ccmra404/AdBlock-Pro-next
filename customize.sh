@@ -80,13 +80,13 @@ if [ ! -f "$DATA_DIR/settings.conf" ]; then
 fi
 unzip -oq "$ZIPFILE" "config-blacklist.txt" "config-whitelist.txt" -d "$MODPATH" || fail "Cannot extract list defaults."
 
-# Fresh installs must create a unique API password and its matching bcrypt
-# hash ON THE DEVICE. Never ship a shared credential in release archives.
+# Create first-install defaults and a fresh bcrypt hash on the device.
+# Existing credentials are preserved; never archive runtime auth/config files.
 if [ ! -f "$DATA_DIR/bin/AdGuardHome.yaml" ] && [ ! -f "$DATA_DIR/admin.auth" ]; then
   unzip -oq "$ZIPFILE" "bin/adblock-bootstrap" -d "$DATA_DIR" || fail "Missing per-device setup helper."
   chmod 700 "$DATA_DIR/bin/adblock-bootstrap" || fail "Cannot execute setup helper."
   "$DATA_DIR/bin/adblock-bootstrap" "$DATA_DIR/bin/AdGuardHome.yaml" "$DATA_DIR/admin.auth" ||
-    fail "Failed to create unique local API credentials and DNS settings."
+    fail "Failed to create local API credentials and DNS settings."
   rm -f "$DATA_DIR/bin/adblock-bootstrap"
 else
   [ -s "$DATA_DIR/bin/AdGuardHome.yaml" ] && [ -s "$DATA_DIR/admin.auth" ] ||
