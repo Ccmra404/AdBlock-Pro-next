@@ -25,6 +25,7 @@ on:
       - "tests/**"
       - "upstream/**"
       - "tools/*.py"
+      - "tools/*.sh"
       - "README.md"
       - "LICENSE"
       - "THIRD_PARTY_NOTICES.md"
@@ -49,7 +50,27 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  build-curl:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - name: Install pinned Android NDK
+        run: |
+          sdkmanager "ndk;27.2.12479018"
+          echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+      - name: Build pinned curl and OpenSSL for Android ARM64
+        run: bash tools/build_android_curl.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adblock-curl-arm64
+          path: bin/curl
+          if-no-files-found: error
+          retention-days: 1
   package:
+    needs: build-curl
     runs-on: ubuntu-24.04-arm
     outputs:
       version: ${{ steps.assemble.outputs.version }}
@@ -57,6 +78,10 @@ jobs:
       ARTIFACT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: adblock-curl-arm64
+          path: bin
       - uses: actions/setup-go@v5
         with:
           go-version: '1.23'
@@ -122,10 +147,10 @@ jobs:
             # Test packages sync the reviewed commit, never an unrelated main snapshot.
             sed -i "s@AdBlock-Pro-next/main/rules/@AdBlock-Pro-next/$ARTIFACT_SHA/rules/@" "$stage/scripts/rule-store.sh"
           fi
-          cp licenses/AWAvenue-GPL-3.0.txt "$stage/licenses/"
-          cp bin/AdGuardHome bin/adblock-bootstrap "$stage/bin/"
+          cp licenses/AWAvenue-GPL-3.0.txt licenses/curl-COPYING.txt licenses/openssl-LICENSE.txt "$stage/licenses/"
+          cp bin/AdGuardHome bin/adblock-bootstrap bin/curl "$stage/bin/"
           cp bin/data/filters/10007.txt bin/data/filters/1791638912.txt "$stage/bin/data/filters/"
-          chmod 755 "$stage/bin/AdGuardHome" "$stage/bin/adblock-bootstrap"
+          chmod 755 "$stage/bin/AdGuardHome" "$stage/bin/adblock-bootstrap" "$stage/bin/curl"
           (cd "$stage" && zip -q -r -9 "$GITHUB_WORKSPACE/dist/AdBlock-Pro-$TAG-arm64.zip" .)
           rm -rf "$stage"
           unzip -t "dist/AdBlock-Pro-$TAG-arm64.zip" | tail -n 1
@@ -176,5 +201,7 @@ jobs:
               ;;
             *) echo 'Invalid publication channel.' >&2; exit 1 ;;
           esac
-          printf '%s\n' "ARM64 $CHANNEL for commit $GITHUB_SHA. Automated checks passed; Android device validation is separate. See docs/release-v0.13.0-candidate.md for verified scope and outstanding device tests." > /tmp/release-notes.md
+          notes="docs/release-$TAG.md"
+          test -s "$notes" || { echo "Missing release notes: $notes" >&2; exit 1; }
+          cp "$notes" /tmp/release-notes.md
           gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "AdBlock Pro $TAG ($build_type)" --notes-file /tmp/release-notes.md --prerelease="$prerelease" --latest="$latest"

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -62,6 +62,8 @@ const releaseScript = releaseStep.slice(releaseStep.indexOf('        run: |\n') 
 function publication(t, channel, tag = 'v0.13.0') {
   const dir = mkdtempSync(path.join(tmpdir(), 'abp-release-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, 'docs'), { recursive: true });
+  writeFileSync(path.join(dir, 'docs', `release-${tag}.md`), 'Release notes fixture.\n');
   const args = path.join(dir, 'args');
   const result = spawnSync('bash', ['-c', `gh() { printf '%s\\n' "$@" > "$RELEASE_ARGS"; }
 ${releaseScript.replaceAll('/tmp/release-notes.md', shellPath(path.join(dir, 'notes.md')))}`], {

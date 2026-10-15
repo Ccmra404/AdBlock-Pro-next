@@ -5,5 +5,6 @@ This project includes or redistributes the following upstream components and rul
 - **AdGuard Home v0.107.79**: unmodified ARM64 binary at `bin/AdGuardHome`. License: GPL-3.0. Source release: https://github.com/AdguardTeam/AdGuardHome/releases/tag/v0.107.79. The expected binary SHA-256 is recorded in `upstream/adguard-home.json`.
 - **10007 filter snapshot**: `bin/data/filters/10007.txt`, from https://github.com/lingeringsound/10007_auto. Repository license metadata reports GPL-3.0.
 - **AWAvenue Ads Rule snapshot**: `bin/data/filters/1791638912.txt`, from https://github.com/TG-Twilight/AWAvenue-Ads-Rule. Repository license metadata reports GPL-3.0.
+- **curl 8.23.0**: ARM64 Android binary at `bin/curl`, built from the upstream source with OpenSSL 3.5.9. curl is licensed under the curl license; OpenSSL is licensed under Apache-2.0. Full license texts are included at `licenses/curl-COPYING.txt` and `licenses/openssl-LICENSE.txt`.
 
 See each upstream repository for its complete license and current source. The original AdBlock Pro code is licensed under GPL-3.0-only. The maintainer-approved public app-domain snapshot is included at `rules/shared-app-domains.txt`; local personal lists, credentials and device query logs are not included.
