@@ -25,6 +25,7 @@ function installFixture(t, family, preference, failWrite = false) {
   }
   mkdirSync(path.join(stage, 'bin/data/filters'), { recursive: true });
   writeFileSync(path.join(stage, 'bin/AdGuardHome'), 'fixture-only-engine');
+  writeFileSync(path.join(stage, 'bin/curl'), '#!/bin/sh\necho "curl fixture"\n');
   for (const file of ['10007.txt', '1791638912.txt']) writeFileSync(path.join(stage, 'bin/data/filters', file), '||ads.cache.example^\n');
   const config = readFileSync(new URL('../tools/bootstrap/main.go', import.meta.url), 'utf8').match(/const initialConfig = `([\s\S]*?)`/)[1];
   // Fixture only: Linux ARM64 CI separately runs the real Go generator/core.
