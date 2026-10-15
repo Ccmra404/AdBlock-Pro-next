@@ -339,7 +339,7 @@ save_snapshot() {
   cp "$AGH/bin/AdGuardHome.yaml" "$stage/bin/AdGuardHome.yaml" || { rm -rf "$stage"; return 1; }
   [ ! -d "$AGH/bin/data/filters" ] || cp -R "$AGH/bin/data/filters" "$stage/bin/data/filters" || { rm -rf "$stage"; return 1; }
   [ ! -d "$AGH/bin/userfilters" ] || cp -R "$AGH/bin/userfilters" "$stage/bin/userfilters" || { rm -rf "$stage"; return 1; }
-  for file in sources-v2.txt source-names.tsv sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
+  for file in sources-v2.txt source-names.tsv removed-sources.txt sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
     [ ! -f "$STATE/$file" ] || cp "$STATE/$file" "$stage/state/$file" || { rm -rf "$stage"; return 1; }
   done
   [ ! -f "$STATE/profiles-initialized" ] || cp "$STATE/profiles-initialized" "$stage/state/profiles-initialized" || { rm -rf "$stage"; return 1; }
@@ -365,7 +365,7 @@ restore_snapshot() {
   rm -rf "$AGH/bin/data/filters" "$AGH/bin/userfilters"
   [ ! -d "$restore/bin/data/filters" ] || cp -R "$restore/bin/data/filters" "$AGH/bin/data/filters" || { rm -rf "$restore"; return 1; }
   [ ! -d "$restore/bin/userfilters" ] || cp -R "$restore/bin/userfilters" "$AGH/bin/userfilters" || { rm -rf "$restore"; return 1; }
-  for file in sources-v2.txt source-names.tsv sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
+  for file in sources-v2.txt source-names.tsv removed-sources.txt sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
     rm -f "$STATE/$file"
     [ ! -f "$restore/state/$file" ] || cp "$restore/state/$file" "$STATE/$file" || { rm -rf "$restore"; return 1; }
   done
@@ -393,7 +393,9 @@ source_name() {
   [ ! -f "$STATE/source-names.tsv" ] || custom_name=$($BB awk -F '\t' -v url="$1" '$1==url { print substr($0,index($0,"\t")+1); exit }' "$STATE/source-names.tsv")
   [ -z "$custom_name" ] || { printf '%s' "$custom_name"; return; }
   case "$1" in
+    https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward) printf '10007 应用与广告规则' ;;
     https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward) printf '10007 应用与广告规则' ;;
+    https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt) printf '秋风 AdGuard 全规则' ;;
     https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt) printf '秋风广告规则' ;;
     https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt) printf '秋风纯广告' ;;
     https://anti-ad.net/easylist.txt) printf 'anti-AD EasyList' ;;
@@ -401,6 +403,16 @@ source_name() {
     https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt) printf 'AdGuard DNS' ;;
     shared) printf '共享抓包规则' ;;
     *) host=${1#https://}; host=${host%%/*}; printf '%s' "$host" ;;
+  esac
+}
+source_mirror_url() {
+  case "$1" in
+    https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward) printf 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' ;;
+    https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward) printf 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
+    https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt) printf 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt' ;;
+    https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt|https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt) printf 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt' ;;
+    https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt) printf 'https://raw.githubusercontent.com/AdguardTeam/AdGuardSDNSFilter/gh-pages/Filters/filter.txt' ;;
+    *) return 1 ;;
   esac
 }
 source_cache_key() {
@@ -423,20 +435,28 @@ post_remove_source() {
   if printf '%s' "$status" | "$BB" grep -Eo '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | "$BB" cut -d '"' -f4 | "$BB" grep -Fxq "$url"; then printf '%s\n' "$result" >&2; return 1; fi
   return 0
 }
+download_candidate() {
+  candidate_url=$1; candidate_output=$2
+  "$CURL" --silent --show-error --fail --location --proto '=https' --proto-redir '=https' \
+    --connect-timeout 5 --max-time 15 --max-filesize 52428800 "$candidate_url" -o "$candidate_output" || { rm -f "$candidate_output"; return 1; }
+  bytes=$(wc -c < "$candidate_output" 2>/dev/null); case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
+  [ "$bytes" -gt 0 ] && [ "$bytes" -le 52428800 ] || { rm -f "$candidate_output"; return 1; }
+  first=$(head -c 512 "$candidate_output" | "$BB" tr '[:upper:]' '[:lower:]')
+  case "$first" in *'<!doctype html'*|*'<html'*|*'<head'*) rm -f "$candidate_output"; return 1 ;; esac
+}
 download_source() {
   url=$1; output=$2; name=$3
   [ -n "${CURL:-}" ] || CURL=$(abp_find_curl) || return 1
   echo "[进度] 下载规则源：$name"
-  "$CURL" --silent --show-error --fail --location --proto '=https' --proto-redir '=https' \
-    --connect-timeout 8 --max-time 90 --max-filesize 52428800 "$url" -o "$output" || {
-    echo "[!] 下载失败：$name。请检查该来源的网络或 DNS；现有规则会保留。" >&2
-    rm -f "$output"
-    return 1
-  }
-  bytes=$(wc -c < "$output" 2>/dev/null); case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
-  [ "$bytes" -gt 0 ] && [ "$bytes" -le 52428800 ] || { rm -f "$output"; echo "[!] 来源内容为空或超过 50 MB：$name" >&2; return 1; }
-  first=$(head -c 512 "$output" | "$BB" tr '[:upper:]' '[:lower:]')
-  case "$first" in *'<!doctype html'*|*'<html'*|*'<head'*) rm -f "$output"; echo "[!] 来源返回了网页，不是规则文本：$name" >&2; return 1 ;; esac
+  if download_candidate "$url" "$output"; then return 0; fi
+  mirror=$(source_mirror_url "$url" 2>/dev/null) || mirror=''
+  if [ -n "$mirror" ] && [ "$mirror" != "$url" ]; then
+    echo "[提醒] 原地址失败，正在尝试 HTTPS 镜像：$name"
+    if download_candidate "$mirror" "$output"; then echo "[+] 已通过 HTTPS 镜像下载：$name"; return 0; fi
+  fi
+  echo "[!] 下载失败：$name。原地址和可用镜像均未成功；现有规则会保留。" >&2
+  rm -f "$output"
+  return 1
 }
 sync_sources() {
   config="$MODDIR/webui-config.sh"

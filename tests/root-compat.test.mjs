@@ -30,8 +30,13 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     assert.equal(readFileSync(path.join(state, 'whitelist.txt'), 'utf8').trim(), 'login.example.com');
     assert.match(run('webui-job.sh', ['recent']), /1001\tsuccess\tadd-whitelist/);
     assert.match(run('webui-job.sh', ['list']), /1001/);
-    assert.match(run('webui-job.sh', ['config', 'list-sources', 'balanced']), /秋风纯广告/);
+    assert.match(run('webui-job.sh', ['config', 'list-sources', 'balanced']), /秋风 AdGuard 全规则/);
     assert.equal(existsSync(path.join(jobs, '1001.done')), true);
+    const oldSource = 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward';
+    const newSource = 'https://mirror.example/ads.txt';
+    run('webui-job.sh', ['config', 'edit-source', oldSource, newSource, '1003']);
+    assert.match(run('webui-job.sh', ['config', 'list-sources', 'balanced']), /mirror\.example/);
+    assert.equal(readFileSync(path.join(jobs, '1003.done'), 'utf8').trim(), '0');
     writeFileSync(path.join(fixture.dir, 'bindhosts.sh'), '#!/bin/sh\nprintf "worker-action=%s\\n" "$1"\n');
     run('webui-job.sh', ['start', '1002', '--filtering', 'on']);
     for (let i = 0; i < 100 && !existsSync(path.join(jobs, '1002.done')); i++) await delay(20);

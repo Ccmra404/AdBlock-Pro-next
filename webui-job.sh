@@ -44,6 +44,7 @@ case "$1" in
    set-source) case "$4" in on|off) ;; *) exit 1;; esac; case "$5" in ''|light|balanced|strict) ;; *[!0-9]*) exit 1;; esac; [ ${#5} -le 20 ] || exit 1; case "$3" in shared) ;; https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac ;;
    add-source) case "$3" in https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac; name_bytes=$(printf '%s' "$4" | wc -c | tr -d '[:space:]'); [ "$name_bytes" -ge 1 ] && [ "$name_bytes" -le 192 ] || exit 1; name_lines=$(printf '%s' "$4" | wc -l | tr -d '[:space:]'); [ "$name_lines" -eq 0 ] || exit 1; clean_bytes=$(printf '%s' "$4" | "$BB" tr -d '[:cntrl:]' | wc -c | tr -d '[:space:]'); [ "$clean_bytes" -eq "$name_bytes" ] || exit 1 ;;
    rename-source) case "$3" in shared) ;; https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac; name_bytes=$(printf '%s' "$4" | wc -c | tr -d '[:space:]'); [ "$name_bytes" -ge 1 ] && [ "$name_bytes" -le 192 ] || exit 1; name_lines=$(printf '%s' "$4" | wc -l | tr -d '[:space:]'); [ "$name_lines" -eq 0 ] || exit 1; clean_bytes=$(printf '%s' "$4" | "$BB" tr -d '[:cntrl:]' | wc -c | tr -d '[:space:]'); [ "$clean_bytes" -eq "$name_bytes" ] || exit 1 ;;
+   edit-source) case "$3" in https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac; case "$4" in https://*) [ ${#4} -le 2048 ] || exit 1 ;; *) exit 1;; esac; case "$5" in ''|*[!0-9]*) exit 1;; esac; [ ${#5} -le 20 ] || exit 1 ;;
    set-source|remove-source) case "$3" in shared) ;; https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac ;;
    *) exit 1;;
   esac
@@ -65,6 +66,7 @@ case "$1" in
      ;;
    add-source) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$5 ;;
    rename-source) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$5 ;;
+   edit-source) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$5 ;;
    list-sources) result=$(sh "$CONFIG" "$2" "$3" 2>&1); event_id='' ;;
    shared-rules) result=$(sh "$CONFIG" "$2" 2>&1); event_id='' ;;
    export-rules) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$4 ;;
@@ -73,7 +75,7 @@ case "$1" in
   code=$?
   printf '%s\n' "$result"
   case "$2" in
-   add-whitelist|add-blacklist|remove-whitelist|remove-blacklist|import-lists|export-rules|auto-update|autostart|set-mode|set-source|add-source|remove-source|rename-source) loggable=1 ;;
+   add-whitelist|add-blacklist|remove-whitelist|remove-blacklist|import-lists|export-rules|auto-update|autostart|set-mode|set-source|add-source|remove-source|rename-source|edit-source) loggable=1 ;;
    *) loggable=0 ;;
   esac
   case "$event_id" in ''|*[!0-9]*) loggable=0 ;; esac

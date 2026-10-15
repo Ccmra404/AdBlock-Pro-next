@@ -6,21 +6,26 @@ import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
 
 const original = readFileSync(new URL('../webui-config.sh', import.meta.url), 'utf8');
-const base = 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward';
-const awaAds = 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt';
+const base = 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward';
+const awaFull = 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt';
+const oldBase = 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward';
+const oldAwaFull = 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt';
+const oldAwaAds = 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt';
 const antiAd = 'https://anti-ad.net/easylist.txt';
 const custom = 'https://example.org/filter.txt';
 const shared = 'shared';
 
-function fixture(t, { light = '', balanced = '', strict = '', customSources = '' } = {}) {
+function fixture(t, { light = '', balanced = '', strict = '', customSources = '', sourcesV2, sourceNames = '', profilesInitialized = true } = {}) {
   const root = rootFixture(t);
   root.addBusybox('Magisk');
   const dir = root.dir;
   mkdirSync(path.join(dir, 'profiles'));
   for (const [profile, content] of Object.entries({ light, balanced, strict }))
     writeFileSync(path.join(dir, 'profiles', profile + '.txt'), content);
-  writeFileSync(path.join(dir, 'profiles-initialized'), 'initialized\n');
+  if (profilesInitialized) writeFileSync(path.join(dir, 'profiles-initialized'), 'initialized\n');
   writeFileSync(path.join(dir, 'custom-sources.txt'), customSources);
+  if (sourcesV2 !== undefined) writeFileSync(path.join(dir, 'sources-v2.txt'), sourcesV2);
+  if (sourceNames) writeFileSync(path.join(dir, 'source-names.tsv'), sourceNames);
   writeFileSync(path.join(dir, 'blocking-mode'), 'strict\n');
   const script = path.join(dir, 'webui-config.sh');
   writeFileSync(script, original.replace('DIR=/data/adb/bindhosts_personal', 'DIR=' + shellPath(dir)));
@@ -37,19 +42,42 @@ function fixture(t, { light = '', balanced = '', strict = '', customSources = ''
   return { dir, run, list };
 }
 
-test('legacy selected profile migrates once to one editable source list without deleting old data', t => {
-  const f = fixture(t, { balanced: awaAds + '\n', strict: antiAd + '\n' + custom + '\n', customSources: custom + '\n' });
+test('legacy selected profile migrates once to the new base sources without deleting user subscriptions', t => {
+  const f = fixture(t, { balanced: oldAwaAds + '\n', strict: antiAd + '\n' + custom + '\n', customSources: custom + '\n' });
   const sources = f.list();
   assert.equal(sources.find(x => x.url === base).enabled, 'enabled');
-  assert.equal(sources.find(x => x.url === awaAds).enabled, 'enabled');
+  assert.equal(sources.find(x => x.url === awaFull).enabled, 'enabled');
   assert.equal(sources.find(x => x.url === antiAd).enabled, 'enabled');
   assert.equal(sources.find(x => x.url === custom).enabled, 'enabled');
   assert.equal(sources.find(x => x.url === shared).enabled, 'enabled');
   assert.ok(existsSync(path.join(f.dir, 'profiles', 'strict.txt')));
-  assert.deepEqual(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8').trim().split('\n').sort(), [base, awaAds, antiAd, custom, shared].sort());
+  assert.deepEqual(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8').trim().split('\n').sort(), [base, awaFull, antiAd, custom, shared].sort());
+  assert.match(readFileSync(path.join(f.dir, 'profiles', 'balanced.txt'), 'utf8'), new RegExp(awaFull.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assert.doesNotMatch(readFileSync(path.join(f.dir, 'profiles', 'balanced.txt'), 'utf8'), /Adguard-Only\.Ads/);
 });
 
-test('every bundled source and shared rules can be disabled and removed', t => {
+test('existing source URLs migrate in place, preserve custom names and selections, and keep old optional sources', t => {
+  const f = fixture(t, {
+    sourcesV2: [oldBase, oldAwaFull, oldAwaAds, antiAd, custom, shared].join('\n') + '\n',
+    sourceNames: oldAwaAds + '\tMy AWA list\n' + custom + '\tCustom list\n',
+    customSources: custom + '\n',
+  });
+  const sources = f.list();
+  assert.equal(sources.find(x => x.url === base).enabled, 'enabled');
+  assert.equal(sources.find(x => x.url === awaFull).enabled, 'enabled');
+  assert.equal(sources.find(x => x.url === awaFull).label, 'My AWA list');
+  assert.equal(sources.find(x => x.url === antiAd).enabled, 'enabled');
+  assert.equal(sources.find(x => x.url === custom).enabled, 'enabled');
+  assert.equal(sources.some(x => [oldBase, oldAwaFull, oldAwaAds].includes(x.url)), false);
+  assert.equal(sources.filter(x => [base, awaFull, shared].includes(x.url)).length, 3);
+  const migrated = readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8');
+  assert.doesNotMatch(migrated, /raw\.githubusercontent\.com\/lingeringsound\/10007_auto/);
+  assert.doesNotMatch(migrated, /AWAvenue-Ads-Rule-Adguard-Only/);
+  assert.match(migrated, /anti-ad\.net/);
+  assert.match(readFileSync(path.join(f.dir, 'source-names.tsv'), 'utf8'), /My AWA list/);
+});
+
+test('removing bundled sources hides them from the source list and they can be imported again', t => {
   const f = fixture(t);
   assert.equal(f.run('set-source', base, 'off', 'balanced').status, 0);
   assert.equal(f.run('set-source', shared, 'off', 'balanced').status, 0);
@@ -57,8 +85,13 @@ test('every bundled source and shared rules can be disabled and removed', t => {
   assert.equal(f.list().find(x => x.url === shared).enabled, 'disabled');
   assert.equal(f.run('remove-source', base).status, 0);
   assert.equal(f.run('remove-source', shared).status, 0);
-  assert.equal(f.list().find(x => x.url === base).configured, 'catalog');
-  assert.equal(f.list().find(x => x.url === shared).configured, 'catalog');
+  assert.equal(f.list().some(x => x.url === base), false);
+  assert.equal(f.list().some(x => x.url === shared), false);
+  assert.deepEqual(readFileSync(path.join(f.dir, 'removed-sources.txt'), 'utf8').trim().split('\n').sort(), [base, shared].sort());
+  assert.equal(f.run('add-source', base, '10007').status, 0);
+  assert.equal(f.run('set-source', shared, 'on', 'balanced').status, 0);
+  assert.equal(f.list().find(x => x.url === base).enabled, 'enabled');
+  assert.equal(f.list().find(x => x.url === shared).enabled, 'enabled');
 });
 
 test('custom subscriptions can be added, renamed, removed, and re-added with a name', t => {
@@ -83,12 +116,46 @@ test('built-in source names can be customized and malformed names are rejected',
   assert.notEqual(invalid.status, 0, invalid.stderr + invalid.stdout + JSON.stringify(invalid));
 });
 
-test('empty legacy profiles still migrate to the previous default subscriptions and shared library', t => {
+test('subscription URLs can be changed without changing enabled state or losing a custom name', t => {
+  const replacement = 'https://mirror.example/ads.txt';
+  const f = fixture(t, { strict: custom + '\n', customSources: custom + '\n' });
+  assert.equal(f.run('rename-source', custom, '我的规则').status, 0);
+  const result = f.run('edit-source', custom, replacement);
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(f.list().some(x => x.url === custom), false);
+  assert.deepEqual(f.list().find(x => x.url === replacement), {
+    id: 'custom', label: '我的规则', url: replacement, enabled: 'enabled', configured: 'configured', removable: 'removable',
+  });
+  assert.doesNotMatch(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8'), /example\.org/);
+  assert.match(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8'), /mirror\.example/);
+  assert.doesNotMatch(readFileSync(path.join(f.dir, 'custom-sources.txt'), 'utf8'), /example\.org/);
+  assert.match(readFileSync(path.join(f.dir, 'custom-sources.txt'), 'utf8'), /mirror\.example/);
+});
+
+test('subscription URL edits reject invalid or duplicate targets without mutating existing sources', t => {
+  const replacement = 'https://rules.example/other.txt';
+  const f = fixture(t, { strict: custom + '\n' + replacement + '\n', customSources: custom + '\n' + replacement + '\n' });
+  const invalid = f.run('edit-source', custom, 'http://insecure.example/list.txt');
+  assert.notEqual(invalid.status, 0);
+  const duplicate = f.run('edit-source', custom, replacement);
+  assert.notEqual(duplicate.status, 0);
+  assert.equal(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8').includes(custom), true);
+});
+
+test('fresh source catalog contains only 10007, full AWAvenue, and the shared library', t => {
   const f = fixture(t);
   const sources = f.list();
   assert.equal(sources.find(x => x.url === base).enabled, 'enabled');
-  assert.equal(sources.find(x => x.url === awaAds).enabled, 'enabled');
+  assert.equal(sources.find(x => x.url === awaFull).enabled, 'enabled');
   assert.equal(sources.find(x => x.url === shared).enabled, 'enabled');
+  assert.equal(sources.length, 3);
   assert.equal(sources.filter(x => x.enabled === 'enabled').length, 3);
   assert.ok(sources.every(x => x.removable === 'removable'));
+});
+
+test('a fresh source setup does not inject the old anti-AD strict-profile default', t => {
+  const f = fixture(t, { profilesInitialized: false });
+  const sources = f.list();
+  assert.deepEqual(sources.map(x => x.url).sort(), [base, awaFull, shared].sort());
+  assert.doesNotMatch(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8'), /anti-ad\.net/);
 });

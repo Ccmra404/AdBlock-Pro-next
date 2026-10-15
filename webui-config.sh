@@ -2,15 +2,18 @@
 DIR=/data/adb/bindhosts_personal
 MODDIR=${0%/*}
 . "$MODDIR/scripts/compat.sh" || exit 1
-REWARD=https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
-AWAVENUE=https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt
-AWA_ADS=https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt
+REWARD=https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
+AWAVENUE=https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt
+LEGACY_REWARD=https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
+LEGACY_AWAVENUE=https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt
+LEGACY_AWA_ADS=https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt
 ANTIAD=https://anti-ad.net/easylist.txt
 ADRULES=https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt
 ADGUARD=https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
 PROFILE_DIR=$DIR/profiles
 SOURCES_V2=$DIR/sources-v2.txt
 SOURCE_NAMES=$DIR/source-names.tsv
+REMOVED_SOURCES=$DIR/removed-sources.txt
 SHARED_SOURCE=shared
 umask 077
 
@@ -33,7 +36,7 @@ valid_custom_url() {
   case "$authority" in ''|*@*) return 1 ;; esac
 }
 is_builtin() {
-  case "$1" in "$REWARD"|"$AWAVENUE"|"$AWA_ADS"|"$ANTIAD"|"$ADRULES"|"$ADGUARD") return 0 ;; *) return 1 ;; esac
+  case "$1" in "$REWARD"|"$AWAVENUE") return 0 ;; *) return 1 ;; esac
 }
 valid_source_ref() {
   [ "$1" = "$SHARED_SOURCE" ] || valid_custom_url "$1"
@@ -46,7 +49,7 @@ valid_source_name() {
   return 0
 }
 source_id() {
-  case "$1" in "$REWARD") printf '10007' ;; "$AWAVENUE") printf 'awa-full' ;; "$AWA_ADS") printf 'awa-ads' ;; "$ANTIAD") printf 'antiad' ;; "$ADRULES") printf 'adrules' ;; "$ADGUARD") printf 'adguard' ;; "$SHARED_SOURCE") printf 'shared' ;; *) printf 'custom' ;; esac
+  case "$1" in "$REWARD") printf '10007' ;; "$AWAVENUE") printf 'awa-full' ;; "$ANTIAD") printf 'antiad' ;; "$ADRULES") printf 'adrules' ;; "$ADGUARD") printf 'adguard' ;; "$SHARED_SOURCE") printf 'shared' ;; *) printf 'custom' ;; esac
 }
 source_label() {
   if [ -f "$SOURCE_NAMES" ]; then
@@ -55,8 +58,7 @@ source_label() {
   fi
   case "$1" in
     "$REWARD") printf '10007 基础广告规则' ;;
-    "$AWAVENUE") printf '秋风完整规则（旧订阅）' ;;
-    "$AWA_ADS") printf '秋风纯广告（约 655 条）' ;;
+    "$AWAVENUE") printf '秋风 AdGuard 全规则' ;;
     "$ANTIAD") printf 'anti-AD EasyList（约 9.5 万条）' ;;
     "$ADRULES") printf 'AdRules DNS（约 20 万条 · 高内存）' ;;
     "$ADGUARD") printf 'AdGuard DNS' ;;
@@ -86,14 +88,54 @@ remove_line() {
 mode_sources() {
   case "$1" in
     light|balanced|strict)
-      printf '%s\n' "$REWARD" "$AWA_ADS"
+      printf '%s\n' "$REWARD" "$AWAVENUE"
       [ ! -f "$PROFILE_DIR/$1.txt" ] || cat "$PROFILE_DIR/$1.txt"
       ;;
   esac
 }
+migrate_source_url_file() {
+  file=$1
+  [ -f "$file" ] || return 0
+  if ! "$BB" grep -Fqx "$LEGACY_REWARD" "$file" && ! "$BB" grep -Fqx "$LEGACY_AWAVENUE" "$file" && ! "$BB" grep -Fqx "$LEGACY_AWA_ADS" "$file"; then return 0; fi
+  tmp="$file.migrate.$$"
+  raw="$tmp.raw"
+  "$BB" awk -v old_reward="$LEGACY_REWARD" -v reward="$REWARD" -v old_awa="$LEGACY_AWAVENUE" -v old_ads="$LEGACY_AWA_ADS" -v awa="$AWAVENUE" '
+    $0 == old_reward { print reward; next }
+    $0 == old_awa || $0 == old_ads { print awa; next }
+    $0 != "" { print }
+  ' "$file" > "$raw" || { rm -f "$raw" "$tmp"; return 1; }
+  "$BB" sort -u "$raw" -o "$tmp" || { rm -f "$raw" "$tmp"; return 1; }
+  rm -f "$raw"
+  chmod 600 "$tmp" && mv "$tmp" "$file"
+}
+migrate_source_names() {
+  [ -f "$SOURCE_NAMES" ] || return 0
+  if ! "$BB" awk -F '\t' -v old_reward="$LEGACY_REWARD" -v old_awa="$LEGACY_AWAVENUE" -v old_ads="$LEGACY_AWA_ADS" '$1 == old_reward || $1 == old_awa || $1 == old_ads { found=1 } END { exit !found }' "$SOURCE_NAMES"; then return 0; fi
+  tmp="$SOURCE_NAMES.migrate.$$"
+  "$BB" awk -F '\t' -v old_reward="$LEGACY_REWARD" -v reward="$REWARD" -v old_awa="$LEGACY_AWAVENUE" -v old_ads="$LEGACY_AWA_ADS" -v awa="$AWAVENUE" '
+    BEGIN { OFS="\t" }
+    {
+      original=$1; url=original; name=substr($0, index($0, "\t") + 1)
+      if (url == old_reward) url=reward
+      else if (url == old_awa || url == old_ads) url=awa
+      if (!(url in names) || (original == url && !preferred[url])) { names[url]=name; preferred[url]=(original == url) }
+    }
+    END { for (url in names) print url, names[url] }
+  ' "$SOURCE_NAMES" > "$tmp" || { rm -f "$tmp"; return 1; }
+  chmod 600 "$tmp" && mv "$tmp" "$SOURCE_NAMES"
+}
+migrate_source_state() {
+  for file in "$SOURCES_V2" "$DIR/custom-sources.txt" "$DIR/sources.txt" "$DIR/disabled-sources.txt" \
+    "$PROFILE_DIR/light.txt" "$PROFILE_DIR/balanced.txt" "$PROFILE_DIR/strict.txt"; do
+    migrate_source_url_file "$file" || return 1
+  done
+  migrate_source_names
+}
 init_sources() {
+  migrate_source_state || return 1
   [ -f "$SOURCES_V2" ] && return 0
   init_profiles || return 1
+  migrate_source_state || return 1
   read_mode
   tmp="$SOURCES_V2.tmp.$$"
   mode_sources "$mode" > "$tmp" || { rm -f "$tmp"; return 1; }
@@ -114,8 +156,8 @@ init_profiles() {
   [ -f "$DIR/profiles-initialized" ] && return 0
   mkdir -p "$PROFILE_DIR" || return 1
   [ -f "$PROFILE_DIR/light.txt" ] || : > "$PROFILE_DIR/light.txt"
-  [ -f "$PROFILE_DIR/balanced.txt" ] || printf '%s\n' "$AWA_ADS" > "$PROFILE_DIR/balanced.txt"
-  [ -f "$PROFILE_DIR/strict.txt" ] || printf '%s\n' "$ANTIAD" > "$PROFILE_DIR/strict.txt"
+  [ -f "$PROFILE_DIR/balanced.txt" ] || printf '%s\n' "$AWAVENUE" > "$PROFILE_DIR/balanced.txt"
+  [ -f "$PROFILE_DIR/strict.txt" ] || : > "$PROFILE_DIR/strict.txt"
   for legacy in "$DIR/sources.txt" "$DIR/custom-sources.txt"; do
     [ ! -f "$legacy" ] || while IFS= read -r url; do
       valid_custom_url "$url" || continue
@@ -194,6 +236,7 @@ case "$1" in
     else
       if [ "$2" != "$SHARED_SOURCE" ] && ! is_builtin "$2"; then append_line "$DIR/custom-sources.txt" "$2" || exit 1; fi
       append_line "$SOURCES_V2" "$2" || exit 1
+      remove_line "$REMOVED_SOURCES" "$2" || exit 1
     fi
     echo "[+] $(source_label "$2") source state saved; run a rule update to apply it."
     ;;
@@ -210,6 +253,7 @@ case "$1" in
     fi
     save_source_names "$2" "$name" || exit 1
     append_line "$SOURCES_V2" "$2" || exit 1
+    remove_line "$REMOVED_SOURCES" "$2" || exit 1
     echo "[+] $(source_label "$2") imported; run a rule update to apply it."
     ;;
   remove-source)
@@ -220,6 +264,7 @@ case "$1" in
       remove_line "$DIR/custom-sources.txt" "$2" || exit 1
       if [ -f "$SOURCE_NAMES" ]; then "$BB" awk -F '\t' -v url="$2" '$1 != url { print }' "$SOURCE_NAMES" > "$SOURCE_NAMES.tmp.$$" && chmod 600 "$SOURCE_NAMES.tmp.$$" && mv "$SOURCE_NAMES.tmp.$$" "$SOURCE_NAMES" || exit 1; fi
     fi
+    append_line "$REMOVED_SOURCES" "$2" || exit 1
     echo '[+] Source removed; current DNS rules will change after the next update.'
     ;;
   rename-source)
@@ -228,22 +273,66 @@ case "$1" in
     save_source_names "$2" "$3" || exit 1
     echo "[+] Source renamed to $(source_label "$2"); run a rule update to apply it."
     ;;
+  edit-source)
+    valid_custom_url "$2" && valid_custom_url "$3" && [ "$2" != "$3" ] || { echo '[!] Enter two different valid HTTPS source URLs.' >&2; exit 1; }
+    init_sources || exit 1
+    if ! is_builtin "$2" && ! source_is_selected "$2" && ! "$BB" grep -Fxq "$2" "$DIR/custom-sources.txt" 2>/dev/null; then
+      echo '[!] The current source does not exist.' >&2; exit 1
+    fi
+    source_is_selected "$3" && { echo '[!] The new URL is already enabled.' >&2; exit 1; }
+    was_selected=0; source_is_selected "$2" && was_selected=1
+    custom_tmp="$DIR/custom-sources.txt.tmp.$$"
+    sources_tmp="$SOURCES_V2.tmp.$$"
+    names_tmp="$SOURCE_NAMES.tmp.$$"
+    old_name=''
+    [ ! -f "$SOURCE_NAMES" ] || old_name=$("$BB" awk -F '\t' -v url="$2" '$1==url { print substr($0,index($0,"\t")+1); exit }' "$SOURCE_NAMES")
+    if [ -f "$DIR/custom-sources.txt" ]; then
+      "$BB" grep -Fvx "$2" "$DIR/custom-sources.txt" > "$custom_tmp"; grep_rc=$?
+      [ "$grep_rc" -le 1 ] || { rm -f "$custom_tmp"; exit 1; }
+    fi
+    [ -f "$custom_tmp" ] || : > "$custom_tmp"
+    if ! is_builtin "$3" && ! "$BB" grep -Fxq "$3" "$custom_tmp"; then
+      count=$(wc -l < "$custom_tmp" 2>/dev/null); [ -n "$count" ] || count=0
+      [ "$count" -lt 10 ] || { rm -f "$custom_tmp"; echo '[!] At most 10 custom sources are supported.' >&2; exit 1; }
+      printf '%s\n' "$3" >> "$custom_tmp" || { rm -f "$custom_tmp"; exit 1; }
+    fi
+    "$BB" grep -Fvx "$2" "$SOURCES_V2" > "$sources_tmp"; grep_rc=$?
+    [ "$grep_rc" -le 1 ] || { rm -f "$custom_tmp" "$sources_tmp"; exit 1; }
+    if [ "$was_selected" = 1 ]; then printf '%s\n' "$3" >> "$sources_tmp" || { rm -f "$custom_tmp" "$sources_tmp"; exit 1; }; fi
+    if [ -f "$SOURCE_NAMES" ]; then
+      "$BB" awk -F '\t' -v url="$2" '$1 != url { print }' "$SOURCE_NAMES" > "$names_tmp" || { rm -f "$custom_tmp" "$sources_tmp" "$names_tmp"; exit 1; }
+    else : > "$names_tmp"; fi
+    if [ -n "$old_name" ]; then
+      "$BB" awk -F '\t' -v url="$3" '$1 != url { print }' "$names_tmp" > "$names_tmp.next" && mv "$names_tmp.next" "$names_tmp" || { rm -f "$custom_tmp" "$sources_tmp" "$names_tmp" "$names_tmp.next"; exit 1; }
+      printf '%s\t%s\n' "$3" "$old_name" >> "$names_tmp" || { rm -f "$custom_tmp" "$sources_tmp" "$names_tmp"; exit 1; }
+    fi
+    chmod 600 "$custom_tmp" "$sources_tmp" "$names_tmp" && mv "$custom_tmp" "$DIR/custom-sources.txt" && mv "$sources_tmp" "$SOURCES_V2" && mv "$names_tmp" "$SOURCE_NAMES" || { rm -f "$custom_tmp" "$sources_tmp" "$names_tmp"; echo '[!] Could not save the updated source.' >&2; exit 1; }
+    echo "[+] Source URL updated to $(source_label "$3"); run a rule update to apply it."
+    ;;
   source-name)
     valid_source_ref "$2" || exit 1
     source_label "$2"
     ;;
   list-sources)
     init_sources || exit 1
-    catalog="$DIR/.abp-catalog.$$"; selected="$DIR/.abp-selected.$$"
-    printf '%s\n' "$REWARD" "$AWAVENUE" "$AWA_ADS" "$ANTIAD" "$ADRULES" "$ADGUARD" "$SHARED_SOURCE" > "$catalog"
+    catalog="$DIR/.abp-catalog.$$"; selected="$DIR/.abp-selected.$$"; visible="$DIR/.abp-visible.$$"
+    printf '%s\n' "$REWARD" "$AWAVENUE" "$SHARED_SOURCE" > "$catalog"
     [ ! -f "$DIR/custom-sources.txt" ] || cat "$DIR/custom-sources.txt" >> "$catalog"
     cat "$SOURCES_V2" >> "$catalog"
     cp "$SOURCES_V2" "$selected" || { rm -f "$catalog" "$selected"; exit 1; }
     "$BB" sort -u "$catalog" -o "$catalog" || { rm -f "$catalog" "$selected"; exit 1; }
     "$BB" sort -u "$selected" -o "$selected" || { rm -f "$catalog" "$selected"; exit 1; }
+    if [ -f "$REMOVED_SOURCES" ]; then
+      "$BB" awk '
+        FILENAME == ARGV[1] { if ($0 != "") removed[$0] = 1; next }
+        FILENAME == ARGV[2] { if ($0 != "") selected[$0] = 1; next }
+        $0 != "" && (!($0 in removed) || ($0 in selected)) { print }
+      ' "$REMOVED_SOURCES" "$selected" "$catalog" > "$visible" || { rm -f "$catalog" "$selected" "$visible"; exit 1; }
+      mv "$visible" "$catalog" || { rm -f "$catalog" "$selected" "$visible"; exit 1; }
+    fi
     printf 'mode\tbalanced\n'
     "$BB" awk \
-      -v reward="$REWARD" -v awavenue="$AWAVENUE" -v awa_ads="$AWA_ADS" \
+      -v reward="$REWARD" -v awavenue="$AWAVENUE" \
       -v antiad="$ANTIAD" -v adrules="$ADRULES" -v adguard="$ADGUARD" -v shared="$SHARED_SOURCE" '
       FILENAME == ARGV[1] { if ($0 != "") selected[$0] = 1; next }
       $0 != "" {
@@ -254,8 +343,6 @@ case "$1" in
           id="10007"
         } else if (url == awavenue) {
           id="awa-full"
-        } else if (url == awa_ads) {
-          id="awa-ads"
         } else if (url == antiad) {
           id="antiad"
         } else if (url == adrules) {
@@ -275,7 +362,7 @@ case "$1" in
       printf 'source\t%s\t%s\t%s\t%s\t%s\t%s\n' "$id" "$label" "$url" "$enabled" "$configured" "$removable"
     done
     result=$?
-    rm -f "$catalog" "$selected"
+    rm -f "$catalog" "$selected" "$visible"
     [ "$result" -eq 0 ] || exit "$result"
     ;;
   *) echo '[!] Unsupported configuration action.' >&2; exit 1 ;;

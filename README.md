@@ -25,7 +25,7 @@ AdBlock Pro 在手机本地运行 **AdGuard Home**，通过 Root 模块接管 IP
 
 | | 能做什么 |
 | --- | --- |
-| **开箱即用** | 内置 10007 与秋风纯广告快照；默认来源可单独停用或移除 |
+| **开箱即用** | 内置 10007 与秋风 AdGuard 全规则快照；默认来源可单独停用或移除 |
 | **按需选择** | 一个来源列表统一管理内置源、共享抓包规则与 HTTPS 自定义订阅，可重命名 |
 | **个人规则** | 搜索、增删和导出黑白名单；与第三方订阅分开保存 |
 | **看清状态** | 查看核心运行、DNS 重定向、已加载规则和进程内存；运行环境诊断 |
@@ -36,7 +36,7 @@ WebUI 支持手机与桌面布局、深浅色主题。日志和名单提供搜�
 
 ## 逐项管理规则来源
 
-初次安装默认启用 10007、秋风纯广告和共享抓包规则。规则管理页会列出内置来源、共享规则与用户订阅；可以单独导入、停用、移除或重命名，不再按轻量、均衡、严格档位切换。移除内置来源会将它从当前订阅中移除，但仍可重新导入；移除自定义来源会从列表中删除。
+初次安装默认启用 10007、秋风 AdGuard 全规则（广告、隐私与不受欢迎内容）和共享抓包规则。预置订阅仅包含这两个公开规则源；规则管理页还会列出共享规则与用户自行添加的订阅，支持导入、停用、移除、重命名和修改链接。移除内置来源会将它从当前订阅中移除，但仍可重新导入。
 
 新增或修改来源后，在「规则管理」执行更新才会生效。更新时模块先用系统 `curl` 下载并检查来源，再让 AdGuard Home 读取本地缓存；下载失败会继续保留上一版有效规则。规则规模会影响内存占用；建议只启用需要的来源，避免重复堆叠。
 
@@ -104,9 +104,8 @@ WebUI 管理订阅来源、个人名单、接管开关和任务日志。上游 D
 | --- | --- |
 | [AdGuard Home](https://github.com/AdguardTeam/AdGuardHome) | 本地 DNS 过滤引擎 |
 | [KernelSU](https://github.com/tiann/KernelSU) | Android Root 与模块平台 |
-| [10007](https://github.com/lingeringsound/10007_auto) | 默认基础规则 |
-| [AWAvenue Ads Rule](https://github.com/TG-Twilight/AWAvenue-Ads-Rule) | 内置秋风纯广告规则来源 |
-| [anti-AD](https://github.com/privacy-protection-tools/anti-AD) | 可选订阅来源 |
+| [10007](https://github.com/lingeringsound/10007_auto) | 内置“保留广告奖励”规则；使用上游提供的 jsDelivr 加速地址 |
+| [AWAvenue Ads Rule](https://github.com/TG-Twilight/AWAvenue-Ads-Rule) | 内置 AdGuard 全规则，启用广告、隐私与不受欢迎内容过滤；使用 [对应订阅选项](https://awavenue.top/Sub.html?tool=adguard&privacy=block&unwelcome=block) 和 jsDelivr GCore 加速地址 |
 
 第三方引擎和规则遵循各自的上游许可证。秋风规则的许可证副本见 [GPL-3.0](licenses/AWAvenue-GPL-3.0.txt)。
 

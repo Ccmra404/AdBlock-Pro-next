@@ -148,8 +148,8 @@ if [ ! -f "$STATE_DIR/v3-installed" ]; then
     cp "$MODPATH/config-whitelist.txt" "$STATE_DIR/whitelist.txt" || fail "Cannot initialize whitelist."
   fi
   printf '%s\n' \
-    'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' \
-    'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt' \
+    'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' \
+    'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt' \
     > "$STATE_DIR/sources-applied.txt"
   : > "$STATE_DIR/last-update"
   : > "$STATE_DIR/v3-installed"
