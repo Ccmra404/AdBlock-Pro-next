@@ -10,13 +10,15 @@ const helpers = bindhosts.slice(bindhosts.indexOf('source_name() {'), bindhosts.
 const feed = 'https://filters.example/list.txt';
 const nativePath = value => process.platform === 'win32' ? value.replace(/^\/([a-z])\//, (_, drive) => drive.toUpperCase() + ':/') : value;
 
-function fixture(t, { sources, oldApplied = '', marker = true, failDownload = false, failRemove = false, statusUrl = '' } = {}) {
+function fixture(t, { sources, oldApplied = '', marker = true, failDownload = false, failRemove = false, statusUrl = '', existingShared = false } = {}) {
   const root = rootFixture(t); root.addBusybox('Magisk');
   const mod = path.join(root.dir, 'module'), agh = path.join(root.dir, 'agh'), state = path.join(root.dir, 'state');
   mkdirSync(path.join(mod, 'scripts'), { recursive: true });
   mkdirSync(path.join(agh, 'bin', 'userfilters'), { recursive: true }); mkdirSync(state, { recursive: true });
   writeFileSync(path.join(mod, 'scripts', 'compat.sh'), readFileSync(root.compatFile, 'utf8'));
   const sourceList = path.join(root.dir, 'source-list.tsv'), calls = path.join(root.dir, 'api-calls.tsv');
+  const sharedFilter = path.join(agh, 'bin', 'userfilters', 'adblock-pro-shared-app-rules.txt');
+  writeFileSync(sharedFilter, '||shared.example^\n');
   writeFileSync(sourceList, sources ?? 'mode\tbalanced\nsource\tcustom\tExample Feed\t' + feed + '\tenabled\tconfigured\tremovable\n');
   writeFileSync(path.join(mod, 'webui-config.sh'), '#!/bin/sh\n[ "$1" = list-sources ] || exit 1\ncat "$SOURCE_LIST"\n');
   if (oldApplied !== null) writeFileSync(path.join(state, 'sources-applied.txt'), oldApplied);
@@ -41,7 +43,10 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
     '  case "$method $endpoint" in',
     '    "GET /filtering/status") printf "{\\"filters\\":[{\\"url\\":\\"%s\\"}]}\\n" "$STATUS_URL" ;;',
     '    "POST /filtering/remove_url") [ "$FAIL_REMOVE" != 1 ] ;;',
-    '    "POST /filtering/add_url"|"POST /filtering/set_url") return 0 ;;',
+    '    "POST /filtering/add_url")',
+    '      if [ -n "$EXISTING_URL" ]; then case "$body" in *"$EXISTING_URL"*) return 22 ;; esac; fi',
+    '      return 0 ;;',
+    '    "POST /filtering/set_url") return 0 ;;',
     '    *) return 22 ;;',
     '  esac',
     '}',
@@ -59,15 +64,15 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
     'sync_sources',
   ].join('\n');
   writeFileSync(script, body); chmodSync(script, 0o755);
-  const env = { ...root.env('Magisk'), CURL: shellPath(curl), SOURCE_LIST: shellPath(sourceList), API_CALLS: shellPath(calls), FAIL_URL: failDownload ? feed : '', FAIL_REMOVE: failRemove ? '1' : '0', STATUS_URL: statusUrl };
+  const env = { ...root.env('Magisk'), CURL: shellPath(curl), SOURCE_LIST: shellPath(sourceList), API_CALLS: shellPath(calls), FAIL_URL: failDownload ? feed : '', FAIL_REMOVE: failRemove ? '1' : '0', STATUS_URL: existingShared ? shellPath(sharedFilter) : statusUrl, EXISTING_URL: existingShared ? shellPath(sharedFilter) : '' };
   const run = () => spawnSync('bash', [shellPath(script)], { encoding: 'utf8', timeout: 15000, env });
-  return { run, state, agh, calls, oldCache };
+  return { run, state, agh, calls, oldCache, sharedFilter };
 }
 
 test('subscriptions download through system curl and AdGuard Home receives only the validated local file', t => {
   const f = fixture(t, { marker: false, oldApplied: feed + '\n' });
   const result = f.run();
-  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(result.status, 0, JSON.stringify(result));
   const calls = readFileSync(f.calls, 'utf8');
   assert.match(calls, /POST\t\/filtering\/remove_url\t.*filters\.example\/list\.txt/);
   const add = calls.split('\n').find(line => line.startsWith('POST\t/filtering/add_url\t'));
@@ -86,6 +91,19 @@ test('a failed subscription download keeps the previous applied source record an
   assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), oldRecord);
   assert.equal(existsSync(f.calls) ? readFileSync(f.calls, 'utf8') : '', '');
   assert.equal(readFileSync(f.oldCache, 'utf8'), '||preserved.example^\n');
+});
+
+test('legacy migration updates an already registered shared filter instead of adding it twice', t => {
+  const sources = 'mode\tbalanced\nsource\tcustom\tExample Feed\t' + feed + '\tenabled\tconfigured\tremovable\nsource\tshared\tShared Rules\tshared\tenabled\tbundled\tremovable\n';
+  const f = fixture(t, { sources, marker: false, oldApplied: '', existingShared: true });
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  const calls = readFileSync(f.calls, 'utf8').trim().split('\n').map(line => line.split('\t'));
+  const sharedAdds = calls.filter(([method, endpoint, body]) => method === 'POST' && endpoint === '/filtering/add_url' && JSON.parse(body).url === shellPath(f.sharedFilter));
+  assert.equal(sharedAdds.length, 0);
+  const sharedUpdate = calls.find(([method, endpoint, body]) => method === 'POST' && endpoint === '/filtering/set_url' && JSON.parse(body).url === shellPath(f.sharedFilter));
+  assert.ok(sharedUpdate, 'the existing shared filter must still be reconciled');
+  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), feed + '\nshared\n');
 });
 
 test('deselecting a previously applied URL removes its local filter and clears only module-owned state', t => {

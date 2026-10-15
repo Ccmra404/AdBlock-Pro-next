@@ -443,6 +443,7 @@ sync_sources() {
   desired="$STATE/.desired-sources.$$"
   raw="$STATE/.sources-raw.$$"
   work="$STATE/.source-downloads.$$"
+  live_urls="$work/.live-urls"
   entries="$STATE/.source-entries.$$"
   applied="$STATE/sources-applied.txt"
   marker="$STATE/sources-local-v2"
@@ -465,6 +466,9 @@ sync_sources() {
     fi
     printf '%s\t%s\t%s\t%s\n' "$url" "$filter" "$name" "$temp" >> "$entries" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
   done < "$desired"
+  live_status=$(api GET /filtering/status 8) || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+  printf '%s' "$live_status" | "$BB" grep -q '"filters"[[:space:]]*:' || { rm -rf "$work"; rm -f "$desired" "$entries"; echo '[!] AdGuard Home returned an invalid filter list.' >&2; return 1; }
+  printf '%s' "$live_status" | "$BB" grep -Eo '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | "$BB" cut -d '"' -f4 > "$live_urls" || { rm -rf "$work"; rm -f "$desired" "$entries" "$live_urls"; return 1; }
   [ -f "$applied" ] || : > "$applied"
   if [ ! -f "$marker" ]; then
     # Older releases registered remote URLs in AdGuard Home itself. Remove only
@@ -489,19 +493,22 @@ sync_sources() {
     if [ -n "$temp" ]; then chmod 600 "$temp" && mv -f "$temp" "$filter" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }; fi
     escaped=$(printf '%s' "$filter" | "$BB" sed 's/\\/\\\\/g; s/"/\\"/g')
     safe_name=$(printf '%s' "$name" | "$BB" sed 's/\\/\\\\/g; s/"/\\"/g')
-    if [ ! -f "$marker" ] || ! "$BB" grep -Fxq "$url" "$applied"; then
+    if ! "$BB" grep -Fxq "$filter" "$live_urls"; then
       echo "[进度] 注册本地规则：$name"
       body=$(printf '{"name":"%s","url":"%s","whitelist":false}' "$safe_name" "$escaped")
       result=$(api POST /filtering/add_url "$body" 20 2>&1) || {
         case "$result" in *"already added"*|*"already exists"*) ;; *) printf '%s\n' "$result" >&2; rm -rf "$work"; rm -f "$desired" "$entries"; return 1 ;; esac
       }
+      printf '%s\n' "$filter" >> "$live_urls" || { rm -rf "$work"; rm -f "$desired" "$entries" "$live_urls"; return 1; }
+    else
+      echo "[进度] 更新本地规则：$name"
     fi
     body=$(printf '{"url":"%s","whitelist":false,"data":{"name":"%s","url":"%s","enabled":true}}' "$escaped" "$safe_name" "$escaped")
     api POST /filtering/set_url "$body" 20 >/dev/null || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
   done < "$entries"
   "$BB" awk -F '\t' 'NF { print $1 }' "$desired" > "$applied.tmp" && chmod 600 "$applied.tmp" && mv "$applied.tmp" "$applied" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
   printf 'local-v2\n' > "$marker.tmp" && chmod 600 "$marker.tmp" && mv "$marker.tmp" "$marker" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
-  rm -rf "$work"; rm -f "$desired" "$entries"
+  rm -rf "$work"; rm -f "$desired" "$entries" "$live_urls"
 }
 write_personal_filter() {
   filter_dir="$AGH/bin/userfilters"
