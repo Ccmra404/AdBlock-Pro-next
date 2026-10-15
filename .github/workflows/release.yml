@@ -201,5 +201,7 @@ jobs:
               ;;
             *) echo 'Invalid publication channel.' >&2; exit 1 ;;
           esac
-          printf '%s\n' "ARM64 $CHANNEL for commit $GITHUB_SHA. Automated checks passed; Android device validation is separate. See docs/release-v0.13.0-candidate.md for verified scope and outstanding device tests." > /tmp/release-notes.md
+          notes="docs/release-$TAG.md"
+          test -s "$notes" || { echo "Missing release notes: $notes" >&2; exit 1; }
+          cp "$notes" /tmp/release-notes.md
           gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "AdBlock Pro $TAG ($build_type)" --notes-file /tmp/release-notes.md --prerelease="$prerelease" --latest="$latest"
