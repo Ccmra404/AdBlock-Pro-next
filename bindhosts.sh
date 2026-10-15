@@ -339,7 +339,7 @@ save_snapshot() {
   cp "$AGH/bin/AdGuardHome.yaml" "$stage/bin/AdGuardHome.yaml" || { rm -rf "$stage"; return 1; }
   [ ! -d "$AGH/bin/data/filters" ] || cp -R "$AGH/bin/data/filters" "$stage/bin/data/filters" || { rm -rf "$stage"; return 1; }
   [ ! -d "$AGH/bin/userfilters" ] || cp -R "$AGH/bin/userfilters" "$stage/bin/userfilters" || { rm -rf "$stage"; return 1; }
-  for file in sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
+  for file in sources-v2.txt source-names.tsv sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
     [ ! -f "$STATE/$file" ] || cp "$STATE/$file" "$stage/state/$file" || { rm -rf "$stage"; return 1; }
   done
   [ ! -f "$STATE/profiles-initialized" ] || cp "$STATE/profiles-initialized" "$stage/state/profiles-initialized" || { rm -rf "$stage"; return 1; }
@@ -365,7 +365,7 @@ restore_snapshot() {
   rm -rf "$AGH/bin/data/filters" "$AGH/bin/userfilters"
   [ ! -d "$restore/bin/data/filters" ] || cp -R "$restore/bin/data/filters" "$AGH/bin/data/filters" || { rm -rf "$restore"; return 1; }
   [ ! -d "$restore/bin/userfilters" ] || cp -R "$restore/bin/userfilters" "$AGH/bin/userfilters" || { rm -rf "$restore"; return 1; }
-  for file in sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
+  for file in sources-v2.txt source-names.tsv sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
     rm -f "$STATE/$file"
     [ ! -f "$restore/state/$file" ] || cp "$restore/state/$file" "$STATE/$file" || { rm -rf "$restore"; return 1; }
   done
@@ -389,72 +389,127 @@ update_failed() {
 }
 
 source_name() {
+  custom_name=''
+  [ ! -f "$STATE/source-names.tsv" ] || custom_name=$($BB awk -F '\t' -v url="$1" '$1==url { print substr($0,index($0,"\t")+1); exit }' "$STATE/source-names.tsv")
+  [ -z "$custom_name" ] || { printf '%s' "$custom_name"; return; }
   case "$1" in
     https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward) printf '10007 应用与广告规则' ;;
     https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt) printf '秋风广告规则' ;;
     https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt) printf '秋风纯广告' ;;
     https://anti-ad.net/easylist.txt) printf 'anti-AD EasyList' ;;
-    https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt) printf 'AdRules DNS（大列表）' ;;
+    https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt) printf 'AdRules DNS' ;;
     https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt) printf 'AdGuard DNS' ;;
+    shared) printf '共享抓包规则' ;;
     *) host=${1#https://}; host=${host%%/*}; printf '%s' "$host" ;;
   esac
 }
-
+source_cache_key() {
+  key=$(printf '%s' "$1" | "$BB" sha256sum 2>/dev/null | "$BB" awk '{print $1}')
+  case "$key" in ''|*[!a-fA-F0-9]*) key=$(printf '%s' "$1" | cksum | "$BB" awk '{print $1 "-" $2}') ;; esac
+  printf '%s' "$key"
+}
+source_file() {
+  if [ "$1" = shared ]; then printf '%s' "$SHARED_FILTER"; return; fi
+  key=$(source_cache_key "$1")
+  printf '%s/adblock-pro-source-%s.txt' "$AGH/bin/userfilters" "$key"
+}
 post_remove_source() {
   url=$1
-  body=$(printf '{"url":"%s","whitelist":false}' "$url")
-  result=$(api POST /filtering/remove_url "$body" 20 2>&1) && return 0
+  escaped=$(printf '%s' "$url" | "$BB" sed 's/\\/\\\\/g; s/"/\\"/g')
+  body=$(printf '{"url":"%s","whitelist":false}' "$escaped")
+  result=$(api POST /filtering/remove_url "$body" 8 2>&1) && return 0
   case "$result" in *"not found"*|*"does not exist"*) return 0 ;; esac
-  printf '%s\n' "$result" >&2
-  return 1
+  status=$(api GET /filtering/status 8 2>/dev/null) || { printf '%s\n' "$result" >&2; return 1; }
+  if printf '%s' "$status" | "$BB" grep -Eo '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | "$BB" cut -d '"' -f4 | "$BB" grep -Fxq "$url"; then printf '%s\n' "$result" >&2; return 1; fi
+  return 0
 }
-
+download_source() {
+  url=$1; output=$2; name=$3
+  [ -n "${CURL:-}" ] || CURL=$(abp_find_curl) || return 1
+  echo "[进度] 下载规则源：$name"
+  "$CURL" --silent --show-error --fail --location --proto '=https' --proto-redir '=https' \
+    --connect-timeout 8 --max-time 90 --max-filesize 52428800 "$url" -o "$output" || {
+    echo "[!] 下载失败：$name。请检查该来源的网络或 DNS；现有规则会保留。" >&2
+    rm -f "$output"
+    return 1
+  }
+  bytes=$(wc -c < "$output" 2>/dev/null); case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
+  [ "$bytes" -gt 0 ] && [ "$bytes" -le 52428800 ] || { rm -f "$output"; echo "[!] 来源内容为空或超过 50 MB：$name" >&2; return 1; }
+  first=$(head -c 512 "$output" | "$BB" tr '[:upper:]' '[:lower:]')
+  case "$first" in *'<!doctype html'*|*'<html'*|*'<head'*) rm -f "$output"; echo "[!] 来源返回了网页，不是规则文本：$name" >&2; return 1 ;; esac
+}
 sync_sources() {
   config="$MODDIR/webui-config.sh"
   desired="$STATE/.desired-sources.$$"
-  applied="$STATE/sources-applied.txt"
-  # Do not pipe a failed source-list command into a successful sort: that
-  # previously produced an empty desired set and removed all live sources.
   raw="$STATE/.sources-raw.$$"
-  /system/bin/sh "$config" list-sources > "$raw" || { rm -f "$raw" "$desired"; return 1; }
-  "$BB" awk -F '\t' '$1=="source" && $5=="enabled" { print $4 }' "$raw" | "$BB" sort -u > "$desired" || { rm -f "$raw" "$desired"; return 1; }
+  work="$STATE/.source-downloads.$$"
+  live_urls="$work/.live-urls"
+  entries="$STATE/.source-entries.$$"
+  applied="$STATE/sources-applied.txt"
+  marker="$STATE/sources-local-v2"
+  "$BB" sh "$config" list-sources > "$raw" || { rm -f "$raw" "$desired"; return 1; }
+  "$BB" awk -F '\t' '$1=="source" && $5=="enabled" { print $4 "\t" $3 }' "$raw" > "$desired" || { rm -f "$raw" "$desired"; return 1; }
   rm -f "$raw"
-  # 10007 is a required base source for every profile. Do not apply a
-  # broken/empty catalog that could wipe working DNS filters.
-  "$BB" grep -Fxq 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' "$desired" || {
-    echo '[!] Missing fixed base source; keeping existing filters.' >&2
-    rm -f "$desired"
-    return 1
-  }
-  [ -f "$applied" ] || : > "$applied"
-
-  while IFS= read -r url; do
+  mkdir -p "$work" "$AGH/bin/userfilters" || { rm -f "$desired"; return 1; }
+  : > "$entries"
+  while IFS="$(printf '\t')" read -r url name; do
     [ -n "$url" ] || continue
-    if ! "$BB" grep -Fxq "$url" "$desired"; then
-      echo "[进度] 移除停用来源：$(source_name "$url")"
-      post_remove_source "$url" || { rm -f "$desired"; return 1; }
+    filter=$(source_file "$url")
+    temp=''
+    if [ "$url" != shared ]; then
+      key=$(source_cache_key "$url")
+      temp="$work/$key.txt"
+      download_source "$url" "$temp" "$name" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+    elif [ ! -s "$filter" ]; then
+      echo '[!] 随包或本地共享规则文件缺失；现有规则保留。' >&2
+      rm -rf "$work"; rm -f "$desired" "$entries"; return 1
     fi
-  done < "$applied"
-
-  while IFS= read -r url; do
+    printf '%s\t%s\t%s\t%s\n' "$url" "$filter" "$name" "$temp" >> "$entries" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+  done < "$desired"
+  live_status=$(api GET /filtering/status 8) || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+  printf '%s' "$live_status" | "$BB" grep -q '"filters"[[:space:]]*:' || { rm -rf "$work"; rm -f "$desired" "$entries"; echo '[!] AdGuard Home returned an invalid filter list.' >&2; return 1; }
+  printf '%s' "$live_status" | "$BB" grep -Eo '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | "$BB" cut -d '"' -f4 > "$live_urls" || { rm -rf "$work"; rm -f "$desired" "$entries" "$live_urls"; return 1; }
+  [ -f "$applied" ] || : > "$applied"
+  if [ ! -f "$marker" ]; then
+    # Older releases registered remote URLs in AdGuard Home itself. Remove only
+    # those module-owned subscriptions before replacing them with local files.
+    while IFS= read -r url; do
+      [ -n "$url" ] || continue
+      post_remove_source "$url" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+    done < "$applied"
+    if ! "$BB" awk -F '\t' '$1=="shared" { found=1 } END { exit !found }' "$desired"; then post_remove_source "$SHARED_FILTER" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }; fi
+  else
+    while IFS= read -r url; do
+      [ -n "$url" ] || continue
+      if ! "$BB" awk -F '\t' -v url="$url" '$1==url { found=1 } END { exit !found }' "$desired"; then
+        filter=$(source_file "$url")
+        post_remove_source "$filter" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+        [ "$filter" = "$SHARED_FILTER" ] || rm -f "$filter"
+      fi
+    done < "$applied"
+  fi
+  while IFS="$(printf '\t')" read -r url filter name temp; do
     [ -n "$url" ] || continue
-    name=$(source_name "$url")
-    escaped=$(printf '%s' "$url" | $BB sed 's/\\/\\\\/g; s/"/\\"/g')
-    safe_name=$(printf '%s' "$name" | $BB sed 's/\\/\\\\/g; s/"/\\"/g')
-    if ! "$BB" grep -Fxq "$url" "$applied"; then
-      echo "[进度] 添加规则源：$name"
+    if [ -n "$temp" ]; then chmod 600 "$temp" && mv -f "$temp" "$filter" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }; fi
+    escaped=$(printf '%s' "$filter" | "$BB" sed 's/\\/\\\\/g; s/"/\\"/g')
+    safe_name=$(printf '%s' "$name" | "$BB" sed 's/\\/\\\\/g; s/"/\\"/g')
+    if ! "$BB" grep -Fxq "$filter" "$live_urls"; then
+      echo "[进度] 注册本地规则：$name"
       body=$(printf '{"name":"%s","url":"%s","whitelist":false}' "$safe_name" "$escaped")
-      result=$(api POST /filtering/add_url "$body" 30 2>&1) || {
-        case "$result" in *"already added"*|*"already exists"*) ;; *) printf '%s\n' "$result" >&2; rm -f "$desired"; return 1 ;; esac
+      result=$(api POST /filtering/add_url "$body" 20 2>&1) || {
+        case "$result" in *"already added"*|*"already exists"*) ;; *) printf '%s\n' "$result" >&2; rm -rf "$work"; rm -f "$desired" "$entries"; return 1 ;; esac
       }
+      printf '%s\n' "$filter" >> "$live_urls" || { rm -rf "$work"; rm -f "$desired" "$entries" "$live_urls"; return 1; }
+    else
+      echo "[进度] 更新本地规则：$name"
     fi
     body=$(printf '{"url":"%s","whitelist":false,"data":{"name":"%s","url":"%s","enabled":true}}' "$escaped" "$safe_name" "$escaped")
-    api POST /filtering/set_url "$body" 30 >/dev/null || { rm -f "$desired"; return 1; }
-  done < "$desired"
-  cp "$desired" "$applied.tmp" && chmod 600 "$applied.tmp" && mv "$applied.tmp" "$applied" || { rm -f "$desired"; return 1; }
-  rm -f "$desired"
+    api POST /filtering/set_url "$body" 20 >/dev/null || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+  done < "$entries"
+  "$BB" awk -F '\t' 'NF { print $1 }' "$desired" > "$applied.tmp" && chmod 600 "$applied.tmp" && mv "$applied.tmp" "$applied" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+  printf 'local-v2\n' > "$marker.tmp" && chmod 600 "$marker.tmp" && mv "$marker.tmp" "$marker" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+  rm -rf "$work"; rm -f "$desired" "$entries" "$live_urls"
 }
-
 write_personal_filter() {
   filter_dir="$AGH/bin/userfilters"
   mkdir -p "$filter_dir" || return 1
@@ -479,6 +534,11 @@ write_personal_filter() {
 }
 
 ensure_shared_filter() {
+  selected=$("$BB" sh "$MODDIR/webui-config.sh" list-sources 2>/dev/null) || return 1
+  if ! printf '%s\n' "$selected" | "$BB" awk -F '\t' '$1=="source" && $4=="shared" && $5=="enabled" { found=1 } END { exit !found }'; then
+    post_remove_source "$SHARED_FILTER"
+    return $?
+  fi
   "$BB" sh "$RULE_STORE" init || return 1
   shared_json=$(api GET /filtering/status 4) || return 1
   if ! printf '%s' "$shared_json" | "$BB" grep -Eo '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | "$BB" cut -d '"' -f4 | "$BB" grep -Fxq "$SHARED_FILTER"; then
@@ -537,8 +597,10 @@ update_rules() {
   api GET /status 4 >/dev/null || { echo '[!] DNS 服务没有响应；现有规则未更改。' >&2; return 1; }
   save_snapshot || { echo '[!] 无法保存更新前的规则快照。' >&2; return 1; }
   echo '[进度] 应用来源与黑白名单配置'
-  "$BB" sh "$RULE_STORE" sync || echo '[提醒] 共享库同步失败，继续使用随包或上次有效快照。'
-  ensure_shared_filter || { update_failed '[!] 共享抓包规则应用失败。'; return 1; }
+  selected_sources=$("$BB" sh "$MODDIR/webui-config.sh" list-sources) || { update_failed '[!] 无法读取已选规则来源。'; return 1; }
+  if printf '%s\n' "$selected_sources" | "$BB" awk -F '\t' '$1=="source" && $4=="shared" && $5=="enabled" { found=1 } END { exit !found }'; then
+    "$BB" sh "$RULE_STORE" sync || echo '[提醒] 共享库同步失败，继续使用随包或上次有效快照。'
+  fi
   sync_sources || { update_failed '[!] 规则来源配置失败。'; return 1; }
   sync_personal_filter || { update_failed '[!] 个人黑白名单同步失败。'; return 1; }
   echo '[进度] 下载并校验规则源'

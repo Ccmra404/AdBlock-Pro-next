@@ -6,7 +6,7 @@ const JOB = `sh ${MODULE_DIR}/webui-job.sh`;
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', logFilter: 'all', profileEditor: 'balanced' };
+const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], sourceRenameUrl: '', logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', logFilter: 'all' };
 Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', sharedUpdatedAt: 0, sharedError: '', sharedLoaded: false, sharedSearch: '', sharedPage: 0, apps: [], appsLoaded: false, appsLoading: false, appsError: '', appQuery: '', selectedApp: null, observeDuration: '10', observationResultsOpen: false, selectedObservationDomains: [] });
 const pages = { home: '总览', rules: '规则管理', lists: '名单', manage: '设置', logs: '运行日志' };
 const LOG_PAGE_SIZE = 10;
@@ -14,7 +14,6 @@ const OBSERVATION_PAGE_SIZE = 10;
 const LIST_PAGE_SIZE = 10;
 const LIST_PAGINATION_THRESHOLD = 20;
 const LOG_CACHE_MS = 15000;
-const modes = { light: ['轻量', '基础规则'], balanced: ['均衡', '基础 + 自选来源'], strict: ['严格', '基础 + anti-AD'] };
 const OBSERVE_SESSION_KEY = 'abp-observation-session';
 let lastJobId = 0;
 function nextJobId() { lastJobId = Math.max(Date.now(), lastJobId + 1); return String(lastJobId); }
@@ -23,14 +22,13 @@ const sourceCacheTime = new Map();
 const SOURCE_CACHE_MS = 30000;
 const pageFragments = new Map();
 let navigationEpoch = 0;
-let displayedSourceProfile = null;
+let sourcesDisplayed = false;
 const listRequestIds = { whitelist: 0, blacklist: 0 };
 const listCacheTime = { whitelist: 0, blacklist: 0 };
 const LIST_CACHE_MS = 20000;
 let sourcePending = null;
 let statusRequestId = 0;
 let statusPending = null;
-let modeChangeInFlight = false;
 let jobStarting = false;
 
 const icons = {
@@ -129,29 +127,29 @@ function homePage() {
   const [title, subtitle] = summaryText();
   const stats = s?.dns_stats_json || null;
   const queryCount = queryTotal(stats);
-  const mode = modes[s?.mode] || modes.balanced;
   const memory = memoryView(s);
   const headAction = `<button class="btn" data-action="diagnose">${icon('activity')} 环境诊断</button>`;
   return `${heading('总览', '查看过滤与 DNS 服务状态', headAction)}
     <div class="stack">
       <section class="panel hero"><div class="hero-content"><span class="hero-symbol ${s?.state === 'active' ? '' : 'off'}">${icon(s?.state === 'active' ? 'shield' : 'power')}</span><div><div class="hero-title">${esc(title)}</div><div class="hero-sub">${esc(subtitle)}</div><div class="status-pills"><span class="mini-status"><i class="dot ${coreRunning(s) ? 'on' : 'warn'}"></i> DNS ${coreRunning(s) ? '运行中' : s ? '已停止' : '待检查'}</span><span class="mini-status"><i class="dot ${s?.dns_redirect === '1' ? 'on' : 'warn'}"></i> DNS 重定向 ${s?.dns_redirect === '1' ? '已应用' : '未应用'}</span></div></div></div>${toggle('filtering', s?.filtering_enabled === 'true', '广告规则过滤')}</section>
-      <section class="metrics" aria-label="设备实时统计"><div class="metric"><div class="metric-label">已加载规则条目</div><div class="metric-value">${s ? fmt(s.blocked) : '—'}</div><div class="metric-foot">不是广告命中次数</div></div><div class="metric"><div class="metric-label">DNS 查询统计</div><div class="metric-value">${queryCount === null ? '—' : fmt(queryCount)}</div><div class="metric-foot">AdGuard Home 统计接口</div></div><div class="metric"><div class="metric-label">DNS 核心内存</div><div class="metric-value">${memory.value} <span style="font-size:14px">MB</span></div><div class="metric-foot">${esc(memory.label)}</div></div><div class="metric"><div class="metric-label">已选过滤模式</div><div class="metric-value">${esc(mode[0])}</div><div class="metric-foot">${esc(mode[1])}</div></div></section>
-      <div class="twocol"><section class="panel"><div class="panel-head"><div><h2 class="section-title">过滤模式</h2><p class="section-sub">选择预设规则组合</p></div></div><div class="choice-row">${Object.entries(modes).map(([key, value]) => `<button class="choice ${s?.mode === key ? 'active' : ''}" data-mode="${key}" aria-pressed="${s?.mode === key}"><b>${value[0]}</b><span>${value[1]}</span></button>`).join('')}</div><p class="field-help">切换模式后，到规则管理页更新才会应用新来源。</p></section>
-      <section class="panel"><div class="panel-head"><div><h2 class="section-title">服务状态</h2><p class="section-sub">模块与独立应用状态</p></div></div><div class="rows">${row('server', 'AdGuard Home', '本地 DNS 过滤核心', tag(coreRunning(s) ? '运行中' : s ? '已停止' : '未知', coreRunning(s) ? 'green' : 'yellow'))}${row('globe', '系统 DNS 接管', '仅接管模块管理的 IPv4 DNS 规则', tag(s?.dns_redirect === '1' ? '重定向已应用' : s?.dns_takeover === 'off' ? '主动关闭' : '未重定向', s?.dns_redirect === '1' ? 'green' : 'yellow'))}${row('activity', 'GKD 开屏跳过', '由 GKD 独立管理', tag('独立应用'))}</div></section></div>
+      <section class="metrics" aria-label="设备实时统计"><div class="metric"><div class="metric-label">已加载规则条目</div><div class="metric-value">${s ? fmt(s.blocked) : '—'}</div><div class="metric-foot">不是广告命中次数</div></div><div class="metric"><div class="metric-label">DNS 查询统计</div><div class="metric-value">${queryCount === null ? '—' : fmt(queryCount)}</div><div class="metric-foot">AdGuard Home 统计接口</div></div><div class="metric"><div class="metric-label">DNS 核心内存</div><div class="metric-value">${memory.value} <span style="font-size:14px">MB</span></div><div class="metric-foot">${esc(memory.label)}</div></div></section>
+      <section class="panel"><div class="panel-head"><div><h2 class="section-title">服务状态</h2><p class="section-sub">模块与独立应用状态</p></div></div><div class="rows">${row('server', 'AdGuard Home', '本地 DNS 过滤核心', tag(coreRunning(s) ? '运行中' : s ? '已停止' : '未知', coreRunning(s) ? 'green' : 'yellow'))}${row('globe', '系统 DNS 接管', '仅接管模块管理的 IPv4 DNS 规则', tag(s?.dns_redirect === '1' ? '重定向已应用' : s?.dns_takeover === 'off' ? '主动关闭' : '未重定向', s?.dns_redirect === '1' ? 'green' : 'yellow'))}${row('activity', 'GKD 开屏跳过', '由 GKD 独立管理', tag('独立应用'))}</div></section>
       <section class="panel"><div class="panel-head"><div><h2 class="section-title">最近规则更新</h2><p class="section-sub">${esc(s ? when(s.last_update) : '读取中')}</p></div><button class="btn" data-nav="rules">规则管理</button></div><div class="notice">${icon('info')}<span>仅显示设备实际返回的数据。当前模块不采集每次 DNS 请求或广告命中日志。</span></div></section>
     </div>`;
 }
 function sourceRows() {
   if (!state.sources.length) return `<div class="empty-state">${esc(state.sourceError || '正在读取规则来源…')}</div>`;
   const rows = state.sources.map(source => {
-    const base = source.removable === 'base';
     const enabled = source.enabled === 'enabled';
-    const status = base ? '固定基础' : enabled ? '本档启用' : source.configured === 'configured' ? '本档停用' : '未加入本档';
-    const actions = base ? '' : `<div class="source-actions"><button class="btn" data-action="source-toggle" data-url="${esc(source.url)}" data-enabled="${source.enabled}">${enabled ? '从本档移除' : '加入本档'}</button><button class="btn btn-danger" data-action="source-delete" data-url="${esc(source.url)}">${source.removable === 'removable' ? '删除来源' : '全部移除'}</button></div>`;
-    return `<div class="source-row" data-source-url="${esc(source.url)}"><div class="source-copy"><strong>${esc(source.label)}</strong><small>${esc(source.url)}</small></div><span class="tag ${enabled ? 'green' : ''}">${status}</span>${actions}</div>`;
+    const renaming = state.sourceRenameUrl === source.url;
+    const detail = source.url === 'shared' ? '维护者审核的共享抓包规则' : source.url;
+    const shared = source.url === 'shared' ? state.status?.dns_filter_json?.filters?.find(x => x.url?.endsWith('/adblock-pro-shared-app-rules.txt')) : null;
+    const actions = `<div class="source-actions"><button class="btn" data-action="source-toggle" data-url="${esc(source.url)}" data-enabled="${source.enabled}">${enabled ? '停用' : '导入'}</button><button class="btn" data-action="source-rename-open" data-url="${esc(source.url)}">重命名</button><button class="btn btn-danger" data-action="source-delete" data-url="${esc(source.url)}">移除</button></div>`;
+    const rename = renaming ? `<form class="source-rename-form btn-row" data-url="${esc(source.url)}"><input class="field" name="name" maxlength="64" value="${esc(source.label)}" aria-label="规则来源名称" required><button class="btn btn-primary" type="submit">保存名称</button><button class="btn" type="button" data-action="source-rename-cancel">取消</button></form>` : '';
+    const subtitle = source.url === 'shared' ? `${detail} · ${shared ? fmt(shared.rules_count) + ' 条已加载' : '随模块预置'}` : detail;
+    return `<div class="source-row" data-source-url="${esc(source.url)}"><div class="source-copy"><strong>${esc(source.label)}</strong><small>${esc(subtitle)}</small></div><span class="tag ${enabled ? 'green' : ''}">${enabled ? '已启用' : '未导入'}</span>${actions}${rename}</div>`;
   }).join('');
-  const shared = state.status?.dns_filter_json?.filters?.find(x => x.url?.endsWith('/adblock-pro-shared-app-rules.txt'));
-  return rows + `<div class="source-row"><div class="source-copy"><strong>共享抓包规则</strong><small>维护者确认的应用广告域名 · ${shared ? fmt(shared.rules_count) + ' 条已加载' : '随模块预置'}</small></div>${tag('固定基础')}<button class="btn" data-action="shared-open">查看</button></div>`;
+  return rows;
 }
 function ruleList(kind) {
   const items = state.lists[kind] || [];
@@ -183,12 +181,10 @@ function resetListView(kind) {
 }
 function rulesPage() {
   const s = state.status;
-  const profileNames = { light: '轻量', balanced: '均衡', strict: '严格' };
-  const profileTabs = Object.entries(modes).map(([key, value]) => `<button type="button" class="choice profile-choice ${state.profileEditor === key ? 'active' : ''}" data-profile="${key}" aria-pressed="${state.profileEditor === key}"><b>${value[0]}${s?.mode === key ? ' · 已选择' : ''}</b><span>${value[1]}</span></button>`).join('');
-  const selectedCount = state.sources.filter(source => source.enabled === 'enabled' && source.removable !== 'base').length;
+  const selectedCount = state.sources.filter(source => source.enabled === 'enabled').length;
   return `${heading('规则管理', '来源、更新与历史回滚')}
     <div class="stack"><section id="update-progress" class="panel progress-card hidden" aria-live="polite"><div class="panel-head"><b class="section-title">规则更新</b><span id="update-elapsed" class="small muted"></span></div><div id="update-stage" class="small">等待任务</div><div class="progress-track"><span class="progress-bar"></span></div><p id="update-help" class="field-help">下载期间本页面仍可切换；不要重复启动更新。</p></section>
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">规则档位与订阅</h2><p class="section-sub">固定基础：10007、秋风纯广告与共享抓包规则；各档可独立选择附加源</p></div><span class="tag" data-source-count>${state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : `${selectedCount} 个附加源`}</span></div><div class="choice-row profile-tabs">${profileTabs}</div><p class="field-help profile-hint">正在编辑${profileNames[state.profileEditor]}档。编辑档与已选运行档位分开；手动来源会保留在对应档位，切换模式不会删掉配置。来源更改须点击更新后生效。</p><div id="source-list" class="source-list">${sourceRows()}</div><form id="source-form" class="btn-row"><input class="field" name="url" type="url" placeholder="导入 HTTPS 来源并加入当前档" autocapitalize="none" required><button class="btn" type="submit">导入到本档</button></form><p id="rules-feedback" class="field-help" aria-live="polite">列表规模是 2026-10-10 核验快照，源会变化，实际以内存 RSS 和加载条目为准。AdRules DNS 约 20 万条，默认不启用；建议一次只添加一个大型来源。更新失败仍保留上一版规则。</p><div class="divider"></div><div class="btn-row"><button class="btn btn-primary" data-action="update">立即检查并更新</button><select id="history-select" class="field" aria-label="选择要恢复的规则历史"><option value="">选择历史版本</option>${(s?.history || []).map(item => { const [key, count] = item.split(':'); return `<option value="${esc(key)}">${esc(key.slice(0,4)+'-'+key.slice(4,6)+'-'+key.slice(6,8)+' '+key.slice(8,10)+':'+key.slice(10,12))} · ${fmt(count)} 条</option>`; }).join('')}</select><button class="btn btn-danger" data-action="rollback">恢复</button></div></section>
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">规则来源</h2><p class="section-sub">逐项导入、停用、移除或重命名；订阅内容先下载校验，再交给本地 DNS 核心加载</p></div><span class="tag" data-source-count>${state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : `${selectedCount} 个已启用`}</span></div><div id="source-list" class="source-list">${sourceRows()}</div><form id="source-form" class="btn-row"><input class="field" name="name" maxlength="64" placeholder="来源名称" required><input class="field" name="url" type="url" placeholder="HTTPS 订阅地址" autocapitalize="none" required><button class="btn" type="submit">导入来源</button></form><p id="rules-feedback" class="field-help" aria-live="polite">默认来源也可以停用或移除；移除内置来源只从当前订阅中移除，仍可随时重新导入。更新失败会保留上一版规则。</p><div class="divider"></div><div class="btn-row"><button class="btn btn-primary" data-action="update">立即检查并更新</button><select id="history-select" class="field" aria-label="选择要恢复的规则历史"><option value="">选择历史版本</option>${(s?.history || []).map(item => { const [key, count] = item.split(':'); return `<option value="${esc(key)}">${esc(key.slice(0,4)+'-'+key.slice(4,6)+'-'+key.slice(6,8)+' '+key.slice(8,10)+':'+key.slice(10,12))} · ${fmt(count)} 条</option>`; }).join('')}</select><button class="btn btn-danger" data-action="rollback">恢复</button></div></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">域名检查</h2><p class="section-sub">查询域名当前是否命中 AdGuard Home 规则</p></div></div><form id="domain-form" class="btn-row"><input class="field" name="domain" placeholder="例如 ads.example.com" autocapitalize="none" required><button class="btn" type="submit">检查</button></form><p id="domain-result" class="field-help">检查结果由设备本地过滤服务返回。</p></section></div>`;
 }
 function personalRulesPage() {
@@ -335,7 +331,7 @@ function observationPanel() {
 function logsPage() {
   const filters = [['all', '全部'], ['running', '进行中'], ['failure', '提醒'], ['success', '成功']];
   return `${heading('运行日志', '统一查看模块操作与环境诊断')}
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">操作记录</h2><p class="section-sub">最近最多 120 条 · 每页 10 条 · 不保存 DNS 请求详情</p></div><div class="btn-row log-head-actions"><button class="btn" data-action="logs-refresh">刷新</button><button class="btn" data-action="logs-export">导出</button></div></div><div class="log-tools"><input id="log-search" class="field" type="search" placeholder="搜索操作日志" value="${esc(state.logSearch)}"><div class="log-filters">${filters.map(([key, label]) => `<button class="log-filter ${state.logFilter === key ? 'selected' : ''}" data-filter="${key}">${label}</button>`).join('')}</div><button class="btn btn-danger" data-action="logs-clear">清空</button></div><div id="log-list" class="log-list">${logListMarkup()}</div></section>`;
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">操作记录</h2><p class="section-sub">最近最多 120 条 · 每页 10 条 · 不保存 DNS 请求详情</p></div><div class="btn-row log-head-actions"><button class="btn" data-action="logs-refresh">刷新</button><button class="btn" data-action="logs-copy">复制日志</button><button class="btn" data-action="logs-export">导出</button></div></div><div class="log-tools"><input id="log-search" class="field" type="search" placeholder="搜索操作日志" value="${esc(state.logSearch)}"><div class="log-filters">${filters.map(([key, label]) => `<button class="log-filter ${state.logFilter === key ? 'selected' : ''}" data-filter="${key}">${label}</button>`).join('')}</div><button class="btn btn-danger" data-action="logs-clear">清空</button></div><div id="log-list" class="log-list">${logListMarkup()}</div></section>`;
 }
 function render(preservePageCache = false) {
   // Full state changes invalidate detached pages; ordinary navigation retains them.
@@ -405,21 +401,14 @@ function syncStatusView() {
     const values = $$('.metrics .metric-value');
     const count = queryTotal(s?.dns_stats_json);
     const memory = memoryView(s);
-    const mode = modes[s?.mode] || ['未知', '等待设备状态'];
-    const valueTexts = [s ? fmt(s.blocked) : '—', count === null ? '—' : fmt(count), memory.value + ' MB', mode[0]];
+    const valueTexts = [s ? fmt(s.blocked) : '—', count === null ? '—' : fmt(count), memory.value + ' MB'];
     values.forEach((el, index) => { if (index < valueTexts.length && el.textContent.trim() !== valueTexts[index]) {
       if (index === 2) el.innerHTML = memory.value + ' <span style="font-size:14px">MB</span>';
       else el.textContent = valueTexts[index];
     } });
     const metricFeet = $$('.metrics .metric-foot');
     if (metricFeet[2] && metricFeet[2].textContent !== memory.label) metricFeet[2].textContent = memory.label;
-    if (metricFeet[3] && metricFeet[3].textContent !== mode[1]) metricFeet[3].textContent = mode[1];
-    $$('[data-mode]').forEach(button => {
-      const active = button.dataset.mode === s?.mode;
-      button.classList.toggle('active', active);
-      button.setAttribute('aria-pressed', String(active));
-    });
-    const serviceRows = $$('#page-content .twocol .panel:nth-child(2) .rowitem');
+    const serviceRows = $$('#page-content > .stack > .panel:last-child .rowitem');
     updateTag($('.tag', serviceRows[0]), coreRunning(s) ? '运行中' : s ? '已停止' : '未知', coreRunning(s));
     updateTag($('.tag', serviceRows[1]), s?.dns_redirect === '1' ? '重定向已应用' : s?.dns_takeover === 'off' ? '主动关闭' : '未重定向', s?.dns_redirect === '1');
     setText('#page-content .stack > .panel:last-child .panel-head .section-sub', s ? when(s.last_update) : '读取中');
@@ -429,10 +418,6 @@ function syncStatusView() {
       if (input && !state.busy && !input.disabled) input.checked = Boolean(s && on);
     }
   } else if (state.page === 'rules') {
-    $$('[data-profile]').forEach(button => {
-      const key = button.dataset.profile;
-      setText('b', modes[key][0] + (s?.mode === key ? ' · 已选择' : ''), button);
-    });
     const select = $('#history-select');
     const history = (s?.history || []).join(',');
     if (select && select.dataset.history !== history && document.activeElement !== select) {
@@ -451,20 +436,13 @@ function updateSourcesView() {
   if (state.page !== 'rules') return;
   const list = $('#source-list');
   if (list) {
-    const signature = JSON.stringify([state.profileEditor, state.sourceError, state.sources]);
+    const signature = JSON.stringify([state.sourceError, state.sources, state.sourceRenameUrl]);
     if (list.dataset.renderSignature !== signature) {
       list.innerHTML = sourceRows();
       list.dataset.renderSignature = signature;
     }
   }
-  setText('[data-source-count]', state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : state.sources.filter(source => source.enabled === 'enabled' && source.removable !== 'base').length + ' 个附加源');
-  const names = { light: '轻量', balanced: '均衡', strict: '严格' };
-  setText('.profile-hint', '正在编辑' + names[state.profileEditor] + '档。编辑档与已选运行档位分开；手动来源会保留在对应档位，切换模式不会删掉配置。来源更改须点击更新后生效。');
-  $$('[data-profile]').forEach(button => {
-    const selected = button.dataset.profile === state.profileEditor;
-    button.classList.toggle('active', selected);
-    button.setAttribute('aria-pressed', String(selected));
-  });
+  setText('[data-source-count]', state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : state.sources.filter(source => source.enabled === 'enabled').length + ' 个已启用');
   if (state.busy) setBusy(true);
 }
 function syncListsView() {
@@ -524,58 +502,52 @@ async function runConfig(action, ...values) {
 function shellArg(value) { return `'${String(value).replace(/'/g, "'\\''")}'`; }
 
 let sourceRequestId = 0;
-function invalidateSources(profile = null) {
-  if (profile === null) { sourceCache.clear(); sourceCacheTime.clear(); }
-  else { sourceCache.delete(profile); sourceCacheTime.delete(profile); }
-  // A save completing on another profile must not cancel the visible read.
-  if (profile === null || profile === state.profileEditor) {
-    ++sourceRequestId;
-    sourcePending = null;
-  }
+function invalidateSources() {
+  sourceCache.clear(); sourceCacheTime.clear();
+  ++sourceRequestId;
+  sourcePending = null;
 }
-async function loadSources(profile = state.profileEditor) {
-  if (profile !== state.profileEditor) return;
-  const cached = sourceCache.get(profile);
-  if (cached && Date.now() - (sourceCacheTime.get(profile) || 0) < SOURCE_CACHE_MS) {
+async function loadSources() {
+  const key = 'all';
+  const cached = sourceCache.get(key);
+  if (cached && Date.now() - (sourceCacheTime.get(key) || 0) < SOURCE_CACHE_MS) {
     ++sourceRequestId;
     state.sources = [...cached];
     state.sourceError = '';
-    displayedSourceProfile = profile;
+    sourcesDisplayed = true;
     updateSourcesView();
     return;
   }
-  // Loading the same profile twice must not open two native Shell requests.
-  if (sourcePending?.profile === profile && sourcePending.requestId === sourceRequestId) {
+  if (sourcePending?.requestId === sourceRequestId) {
     return sourcePending.promise;
   }
   const requestId = ++sourceRequestId;
-  const sameProfile = displayedSourceProfile === profile;
-  const keepVisible = sameProfile && state.sources.length > 0;
+  const keepVisible = sourcesDisplayed && state.sources.length > 0;
   if (cached) state.sources = [...cached];
   else if (!keepVisible) state.sources = [];
   state.sourceError = cached || keepVisible ? '' : '正在读取规则来源…';
-  displayedSourceProfile = profile;
-  if (!keepVisible || !sameProfile) updateSourcesView();
+  if (!keepVisible) updateSourcesView();
 
   const pending = (async () => {
     try {
-      const result = await exec(`${JOB} config list-sources ${profile}`);
-      if (requestId !== sourceRequestId || profile !== state.profileEditor) return;
+      const result = await exec(`${JOB} config list-sources`);
+      if (requestId !== sourceRequestId) return;
       if (Number(result.errno) !== 0) throw new Error(textOf(result) || '读取来源失败');
       const lines = (result.stdout || '').split(/\r?\n/).filter(Boolean);
       const sources = lines.map(line => line.split('\t')).filter(row => row[0] === 'source').map(row => ({ id: row[1], label: row[2], url: row[3], enabled: row[4], configured: row[5], removable: row[6] }));
-      sourceCache.set(profile, sources);
-      sourceCacheTime.set(profile, Date.now());
+      sourceCache.set(key, sources);
+      sourceCacheTime.set(key, Date.now());
       state.sources = sources;
       state.sourceError = '';
+      sourcesDisplayed = true;
     } catch (error) {
-      if (requestId !== sourceRequestId || profile !== state.profileEditor) return;
+      if (requestId !== sourceRequestId) return;
       if (cached) state.sources = [...cached];
       state.sourceError = error.message || '无法连接设备后端';
     }
     updateSourcesView();
   })();
-  sourcePending = { profile, requestId, promise: pending };
+  sourcePending = { requestId, promise: pending };
   try { return await pending; }
   finally { if (sourcePending?.requestId === requestId) sourcePending = null; }
 }
@@ -840,6 +812,12 @@ async function exportLogs() {
   const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json;charset=utf-8' });
   const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'adblock-pro-operation-logs.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+async function copyRecentLogs() {
+  const result = await exec(`${JOB} recent-full`);
+  if (Number(result.errno) !== 0) throw new Error(textOf(result) || '读取日志失败');
+  await copyText(result.stdout || '');
+  toast('最近任务日志已复制（含命令输出）');
+}
 function exportObservedDomains() {
   const text = observationExportText();
   if (!text) throw new Error('请先选择要导出的域名');
@@ -1056,10 +1034,8 @@ document.addEventListener('click', async event => {
   if (navButton) { navigate(navButton.dataset.nav); return; }
   const modalButton = event.target.closest('[data-modal]');
   if (modalButton) { const modal = $('#modal'); const cb = modal.callback; const yes = modalButton.dataset.modal === 'yes'; modal.hidden = true; modal.innerHTML = ''; if (yes && cb) cb(); return; }
-  const button = event.target.closest('[data-action], [data-mode], [data-filter], [data-profile]');
+  const button = event.target.closest('[data-action], [data-filter]');
   if (!button || (state.busy && button.dataset.action !== 'theme' && !button.dataset.filter)) return;
-  if (button.dataset.profile) { state.profileEditor = button.dataset.profile; void loadSources(); return; }
-  if (button.dataset.mode) { if (modeChangeInFlight) return; modeChangeInFlight = true; const selected = button.dataset.mode; const buttons = $$('[data-mode]'); buttons.forEach(item => { const active = item.dataset.mode === selected; item.classList.toggle('active', active); item.setAttribute('aria-pressed', String(active)); item.disabled = true; }); try { await runConfig('set-mode', selected); await refreshStatus(true, true); toast('过滤模式已保存；执行规则更新后生效'); } catch (e) { await refreshStatus(true, true); toast(e.message); } finally { modeChangeInFlight = false; buttons.forEach(item => { if (item.isConnected && !state.busy) item.disabled = false; }); } return; }
   if (button.dataset.filter) { state.logFilter = button.dataset.filter; state.logPage = 0; $$('.log-filter').forEach(x => x.classList.toggle('selected', x === button)); renderLogList(); return; }
   switch (button.dataset.action) {
     case 'theme': state.theme = state.theme === 'dark' ? 'light' : 'dark'; localStorage.setItem('abp-theme', state.theme); document.documentElement.dataset.theme = state.theme; break;
@@ -1142,15 +1118,18 @@ document.addEventListener('click', async event => {
     case 'source-toggle': {
       const url = button.dataset.url; const next = button.dataset.enabled === 'enabled' ? 'off' : 'on';
       await withButtonPending(button, async () => {
-        try { const profile = state.profileEditor; await runConfig('set-source', url, next, profile); invalidateSources(profile); await loadSources(profile); toast('来源档位已保存；更新后生效'); } catch (e) { toast(e.message); }
+        try { await runConfig('set-source', url, next); invalidateSources(); await loadSources(); toast(next === 'on' ? '规则来源已导入；更新后生效' : '规则来源已停用；更新后从过滤中移除'); } catch (e) { toast(e.message); }
       });
       break;
     }
     case 'source-delete': {
-      const url = button.dataset.url; confirm('从全部档位移除这个来源？', '内置推荐源会保留在来源目录中，方便以后重新添加；自定义源会从目录中删除。当前已加载规则在下次更新后移除。', '全部移除', async () => { try { await runConfig('remove-source', url); invalidateSources(); await loadSources(); toast('规则来源已从全部档位移除'); } catch (e) { toast(e.message); } }); break;
+      const url = button.dataset.url; confirm('移除这条规则来源？', '下次更新时会从当前过滤配置移除；随包来源仍可重新导入，自定义来源将从列表删除。', '移除来源', async () => { try { await runConfig('remove-source', url); state.sourceRenameUrl = ''; invalidateSources(); await loadSources(); toast('规则来源已移除；当前规则将在更新后改变'); } catch (e) { toast(e.message); } }); break;
     }
+    case 'source-rename-open': state.sourceRenameUrl = button.dataset.url; updateSourcesView(); break;
+    case 'source-rename-cancel': state.sourceRenameUrl = ''; updateSourcesView(); break;
     case 'list-delete': { const kind = button.dataset.kind, domain = button.dataset.domain; try { await runConfig(`remove-${kind}`, domain); await loadList(kind, true); toast('名单已保存；执行规则更新后生效'); } catch (e) { toast(e.message); } break; }
     case 'logs-refresh': loadLogs(true).then(() => toast('日志已刷新')).catch(e => toast(e.message)); break;
+    case 'logs-copy': try { await copyRecentLogs(); } catch (e) { toast(e.message || '复制日志失败'); } break;
     case 'logs-clear': confirm('清空操作日志？', '只删除本模块的操作记录，不会影响规则历史或当前过滤配置。', '清空日志', async () => { try { const r = await exec(`${JOB} clear`); if (Number(r.errno)) throw new Error(textOf(r)); await loadLogs(true); toast('操作日志已清空'); } catch (e) { toast(e.message); } }); break;
     case 'logs-export': exportLogs(); break;
     case 'logs-page': state.logPage = Number(button.dataset.page); renderLogList(); break;
@@ -1203,8 +1182,11 @@ document.addEventListener('submit', async event => {
   if (state.busy) { event.preventDefault(); return; }
   const form = event.target;
   if (form.id === 'source-form') {
-    event.preventDefault(); const url = new FormData(form).get('url')?.toString().trim();
-    try { const profile = state.profileEditor; await runConfig('add-source', url, profile); invalidateSources(profile); await loadSources(profile); form.reset(); toast('订阅已加入当前档；更新后生效'); } catch (e) { toast(e.message); }
+    event.preventDefault(); const data = new FormData(form); const name = data.get('name')?.toString().trim(); const url = data.get('url')?.toString().trim();
+    try { await runConfig('add-source', url, name); invalidateSources(); await loadSources(); form.reset(); toast('规则来源已导入；更新后生效'); } catch (e) { toast(e.message); }
+  } else if (form.matches('.source-rename-form')) {
+    event.preventDefault(); const url = form.dataset.url; const name = new FormData(form).get('name')?.toString().trim();
+    try { await runConfig('rename-source', url, name); state.sourceRenameUrl = ''; invalidateSources(); await loadSources(); toast('规则来源名称已保存'); } catch (e) { toast(e.message); }
   } else if (form.matches('.domain-form')) {
     event.preventDefault(); const kind = form.dataset.kind, domain = new FormData(form).get('domain')?.toString().trim();
     try { await runConfig(`add-${kind}`, domain); resetListView(kind); await loadList(kind, true); form.reset(); toast('名单已保存；执行规则更新后生效'); } catch (e) { toast(e.message); }
