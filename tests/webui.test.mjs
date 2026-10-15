@@ -12,6 +12,12 @@ function harness() {
   const timers = [];
   const controls = [];
   const toastNode = {};
+  const serviceRows = ['未知', '未重定向'].map(text => {
+    const tag = { textContent: text, classes: new Set(), classList: { toggle(name, enabled) {
+      if (enabled) tag.classes.add(name); else tag.classes.delete(name);
+    } } };
+    return { tag, querySelector(selector) { return selector === '.tag' ? tag : null; } };
+  });
   const storage = new Map();
   const document = {
     documentElement: {},
@@ -19,7 +25,9 @@ function harness() {
     hidden: false,
     addEventListener() {},
     querySelector(selector) { return selector === '#toast' ? toastNode : null; },
-    querySelectorAll() { return controls; },
+    querySelectorAll(selector) {
+      return selector === '#page-content [data-service-status] .rowitem' ? serviceRows : controls;
+    },
   };
   const context = vm.createContext({
     document,
@@ -38,8 +46,8 @@ function harness() {
   });
   vm.runInContext(source, context);
   const methods = vm.runInContext(
-    '({ state, refreshStatus, loadSources, loadList, loadLogs, monitorJob, summaryText, memoryView, homePage, setBusy, nextJobId, progress, startJob })', context);
-  return { ...methods, pending, controls, timers, context };
+    '({ state, refreshStatus, syncStatusView, loadSources, loadList, loadLogs, monitorJob, summaryText, memoryView, homePage, setBusy, nextJobId, progress, startJob })', context);
+  return { ...methods, pending, controls, timers, serviceRows, context };
 }
 const status = (state, mode = 'balanced') =>
   ({ errno: 0, stdout: 'state=' + state + ' blocked=25 mode=' + mode + '\nfiltering_enabled=true' });
@@ -81,6 +89,16 @@ test('listener and firewall failures are not presented as intentional bypass', (
   assert.match(h.summaryText()[0], /监听异常/);
   h.state.status = { state: 'degraded', dns_core_running: '1', dns_listener: '1', dns_health: 'takeover_failed', dns_takeover: 'on', dns_redirect: '0' };
   assert.match(h.summaryText()[0], /接管未成功/);
+});
+
+test('home service status rows refresh after the initial unknown render', () => {
+  const h = harness();
+  h.state.status = { state: 'active', dns_core_running: '1', dns_listener: '1', dns_health: 'active', dns_takeover: 'on', dns_redirect: '1' };
+  h.syncStatusView();
+  assert.equal(h.serviceRows[0].tag.textContent, '运行中');
+  assert.equal(h.serviceRows[1].tag.textContent, '重定向已应用');
+  assert.equal(h.serviceRows[0].tag.classes.has('green'), true);
+  assert.equal(h.serviceRows[1].tag.classes.has('green'), true);
 });
 
 test('simultaneous status reads share one native call', async () => {
