@@ -13,8 +13,14 @@ fail() {
 
 compat_file="$TMPDIR/adblock-pro-compat.sh"
 unzip -p "$ZIPFILE" scripts/compat.sh > "$compat_file" || fail "Missing root compatibility helper."
+curl_file="$TMPDIR/adblock-pro-curl"
+unzip -p "$ZIPFILE" bin/curl > "$curl_file" || fail "Module package is missing its ARM64 curl binary."
+chmod 755 "$curl_file" || fail "Cannot prepare the bundled curl binary."
+CURL=$curl_file
+export CURL
 . "$compat_file" || fail "A complete BusyBox from KernelSU, Magisk or APatch is required."
-abp_find_curl >/dev/null || fail "curl is required for the local DNS management API."
+"$CURL" --version >/dev/null 2>&1 || fail "The bundled ARM64 curl binary cannot run on this device."
+abp_find_curl >/dev/null || fail "The bundled curl binary is unavailable."
 command -v iptables >/dev/null 2>&1 || fail "IPv4 iptables is required for DNS redirection."
 ui_print "[AdBlock Pro] Root family: $(abp_root_family); BusyBox: $BB"
 ROOT_FAMILY=$(abp_root_family)
@@ -63,6 +69,8 @@ mkdir -p "$MODPATH/scripts" || fail "Cannot prepare shared root helpers."
 cp "$compat_file" "$MODPATH/scripts/compat.sh" || fail "Cannot install the root compatibility helper."
 : > "$MODPATH/skip_mount"
 mkdir -p "$DATA_DIR/.install/bin" "$DATA_DIR/bin" || fail "Cannot prepare the AdGuard Home upgrade directory."
+cp "$CURL" "$DATA_DIR/bin/curl" || fail "Cannot install the bundled curl binary."
+chmod 755 "$DATA_DIR/bin/curl" || fail "Cannot make the bundled curl binary executable."
 unzip -oq "$ZIPFILE" "bin/AdGuardHome" -d "$DATA_DIR/.install" || fail "Cannot extract AdGuard Home files."
 [ -s "$DATA_DIR/.install/bin/AdGuardHome" ] || fail "The extracted AdGuard Home binary is missing."
 mv -f "$DATA_DIR/.install/bin/AdGuardHome" "$DATA_DIR/bin/AdGuardHome" || fail "Cannot replace the AdGuard Home binary."
@@ -169,7 +177,7 @@ chmod 700 "$DATA_DIR" "$DATA_DIR/scripts" "$DATA_DIR/bin/userfilters" 2>/dev/nul
 chmod 600 "$DATA_DIR/admin.auth" "$DATA_DIR/settings.conf" "$STATE_DIR"/*.txt "$STATE_DIR"/blocking-mode "$STATE_DIR"/auto-update "$STATE_DIR"/autostart "$STATE_DIR"/dns-takeover 2>/dev/null
 chmod 700 "$STATE_DIR/profiles" 2>/dev/null
 chmod 600 "$STATE_DIR"/profiles/*.txt "$STATE_DIR"/profiles-initialized 2>/dev/null
-chmod 755 "$DATA_DIR/bin/AdGuardHome" "$DATA_DIR/scripts"/*.sh "$MODPATH"/*.sh
+chmod 755 "$DATA_DIR/bin/AdGuardHome" "$DATA_DIR/bin/curl" "$DATA_DIR/scripts"/*.sh "$MODPATH"/*.sh
 chown root:net_raw "$DATA_DIR/bin/AdGuardHome"
 printf '%s\n' "$ROOT_FAMILY" > "$STATE_DIR/root-family.tmp" &&
   chmod 600 "$STATE_DIR/root-family.tmp" && mv "$STATE_DIR/root-family.tmp" "$STATE_DIR/root-family" ||

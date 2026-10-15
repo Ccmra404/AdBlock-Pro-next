@@ -15,8 +15,10 @@ REQUIRED = {
     'scripts/rule-store.sh', 'rules/shared-app-domains.txt',
     'scripts/footprint.sh', 'scripts/memory.sh', 'scripts/detach.sh', 'META-INF/com/google/android/update-binary',
     'bin/AdGuardHome', 'bin/adblock-bootstrap',
+    'bin/curl',
     'bin/data/filters/10007.txt', 'bin/data/filters/1791638912.txt',
     'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/AWAvenue-GPL-3.0.txt',
+    'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt',
 }
 
 
@@ -40,7 +42,7 @@ def validate(path, version, version_code):
             raise ValueError('module identity changed')
         if props.get('version') != version or props.get('versionCode') != str(version_code):
             raise ValueError('incorrect candidate version metadata')
-        for name in ['bin/AdGuardHome', 'bin/adblock-bootstrap']:
+        for name in ['bin/AdGuardHome', 'bin/adblock-bootstrap', 'bin/curl']:
             with archive.open(name) as binary:
                 header = binary.read(64)
             if len(header) < 64 or header[:6] != b'\x7fELF\x02\x01' or struct.unpack_from('<H', header, 18)[0] != 183:

@@ -24,7 +24,7 @@ class ModuleZipTests(unittest.TestCase):
                 data = b'fixture'
                 if name == 'module.prop':
                     data = f'id=bindhosts_personal\nversion={version}\nversionCode=45\n'.encode()
-                if name in ['bin/AdGuardHome', 'bin/adblock-bootstrap']:
+                if name in ['bin/AdGuardHome', 'bin/adblock-bootstrap', 'bin/curl']:
                     data = bytearray(64)
                     data[:6] = b'\x7fELF\x02\x01'
                     struct.pack_into('<H', data, 18, 183 if arm else 62)
@@ -46,7 +46,8 @@ class ModuleZipTests(unittest.TestCase):
             validator.validate(self.fixture(missing='scripts/compat.sh'), VERSION, 45)
 
     def test_missing_upstream_notices_are_rejected(self):
-        for name in ['THIRD_PARTY_NOTICES.md', 'licenses/AWAvenue-GPL-3.0.txt']:
+        for name in ['THIRD_PARTY_NOTICES.md', 'licenses/AWAvenue-GPL-3.0.txt',
+                     'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt']:
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'missing installer'):
                 validator.validate(self.fixture(missing=name), VERSION, 45)
 
