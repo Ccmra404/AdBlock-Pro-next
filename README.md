@@ -2,13 +2,13 @@
 
 # AdBlock Pro
 
-**把广告域名挡在 DNS 查询阶段。**
+**在手机本机过滤广告域名，规则和名单由你管理。**
 
-为 Root Android 准备的本地 DNS 过滤与规则管理工具
+基于 AdGuard Home 的 Android Root DNS 过滤模块，支持 KernelSU、Magisk 与 APatch。
 
-![Root](https://img.shields.io/badge/Root-KernelSU%20%7C%20Magisk%20%7C%20APatch-168765?style=flat-square) ![架构](https://img.shields.io/badge/Android-ARM64-168765?style=flat-square) ![引擎](https://img.shields.io/badge/DNS-AdGuard_Home-168765?style=flat-square) ![状态](https://img.shields.io/badge/状态-测试版-c38b28?style=flat-square)
+![Root](https://img.shields.io/badge/Root-KernelSU%20%7C%20Magisk%20%7C%20APatch-168765?style=flat-square) ![架构](https://img.shields.io/badge/Android-ARM64-168765?style=flat-square) ![引擎](https://img.shields.io/badge/DNS-AdGuard_Home-168765?style=flat-square) ![稳定版](https://img.shields.io/badge/稳定版-v0.13.0-168765?style=flat-square)
 
-[**新仓库 Releases**](https://github.com/Ccmra404/AdBlock-Pro-next/releases) · [**使用指南**](docs/guide.md) · [**反馈问题**](https://github.com/Ccmra404/AdBlock-Pro-next/issues)
+[**下载稳定版 v0.13.0**](https://github.com/Ccmra404/AdBlock-Pro-next/releases/tag/v0.13.0) · [**使用指南**](docs/guide.md) · [**反馈问题**](https://github.com/Ccmra404/AdBlock-Pro-next/issues)
 
 </div>
 
@@ -19,7 +19,7 @@
 AdBlock Pro 在手机本地运行 **AdGuard Home**，通过 Root 模块接管 IPv4 DNS 请求，过滤广告与部分跟踪域名。安装包提供一组可直接使用的规则；你也可以逐项导入、停用、移除或重命名订阅来源。
 
 > [!NOTE]
-> 新仓库的源码基线沿用 **v0.13.0-rc.3（versionCode 45）**；安装包和 Release 不会从旧仓库自动迁移。新仓库尚未发布安装包，请勿把 GitHub 自动生成的 Source code ZIP 当成可安装模块。
+> 当前稳定版为 **v0.13.0（versionCode 46）**，请从 [Release 页面](https://github.com/Ccmra404/AdBlock-Pro-next/releases/tag/v0.13.0)下载 ARM64 安装包。GitHub 自动生成的 `Source code` 压缩包不是可安装模块。
 
 ## 过滤、维护、排查，一个入口
 
@@ -43,7 +43,7 @@ WebUI 支持手机与桌面布局、深浅色主题。日志和名单提供搜�
 ## 开始使用
 
 1. 准备运行 KernelSU、Magisk 或 APatch 的 **Android ARM64** 设备，停用其他会争用 AdGuard Home 服务或 DNS 端口的模块。
-2. 新仓库完成重新验收并发布 ARM64 安装包后，再从 [Releases](https://github.com/Ccmra404/AdBlock-Pro-next/releases) 下载；当前新仓库还没有可安装包。
+2. 从 [v0.13.0 稳定版 Release](https://github.com/Ccmra404/AdBlock-Pro-next/releases/tag/v0.13.0) 下载 ARM64 模块 ZIP，不要下载 `Source code` 压缩包。
 3. 打开模块 WebUI，在**总览**查看核心与重定向状态，运行一次**环境诊断**。
 4. 在**规则管理**查看当前启用来源；需要时再导入或移除来源并执行更新。
 
@@ -53,10 +53,10 @@ WebUI 支持手机与桌面布局、深浅色主题。日志和名单提供搜�
 
 | 环境 | 模块运行 | WebUI 入口 | 当前验证 |
 | --- | --- | --- | --- |
-| **KernelSU** | 共用安装与启动逻辑 | 支持模块 WebUI 的管理器 | 模拟回归通过，rc.3 待真机验收 |
+| **KernelSU** | 共用安装与启动逻辑 | 支持模块 WebUI 的管理器 | 此前候选版已完成真机安装验证；v0.13.0 包未单独刷机验证 |
 | **KernelSU 衍生版** | 以沿用标准模块接口的版本为目标，如 KernelSU-Next、ReSukiSU | 需兼容 `ksu.exec` 接口 | 待逐版本验收 |
-| **Magisk** | 共用安装与启动逻辑 | 使用支持 KernelSU 接口的第三方宿主，如 [WebUI X](https://github.com/MMRLApp/WebUI-X-Portable) | 模拟回归通过，待真机验收 |
-| **APatch** | 共用安装与启动逻辑 | APatch 管理器 WebUI | 模拟回归通过，待真机验收 |
+| **Magisk** | 共用安装与启动逻辑 | 使用支持 KernelSU 接口的第三方宿主，如 [WebUI X](https://github.com/MMRLApp/WebUI-X-Portable) | 用户已验证此前版本；v0.13.0 包未单独刷机验证 |
+| **APatch** | 共用安装与启动逻辑 | APatch 管理器 WebUI | CI 模拟通过，尚无真机验证记录 |
 
 一份 ARM64 ZIP 用于上述环境。安装前检查完整 BusyBox、curl 和 IPv4 iptables；缺少依赖会停止安装。当前 DNS 模式不覆盖系统文件，**无需为本模块单独安装挂载元模块**。不同 ROM、Root 版本及 WebUI 宿主的权限行为仍需分别测试。
 
@@ -94,7 +94,7 @@ WebUI 管理订阅来源、个人名单、接管开关和任务日志。上游 D
 
 ## 仓库协作与提交规范
 
-当前整合阶段沿用 rc.3 的正式版本号，不覆盖已发布附件。历史 PR 的逐项取舍、保留边界和真机清单见 [整合与复审记录](docs/integration-rc3.md)。开发包仅保存在 Actions artifacts，并带 `-dev.<sha>` 标识；正式发布需人工确认后在 main 手动触发。
+当前正式版为 **v0.13.0（versionCode 46）**。历史 PR 的逐项取舍和复审记录见 [整合与复审记录](docs/integration-rc3.md)。开发包仅保存在 Actions artifacts，并带 `-dev.<sha>` 标识；正式发布通过 main 分支的手动工作流完成。
 
 向项目提交代码或使用另一个本地 AI 编程会话协作时，请先阅读 [AGENTS.md](AGENTS.md) 与 [CONTRIBUTING.md](CONTRIBUTING.md)。所有改动应从最新 `main` 建立独立分支、提交 PR，按 [PR 检查清单](.github/PULL_REQUEST_TEMPLATE.md) 说明自动化测试、真机状态与发布风险；未经明确确认不覆盖已有 Release 或直接发布新版本。
 
