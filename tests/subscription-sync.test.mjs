@@ -10,13 +10,14 @@ const helpers = bindhosts.slice(bindhosts.indexOf('source_name() {'), bindhosts.
 const feed = 'https://filters.example/list.txt';
 const nativePath = value => process.platform === 'win32' ? value.replace(/^\/([a-z])\//, (_, drive) => drive.toUpperCase() + ':/') : value;
 
-function fixture(t, { sources, oldApplied = '', marker = true, failDownload = false, failRemove = false, statusUrl = '', existingShared = false } = {}) {
+function fixture(t, { sources, oldApplied = '', marker = true, failDownload = false, failDownloadUrl = '', failRemove = false, statusUrl = '', existingShared = false } = {}) {
   const root = rootFixture(t); root.addBusybox('Magisk');
   const mod = path.join(root.dir, 'module'), agh = path.join(root.dir, 'agh'), state = path.join(root.dir, 'state');
   mkdirSync(path.join(mod, 'scripts'), { recursive: true });
   mkdirSync(path.join(agh, 'bin', 'userfilters'), { recursive: true }); mkdirSync(state, { recursive: true });
   writeFileSync(path.join(mod, 'scripts', 'compat.sh'), readFileSync(root.compatFile, 'utf8'));
   const sourceList = path.join(root.dir, 'source-list.tsv'), calls = path.join(root.dir, 'api-calls.tsv');
+  const curlCalls = path.join(root.dir, 'curl-calls.txt');
   const sharedFilter = path.join(agh, 'bin', 'userfilters', 'adblock-pro-shared-app-rules.txt');
   writeFileSync(sharedFilter, '||shared.example^\n');
   writeFileSync(sourceList, sources ?? 'mode\tbalanced\nsource\tcustom\tExample Feed\t' + feed + '\tenabled\tconfigured\tremovable\n');
@@ -31,6 +32,7 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
     '#!/bin/sh',
     'output= url=',
     'while [ "$#" -gt 0 ]; do case "$1" in -o) output=$2; shift 2;; https://*) url=$1; shift;; *) shift;; esac; done',
+    'printf "%s\\n" "$url" >> "$CURL_CALLS"',
     '[ "$url" != "$FAIL_URL" ] || { echo "simulated download failure" >&2; exit 28; }',
     'printf "||ads.example^\\n" > "$output"',
   ].join('\n'));
@@ -64,9 +66,9 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
     'sync_sources',
   ].join('\n');
   writeFileSync(script, body); chmodSync(script, 0o755);
-  const env = { ...root.env('Magisk'), CURL: shellPath(curl), SOURCE_LIST: shellPath(sourceList), API_CALLS: shellPath(calls), FAIL_URL: failDownload ? feed : '', FAIL_REMOVE: failRemove ? '1' : '0', STATUS_URL: existingShared ? shellPath(sharedFilter) : statusUrl, EXISTING_URL: existingShared ? shellPath(sharedFilter) : '' };
+  const env = { ...root.env('Magisk'), CURL: shellPath(curl), CURL_CALLS: shellPath(curlCalls), SOURCE_LIST: shellPath(sourceList), API_CALLS: shellPath(calls), FAIL_URL: failDownloadUrl || (failDownload ? feed : ''), FAIL_REMOVE: failRemove ? '1' : '0', STATUS_URL: existingShared ? shellPath(sharedFilter) : statusUrl, EXISTING_URL: existingShared ? shellPath(sharedFilter) : '' };
   const run = () => spawnSync('bash', [shellPath(script)], { encoding: 'utf8', timeout: 15000, env });
-  return { run, state, agh, calls, oldCache, sharedFilter };
+  return { run, state, agh, calls, curlCalls, oldCache, sharedFilter };
 }
 
 test('subscriptions download through system curl and AdGuard Home receives only the validated local file', t => {
@@ -91,6 +93,22 @@ test('a failed subscription download keeps the previous applied source record an
   assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), oldRecord);
   assert.equal(existsSync(f.calls) ? readFileSync(f.calls, 'utf8') : '', '');
   assert.equal(readFileSync(f.oldCache, 'utf8'), '||preserved.example^\n');
+});
+
+test('built-in sources retry their verified HTTPS mirrors when original URLs fail', t => {
+  const cases = [
+    ['https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward', 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward'],
+    ['https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt', 'https://cdn.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt'],
+    ['https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt', 'https://raw.githubusercontent.com/AdguardTeam/AdGuardSDNSFilter/gh-pages/Filters/filter.txt'],
+  ];
+  for (const [original, mirror] of cases) {
+    const sources = 'mode\tbalanced\nsource\tcustom\tExample Feed\t' + original + '\tenabled\tconfigured\tremovable\n';
+    const f = fixture(t, { sources, failDownloadUrl: original });
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.deepEqual(readFileSync(f.curlCalls, 'utf8').trim().split('\n'), [original, mirror]);
+    assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), original + '\n');
+  }
 });
 
 test('legacy migration updates an already registered shared filter instead of adding it twice', t => {

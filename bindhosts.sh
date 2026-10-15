@@ -403,6 +403,14 @@ source_name() {
     *) host=${1#https://}; host=${host%%/*}; printf '%s' "$host" ;;
   esac
 }
+source_mirror_url() {
+  case "$1" in
+    https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward) printf 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
+    https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt) printf 'https://cdn.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt' ;;
+    https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt) printf 'https://raw.githubusercontent.com/AdguardTeam/AdGuardSDNSFilter/gh-pages/Filters/filter.txt' ;;
+    *) return 1 ;;
+  esac
+}
 source_cache_key() {
   key=$(printf '%s' "$1" | "$BB" sha256sum 2>/dev/null | "$BB" awk '{print $1}')
   case "$key" in ''|*[!a-fA-F0-9]*) key=$(printf '%s' "$1" | cksum | "$BB" awk '{print $1 "-" $2}') ;; esac
@@ -423,20 +431,28 @@ post_remove_source() {
   if printf '%s' "$status" | "$BB" grep -Eo '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | "$BB" cut -d '"' -f4 | "$BB" grep -Fxq "$url"; then printf '%s\n' "$result" >&2; return 1; fi
   return 0
 }
+download_candidate() {
+  candidate_url=$1; candidate_output=$2
+  "$CURL" --silent --show-error --fail --location --proto '=https' --proto-redir '=https' \
+    --connect-timeout 5 --max-time 15 --max-filesize 52428800 "$candidate_url" -o "$candidate_output" || { rm -f "$candidate_output"; return 1; }
+  bytes=$(wc -c < "$candidate_output" 2>/dev/null); case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
+  [ "$bytes" -gt 0 ] && [ "$bytes" -le 52428800 ] || { rm -f "$candidate_output"; return 1; }
+  first=$(head -c 512 "$candidate_output" | "$BB" tr '[:upper:]' '[:lower:]')
+  case "$first" in *'<!doctype html'*|*'<html'*|*'<head'*) rm -f "$candidate_output"; return 1 ;; esac
+}
 download_source() {
   url=$1; output=$2; name=$3
   [ -n "${CURL:-}" ] || CURL=$(abp_find_curl) || return 1
   echo "[进度] 下载规则源：$name"
-  "$CURL" --silent --show-error --fail --location --proto '=https' --proto-redir '=https' \
-    --connect-timeout 8 --max-time 90 --max-filesize 52428800 "$url" -o "$output" || {
-    echo "[!] 下载失败：$name。请检查该来源的网络或 DNS；现有规则会保留。" >&2
-    rm -f "$output"
-    return 1
-  }
-  bytes=$(wc -c < "$output" 2>/dev/null); case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
-  [ "$bytes" -gt 0 ] && [ "$bytes" -le 52428800 ] || { rm -f "$output"; echo "[!] 来源内容为空或超过 50 MB：$name" >&2; return 1; }
-  first=$(head -c 512 "$output" | "$BB" tr '[:upper:]' '[:lower:]')
-  case "$first" in *'<!doctype html'*|*'<html'*|*'<head'*) rm -f "$output"; echo "[!] 来源返回了网页，不是规则文本：$name" >&2; return 1 ;; esac
+  if download_candidate "$url" "$output"; then return 0; fi
+  mirror=$(source_mirror_url "$url" 2>/dev/null) || mirror=''
+  if [ -n "$mirror" ] && [ "$mirror" != "$url" ]; then
+    echo "[提醒] 原地址失败，正在尝试 HTTPS 镜像：$name"
+    if download_candidate "$mirror" "$output"; then echo "[+] 已通过 HTTPS 镜像下载：$name"; return 0; fi
+  fi
+  echo "[!] 下载失败：$name。原地址和可用镜像均未成功；现有规则会保留。" >&2
+  rm -f "$output"
+  return 1
 }
 sync_sources() {
   config="$MODDIR/webui-config.sh"
