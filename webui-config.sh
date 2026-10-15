@@ -228,6 +228,42 @@ case "$1" in
     save_source_names "$2" "$3" || exit 1
     echo "[+] Source renamed to $(source_label "$2"); run a rule update to apply it."
     ;;
+  edit-source)
+    valid_custom_url "$2" && valid_custom_url "$3" && [ "$2" != "$3" ] || { echo '[!] Enter two different valid HTTPS source URLs.' >&2; exit 1; }
+    init_sources || exit 1
+    if ! is_builtin "$2" && ! source_is_selected "$2" && ! "$BB" grep -Fxq "$2" "$DIR/custom-sources.txt" 2>/dev/null; then
+      echo '[!] The current source does not exist.' >&2; exit 1
+    fi
+    source_is_selected "$3" && { echo '[!] The new URL is already enabled.' >&2; exit 1; }
+    was_selected=0; source_is_selected "$2" && was_selected=1
+    custom_tmp="$DIR/custom-sources.txt.tmp.$$"
+    sources_tmp="$SOURCES_V2.tmp.$$"
+    names_tmp="$SOURCE_NAMES.tmp.$$"
+    old_name=''
+    [ ! -f "$SOURCE_NAMES" ] || old_name=$("$BB" awk -F '\t' -v url="$2" '$1==url { print substr($0,index($0,"\t")+1); exit }' "$SOURCE_NAMES")
+    if [ -f "$DIR/custom-sources.txt" ]; then
+      "$BB" grep -Fvx "$2" "$DIR/custom-sources.txt" > "$custom_tmp"; grep_rc=$?
+      [ "$grep_rc" -le 1 ] || { rm -f "$custom_tmp"; exit 1; }
+    fi
+    [ -f "$custom_tmp" ] || : > "$custom_tmp"
+    if ! is_builtin "$3" && ! "$BB" grep -Fxq "$3" "$custom_tmp"; then
+      count=$(wc -l < "$custom_tmp" 2>/dev/null); [ -n "$count" ] || count=0
+      [ "$count" -lt 10 ] || { rm -f "$custom_tmp"; echo '[!] At most 10 custom sources are supported.' >&2; exit 1; }
+      printf '%s\n' "$3" >> "$custom_tmp" || { rm -f "$custom_tmp"; exit 1; }
+    fi
+    "$BB" grep -Fvx "$2" "$SOURCES_V2" > "$sources_tmp"; grep_rc=$?
+    [ "$grep_rc" -le 1 ] || { rm -f "$custom_tmp" "$sources_tmp"; exit 1; }
+    if [ "$was_selected" = 1 ]; then printf '%s\n' "$3" >> "$sources_tmp" || { rm -f "$custom_tmp" "$sources_tmp"; exit 1; }; fi
+    if [ -f "$SOURCE_NAMES" ]; then
+      "$BB" awk -F '\t' -v url="$2" '$1 != url { print }' "$SOURCE_NAMES" > "$names_tmp" || { rm -f "$custom_tmp" "$sources_tmp" "$names_tmp"; exit 1; }
+    else : > "$names_tmp"; fi
+    if [ -n "$old_name" ]; then
+      "$BB" awk -F '\t' -v url="$3" '$1 != url { print }' "$names_tmp" > "$names_tmp.next" && mv "$names_tmp.next" "$names_tmp" || { rm -f "$custom_tmp" "$sources_tmp" "$names_tmp" "$names_tmp.next"; exit 1; }
+      printf '%s\t%s\n' "$3" "$old_name" >> "$names_tmp" || { rm -f "$custom_tmp" "$sources_tmp" "$names_tmp"; exit 1; }
+    fi
+    chmod 600 "$custom_tmp" "$sources_tmp" "$names_tmp" && mv "$custom_tmp" "$DIR/custom-sources.txt" && mv "$sources_tmp" "$SOURCES_V2" && mv "$names_tmp" "$SOURCE_NAMES" || { rm -f "$custom_tmp" "$sources_tmp" "$names_tmp"; echo '[!] Could not save the updated source.' >&2; exit 1; }
+    echo "[+] Source URL updated to $(source_label "$3"); run a rule update to apply it."
+    ;;
   source-name)
     valid_source_ref "$2" || exit 1
     source_label "$2"

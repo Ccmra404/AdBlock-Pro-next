@@ -6,7 +6,7 @@ const JOB = `sh ${MODULE_DIR}/webui-job.sh`;
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], sourceRenameUrl: '', logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', logFilter: 'all' };
+const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], sourceRenameUrl: '', sourceEditUrl: '', logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', logFilter: 'all' };
 Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', sharedUpdatedAt: 0, sharedError: '', sharedLoaded: false, sharedSearch: '', sharedPage: 0, apps: [], appsLoaded: false, appsLoading: false, appsError: '', appQuery: '', selectedApp: null, observeDuration: '10', observationResultsOpen: false, selectedObservationDomains: [] });
 const pages = { home: '总览', rules: '规则管理', lists: '名单', manage: '设置', logs: '运行日志' };
 const LOG_PAGE_SIZE = 10;
@@ -142,12 +142,14 @@ function sourceRows() {
   const rows = state.sources.map(source => {
     const enabled = source.enabled === 'enabled';
     const renaming = state.sourceRenameUrl === source.url;
+    const editing = state.sourceEditUrl === source.url;
     const detail = source.url === 'shared' ? '维护者审核的共享抓包规则' : source.url;
     const shared = source.url === 'shared' ? state.status?.dns_filter_json?.filters?.find(x => x.url?.endsWith('/adblock-pro-shared-app-rules.txt')) : null;
-    const actions = `<div class="source-actions"><button class="btn" data-action="source-toggle" data-url="${esc(source.url)}" data-enabled="${source.enabled}">${enabled ? '停用' : '导入'}</button><button class="btn" data-action="source-rename-open" data-url="${esc(source.url)}">重命名</button><button class="btn btn-danger" data-action="source-delete" data-url="${esc(source.url)}">移除</button></div>`;
+    const actions = `<div class="source-actions"><button class="btn" data-action="source-toggle" data-url="${esc(source.url)}" data-enabled="${source.enabled}">${enabled ? '停用' : '导入'}</button>${source.url === 'shared' ? '' : `<button class="btn" data-action="source-url-open" data-url="${esc(source.url)}">修改链接</button>`}<button class="btn" data-action="source-rename-open" data-url="${esc(source.url)}">重命名</button><button class="btn btn-danger" data-action="source-delete" data-url="${esc(source.url)}">移除</button></div>`;
     const rename = renaming ? `<form class="source-rename-form btn-row" data-url="${esc(source.url)}"><input class="field" name="name" maxlength="64" value="${esc(source.label)}" aria-label="规则来源名称" required><button class="btn btn-primary" type="submit">保存名称</button><button class="btn" type="button" data-action="source-rename-cancel">取消</button></form>` : '';
+    const edit = editing ? `<form class="source-edit-form btn-row" data-url="${esc(source.url)}"><input class="field" name="url" type="url" value="${esc(source.url)}" aria-label="规则订阅链接" autocapitalize="none" required><button class="btn btn-primary" type="submit">保存链接</button><button class="btn" type="button" data-action="source-url-cancel">取消</button></form>` : '';
     const subtitle = source.url === 'shared' ? `${detail} · ${shared ? fmt(shared.rules_count) + ' 条已加载' : '随模块预置'}` : detail;
-    return `<div class="source-row" data-source-url="${esc(source.url)}"><div class="source-copy"><strong>${esc(source.label)}</strong><small>${esc(subtitle)}</small></div><span class="tag ${enabled ? 'green' : ''}">${enabled ? '已启用' : '未导入'}</span>${actions}${rename}</div>`;
+    return `<div class="source-row" data-source-url="${esc(source.url)}"><div class="source-copy"><strong>${esc(source.label)}</strong><small>${esc(subtitle)}</small></div><span class="tag ${enabled ? 'green' : ''}">${enabled ? '已启用' : '未导入'}</span>${actions}${rename}${edit}</div>`;
   }).join('');
   return rows;
 }
@@ -436,7 +438,7 @@ function updateSourcesView() {
   if (state.page !== 'rules') return;
   const list = $('#source-list');
   if (list) {
-    const signature = JSON.stringify([state.sourceError, state.sources, state.sourceRenameUrl]);
+    const signature = JSON.stringify([state.sourceError, state.sources, state.sourceRenameUrl, state.sourceEditUrl]);
     if (list.dataset.renderSignature !== signature) {
       list.innerHTML = sourceRows();
       list.dataset.renderSignature = signature;
@@ -1123,10 +1125,12 @@ document.addEventListener('click', async event => {
       break;
     }
     case 'source-delete': {
-      const url = button.dataset.url; confirm('移除这条规则来源？', '下次更新时会从当前过滤配置移除；随包来源仍可重新导入，自定义来源将从列表删除。', '移除来源', async () => { try { await runConfig('remove-source', url); state.sourceRenameUrl = ''; invalidateSources(); await loadSources(); toast('规则来源已移除；当前规则将在更新后改变'); } catch (e) { toast(e.message); } }); break;
+      const url = button.dataset.url; confirm('移除这条规则来源？', '下次更新时会从当前过滤配置移除；随包来源仍可重新导入，自定义来源将从列表删除。', '移除来源', async () => { try { await runConfig('remove-source', url); state.sourceRenameUrl = ''; state.sourceEditUrl = ''; invalidateSources(); await loadSources(); toast('规则来源已移除；当前规则将在更新后改变'); } catch (e) { toast(e.message); } }); break;
     }
-    case 'source-rename-open': state.sourceRenameUrl = button.dataset.url; updateSourcesView(); break;
+    case 'source-rename-open': state.sourceRenameUrl = button.dataset.url; state.sourceEditUrl = ''; updateSourcesView(); break;
     case 'source-rename-cancel': state.sourceRenameUrl = ''; updateSourcesView(); break;
+    case 'source-url-open': state.sourceEditUrl = button.dataset.url; state.sourceRenameUrl = ''; updateSourcesView(); break;
+    case 'source-url-cancel': state.sourceEditUrl = ''; updateSourcesView(); break;
     case 'list-delete': { const kind = button.dataset.kind, domain = button.dataset.domain; try { await runConfig(`remove-${kind}`, domain); await loadList(kind, true); toast('名单已保存；执行规则更新后生效'); } catch (e) { toast(e.message); } break; }
     case 'logs-refresh': loadLogs(true).then(() => toast('日志已刷新')).catch(e => toast(e.message)); break;
     case 'logs-copy': try { await copyRecentLogs(); } catch (e) { toast(e.message || '复制日志失败'); } break;
@@ -1187,6 +1191,9 @@ document.addEventListener('submit', async event => {
   } else if (form.matches('.source-rename-form')) {
     event.preventDefault(); const url = form.dataset.url; const name = new FormData(form).get('name')?.toString().trim();
     try { await runConfig('rename-source', url, name); state.sourceRenameUrl = ''; invalidateSources(); await loadSources(); toast('规则来源名称已保存'); } catch (e) { toast(e.message); }
+  } else if (form.matches('.source-edit-form')) {
+    event.preventDefault(); const oldUrl = form.dataset.url; const newUrl = new FormData(form).get('url')?.toString().trim();
+    try { await runConfig('edit-source', oldUrl, newUrl); state.sourceEditUrl = ''; invalidateSources(); await loadSources(); toast('规则订阅链接已保存；执行规则更新后生效'); } catch (e) { toast(e.message); }
   } else if (form.matches('.domain-form')) {
     event.preventDefault(); const kind = form.dataset.kind, domain = new FormData(form).get('domain')?.toString().trim();
     try { await runConfig(`add-${kind}`, domain); resetListView(kind); await loadList(kind, true); form.reset(); toast('名单已保存；执行规则更新后生效'); } catch (e) { toast(e.message); }

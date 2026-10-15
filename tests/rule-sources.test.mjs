@@ -83,6 +83,32 @@ test('built-in source names can be customized and malformed names are rejected',
   assert.notEqual(invalid.status, 0, invalid.stderr + invalid.stdout + JSON.stringify(invalid));
 });
 
+test('subscription URLs can be changed without changing enabled state or losing a custom name', t => {
+  const replacement = 'https://mirror.example/ads.txt';
+  const f = fixture(t, { strict: custom + '\n', customSources: custom + '\n' });
+  assert.equal(f.run('rename-source', custom, '我的规则').status, 0);
+  const result = f.run('edit-source', custom, replacement);
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(f.list().some(x => x.url === custom), false);
+  assert.deepEqual(f.list().find(x => x.url === replacement), {
+    id: 'custom', label: '我的规则', url: replacement, enabled: 'enabled', configured: 'configured', removable: 'removable',
+  });
+  assert.doesNotMatch(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8'), /example\.org/);
+  assert.match(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8'), /mirror\.example/);
+  assert.doesNotMatch(readFileSync(path.join(f.dir, 'custom-sources.txt'), 'utf8'), /example\.org/);
+  assert.match(readFileSync(path.join(f.dir, 'custom-sources.txt'), 'utf8'), /mirror\.example/);
+});
+
+test('subscription URL edits reject invalid or duplicate targets without mutating existing sources', t => {
+  const replacement = 'https://rules.example/other.txt';
+  const f = fixture(t, { strict: custom + '\n' + replacement + '\n', customSources: custom + '\n' + replacement + '\n' });
+  const invalid = f.run('edit-source', custom, 'http://insecure.example/list.txt');
+  assert.notEqual(invalid.status, 0);
+  const duplicate = f.run('edit-source', custom, replacement);
+  assert.notEqual(duplicate.status, 0);
+  assert.equal(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8').includes(custom), true);
+});
+
 test('empty legacy profiles still migrate to the previous default subscriptions and shared library', t => {
   const f = fixture(t);
   const sources = f.list();

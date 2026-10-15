@@ -134,6 +134,7 @@ test('rule source page has no tiers and makes every bundled or custom source man
  assert.match(page,/10007/);assert.match(page,/data-action="source-toggle"[^>]*>停用/);
  assert.match(page,/data-action="source-toggle"[^>]*>导入/);
  assert.match(page,/data-action="source-delete"/);assert.match(page,/data-action="source-rename-open"/);
+ assert.match(page,/data-action="source-url-open"/);
  assert.match(page,/name="name" maxlength="64"/);assert.match(page,/name="url"/);
 });
 
