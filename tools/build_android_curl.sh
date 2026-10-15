@@ -40,5 +40,6 @@ CC=aarch64-linux-android23-clang \
     --without-zlib --without-brotli --without-zstd --without-libpsl --without-nghttp2
 make -j"$(nproc)"
 install -m 755 src/curl "$GITHUB_WORKSPACE/bin/curl"
+"$toolchain/llvm-strip" --strip-unneeded "$GITHUB_WORKSPACE/bin/curl"
 file "$GITHUB_WORKSPACE/bin/curl"
 readelf -h "$GITHUB_WORKSPACE/bin/curl" | grep -q 'Machine:.*AArch64'
