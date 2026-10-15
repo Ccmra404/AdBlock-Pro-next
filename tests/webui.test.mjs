@@ -103,28 +103,26 @@ test('stale status responses never overwrite fresh responses', async () => {
   assert.equal(h.state.status.state, 'paused');
 });
 
-test('rapid profile switching discards stale responses', async () => {
+test('a stale source read cannot overwrite a newer read after cache invalidation', async () => {
   const h = harness();
-  h.state.profileEditor = 'light';
-  const first = h.loadSources('light');
-  h.state.profileEditor = 'balanced';
-  const second = h.loadSources('balanced');
+  const first = h.loadSources();
+  vm.runInContext('invalidateSources()', h.context);
+  const second = h.loadSources();
   const a = h.pending.shift(), b = h.pending.shift();
-  b.resolve(sources('balanced-source'));
+  b.resolve(sources('latest-source'));
   await second;
-  a.resolve(sources('light-source'));
+  a.resolve(sources('stale-source'));
   await first;
-  assert.equal(h.state.sources[0].url, 'balanced-source');
+  assert.equal(h.state.sources[0].url, 'latest-source');
 });
 
-test('profile refresh retains existing rows until new results arrive', async () => {
+test('source refresh retains existing rows until new results arrive', async () => {
   const h = harness();
-  h.state.profileEditor = 'balanced';
-  const first = h.loadSources('balanced');
+  const first = h.loadSources();
   h.pending.shift().resolve(sources('original-source'));
   await first;
-  vm.runInContext("sourceCache.delete('balanced')", h.context);
-  const next = h.loadSources('balanced');
+  vm.runInContext('invalidateSources()', h.context);
+  const next = h.loadSources();
   assert.equal(h.state.sources[0].url, 'original-source');
   h.pending.shift().resolve(sources('updated-source'));
   await next;
@@ -195,42 +193,36 @@ test('failed status refresh must not present stale data as connected', async () 
 });
 
 
-test('late refresh for a previously selected profile must not erase current rows', async () => {
+test('late invalidated source refresh does not replace current rows', async () => {
   const h = harness();
-  h.state.profileEditor = 'balanced';
-  const current = h.loadSources('balanced');
-  h.pending.shift().resolve(sources('balanced-source'));
-  await current;
-  h.state.profileEditor = 'light';
-  const light = h.loadSources('light');
-  h.pending.shift().resolve(sources('light-source'));
-  await light;
-  const callsBefore = h.pending.length;
-  await h.loadSources('balanced');
-  assert.equal(h.pending.length, callsBefore);
-  assert.equal(h.state.sources[0].url, 'light-source');
+  const older = h.loadSources();
+  vm.runInContext('invalidateSources()', h.context);
+  const newer = h.loadSources();
+  const first = h.pending.shift(), second = h.pending.shift();
+  second.resolve(sources('current-source')); await newer;
+  first.resolve(sources('outdated-source')); await older;
+  assert.equal(h.state.sources[0].url, 'current-source');
 });
 
-
-test('recently loaded rule source profile avoids another native call', async () => {
+test('recently loaded source list avoids another native call', async () => {
   const h = harness();
-  const first = h.loadSources('balanced');
+  const first = h.loadSources();
   assert.equal(h.pending.length, 1);
   h.pending.shift().resolve(sources('fresh-profile'));
   await first;
-  const again = h.loadSources('balanced');
+  const again = h.loadSources();
   await again;
   assert.equal(h.pending.length, 0);
   assert.equal(h.state.sources[0].url, 'fresh-profile');
 });
 
-test('mutating rule sources invalidates cached profile on next load', async () => {
+test('mutating rule sources invalidates cached list on next load', async () => {
   const h = harness();
-  const first = h.loadSources('balanced');
+  const first = h.loadSources();
   h.pending.shift().resolve(sources('before'));
   await first;
-  vm.runInContext("sourceCache.delete('balanced'); sourceCacheTime.delete('balanced')", h.context);
-  const changed = h.loadSources('balanced');
+  vm.runInContext('invalidateSources()', h.context);
+  const changed = h.loadSources();
   assert.equal(h.pending.length, 1);
   h.pending.shift().resolve(sources('after'));
   await changed;
@@ -239,11 +231,11 @@ test('mutating rule sources invalidates cached profile on next load', async () =
 
 test('expired rule source cache schedules a new Shell request', async () => {
   const h = harness();
-  const first = h.loadSources('balanced');
+  const first = h.loadSources();
   h.pending.shift().resolve(sources('before'));
   await first;
-  vm.runInContext("sourceCacheTime.set('balanced', Date.now()-SOURCE_CACHE_MS-1)", h.context);
-  const expired = h.loadSources('balanced');
+  vm.runInContext("sourceCacheTime.set('all', Date.now()-SOURCE_CACHE_MS-1)", h.context);
+  const expired = h.loadSources();
   assert.equal(h.pending.length, 1);
   h.pending.shift().resolve(sources('after'));
   await expired;
@@ -251,10 +243,10 @@ test('expired rule source cache schedules a new Shell request', async () => {
 });
 
 
-test('two concurrent reads of the same profile share one native Shell operation', async () => {
+test('two concurrent reads of the source list share one native Shell operation', async () => {
   const h = harness();
-  const a = h.loadSources('balanced');
-  const b = h.loadSources('balanced');
+  const a = h.loadSources();
+  const b = h.loadSources();
   assert.equal(h.pending.length, 1);
   h.pending.shift().resolve(sources('deduplicated'));
   await Promise.all([a, b]);
@@ -277,14 +269,15 @@ test('recent personal lists are reused but a mutation forces a backend refresh',
 });
 
 
-test('a mutation finishing on a hidden profile does not cancel the visible profile read', async () => {
+test('a source mutation invalidates an in-flight read and shares the fresh result', async () => {
   const h = harness();
-  h.state.profileEditor = 'balanced';
-  const visible = h.loadSources('balanced');
-  vm.runInContext("invalidateSources('light')", h.context);
-  h.pending.shift().resolve(sources('visible-balanced-source'));
-  await visible;
-  assert.equal(h.state.sources[0].url, 'visible-balanced-source');
+  const old = h.loadSources();
+  vm.runInContext('invalidateSources()', h.context);
+  const fresh = h.loadSources();
+  const pending = h.pending.shift(), latest = h.pending.shift();
+  latest.resolve(sources('fresh-source')); await fresh;
+  pending.resolve(sources('old-source')); await old;
+  assert.equal(h.state.sources[0].url, 'fresh-source');
   assert.equal(h.state.sourceError, '');
 });
 

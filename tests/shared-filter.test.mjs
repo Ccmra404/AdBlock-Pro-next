@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
 
-function fixture(t, { present = true, failSet = false } = {}) {
+function fixture(t, { present = true, failSet = false, selected = true } = {}) {
   const root = rootFixture(t);
   root.addBusybox('Magisk');
   const module = path.join(root.dir, 'module');
@@ -19,6 +19,11 @@ function fixture(t, { present = true, failSet = false } = {}) {
   mkdirSync(state, { recursive: true });
   writeFileSync(path.join(scripts, 'compat.sh'), readFileSync(root.compatFile, 'utf8'));
   writeFileSync(path.join(apiScripts, 'rule-store.sh'), '#!/bin/sh\nexit 0\n');
+  writeFileSync(path.join(module, 'webui-config.sh'), `#!/bin/sh
+[ "$1" = list-sources ] || exit 1
+printf 'mode\\tbalanced\\n'
+if [ "$SHARED_SELECTED" = 1 ]; then printf 'source\\tshared\\tShared\\tshared\\tenabled\\tconfigured\\tremovable\\n'; fi
+`);
   writeFileSync(path.join(agh, 'admin.auth'), 'test:test\n');
 
   const status = path.join(root.dir, 'filtering-status.json');
@@ -45,6 +50,7 @@ case "$method $path" in
   'GET /filtering/status') cat "$FILTER_STATUS" ;;
   'POST /filtering/add_url') exit 0 ;;
   'POST /filtering/set_url') [ "$FAIL_SET" != 1 ] || exit 22 ;;
+  'POST /filtering/remove_url') printf '{"filters":[]}' > "$FILTER_STATUS" ;;
   *) exit 22 ;;
 esac
 `);
@@ -59,6 +65,7 @@ esac
     ...root.env('Magisk'), CURL: shellPath(curl),
     FILTER_STATUS: shellPath(status), API_CALLS: shellPath(calls),
     FAIL_SET: failSet ? '1' : '0',
+    SHARED_SELECTED: selected ? '1' : '0',
   };
   const run = () => spawnSync('bash', [shellPath(entry), '--ensure-shared'], { encoding: 'utf8', timeout: 10000, env });
   return { run, calls, status, sharedFilter };
@@ -96,4 +103,12 @@ test('failure to enable the bundled shared filter is not reported as success', t
   const result = f.run();
   assert.notEqual(result.status, 0);
   assert.match(readFileSync(f.calls, 'utf8'), /POST\t\/filtering\/set_url\t/);
+});
+
+test('an unselected shared source is removed from the live filter instead of being re-enabled', t => {
+  const f = fixture(t, { selected: false });
+  const result = f.run();
+  assert.equal(result.status, 0, JSON.stringify(result));
+  const calls = readFileSync(f.calls, 'utf8').trim().split('\n').map(line => line.split('\t'));
+  assert.deepEqual(calls.map(([method, url]) => [method, url]), [['POST', '/filtering/remove_url']]);
 });

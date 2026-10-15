@@ -10,7 +10,7 @@ function harness() {
     localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{},
     exec:command=>new Promise(resolve=>pending.push({command,resolve})),setTimeout,clearTimeout,setInterval(){return 1;},requestAnimationFrame(){},cancelAnimationFrame(){} });
   vm.runInContext(source,context);
-  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,observationAIPrompt,communityIssueUrl,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,sharedResultsMarkup,startObservation})',context)};
+  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,observationAIPrompt,communityIssueUrl,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,rulesPage,sourceRows,sharedResultsMarkup,startObservation})',context)};
 }
 
 test('TXT export sections, DNS rules and JSON import preserve blacklist and whitelist semantics',()=>{
@@ -121,6 +121,33 @@ test('domain observation leads personal lists and is absent from the operation l
  h.state.logs=['1000\tsuccess\t--observe\t10\tObservation completed'];
  const logs=h.logsPage();assert.match(logs,/域名观察/);assert.match(logs,/Observation completed/);
  assert.doesNotMatch(logs,/id="observe-app"|id="observe-duration"|data-action="observe-start"/);
+});
+
+test('rule source page has no tiers and makes every bundled or custom source manageable',()=>{
+ const h=harness();h.state.sources=[
+  {id:'10007',label:'10007',url:'https://rules.example/base.txt',enabled:'enabled',removable:'removable'},
+  {id:'shared',label:'共享抓包规则',url:'shared',enabled:'disabled',removable:'removable'},
+  {id:'custom',label:'我的订阅',url:'https://rules.example/custom.txt',enabled:'disabled',removable:'removable'}
+ ];
+ const page=h.rulesPage();
+ assert.doesNotMatch(page,/轻量|均衡|严格|档位/);
+ assert.match(page,/10007/);assert.match(page,/data-action="source-toggle"[^>]*>停用/);
+ assert.match(page,/data-action="source-toggle"[^>]*>导入/);
+ assert.match(page,/data-action="source-delete"/);assert.match(page,/data-action="source-rename-open"/);
+ assert.match(page,/name="name" maxlength="64"/);assert.match(page,/name="url"/);
+});
+
+test('operation log page can copy recent detailed task output',async()=>{
+ const h=harness(),toast={};let copied='';
+ h.context.document.querySelector=s=>s==='#toast'?toast:null;
+ h.context.navigator={clipboard:{writeText:async text=>{copied=text;}}};h.context.setTimeout=()=>1;
+ assert.match(h.logsPage(),/data-action="logs-copy">复制日志/);
+ const button={dataset:{action:'logs-copy'}};
+ const click=h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});
+ assert.equal(h.pending.length,1);assert.match(h.pending[0].command,/recent-full$/);
+ h.pending[0].resolve({errno:0,stdout:'===== 最新任务 =====\nsubscription timed out'});
+ await click;
+ assert.match(copied,/subscription timed out/);assert.match(toast.textContent,/已复制/);
 });
 
 test('results start collapsed, preserve the user toggle across renders, and offer safe allow actions',async()=>{
