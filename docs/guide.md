@@ -22,7 +22,7 @@ AdBlock Pro 在手机本地运行 [AdGuard Home](https://github.com/AdguardTeam/
 | 故障保护 | 检查 DNS 核心运行及监听状态；异常时尝试解除本模块的 DNS 接管 |
 | 域名观察 | 短时间观察设备 DNS 请求，辅助判断漏拦截域名；需要人工确认 |
 
-安装包内置 **10007** 和 **秋风纯广告** 快照，首次安装也会启用共享抓包规则。你可以在规则管理中对每个来源单独导入、停用、移除或重命名，不再使用轻量、均衡、严格档位。移除内置来源只会从当前订阅列表移除，之后仍可重新导入；自定义来源移除后会从列表删除。
+安装包内置 **10007** 和 **秋风 AdGuard 全规则**（广告、隐私与不受欢迎内容）快照，首次安装也会启用共享抓包规则。预置订阅只有这两个公开规则源；你可以在规则管理中自行导入、停用、移除、重命名或修改订阅链接。移除内置来源只会从当前订阅列表移除，之后仍可重新导入。
 
 来源或名单变更后，请在「规则管理」执行更新，修改才会应用到 DNS 过滤核心。模块先通过系统 `curl` 下载并检查订阅，再让 AdGuard Home 读取本地缓存；下载或校验失败时会继续保留上一版有效规则。增加来源可能提高内存占用和误拦截风险，不等于一定提高拦截效果。
 
@@ -180,8 +180,7 @@ AdGuard Home 是底层 DNS 引擎；AdBlock Pro 在其上提供面向 KernelSU �
 
 - [AdGuard Home](https://github.com/AdguardTeam/AdGuardHome)：本地 DNS 过滤引擎。
 - [10007](https://github.com/lingeringsound/10007_auto)：默认基础规则。
-- [AWAvenue Ads Rule](https://github.com/TG-Twilight/AWAvenue-Ads-Rule)：内置秋风纯广告规则来源。相关许可证副本见 [GPL-3.0 许可证副本](../licenses/AWAvenue-GPL-3.0.txt)。
-- [anti-AD](https://github.com/privacy-protection-tools/anti-AD)：可选规则来源。
+- [AWAvenue Ads Rule](https://github.com/TG-Twilight/AWAvenue-Ads-Rule)：内置 AdGuard 全规则来源，使用[广告、隐私、不受欢迎内容均拦截的订阅选项](https://awavenue.top/Sub.html?tool=adguard&privacy=block&unwelcome=block)。相关许可证副本见 [GPL-3.0 许可证副本](../licenses/AWAvenue-GPL-3.0.txt)。
 - [KernelSU](https://github.com/tiann/KernelSU)：Android Root 与模块平台。
 - [GKD](https://github.com/gkd-kit/gkd)：可独立搭配使用的应用界面规则工具。
 

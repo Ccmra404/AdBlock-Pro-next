@@ -64,6 +64,22 @@ func TestFreshConfigEnablesSeparateLocalPersonalFilter(t *testing.T) {
  if !strings.Contains(string(data),filter) {t.Fatal("local personal filter is not enabled on first boot")}
  if strings.Contains(string(data),"user_rules:") {t.Fatal("personal filter must not claim native user_rules")}
 }
+func TestFreshConfigUsesOnlyTheTwoBundledRemoteRuleSources(t *testing.T) {
+ dir:=t.TempDir()
+ yaml:=filepath.Join(dir,"AdGuardHome.yaml")
+ if err:=createConfig(yaml,filepath.Join(dir,"auth"));err!=nil {t.Fatal(err)}
+ data,err:=os.ReadFile(yaml);if err!=nil {t.Fatal(err)}
+ config:=string(data)
+ for _, want := range []string{
+  "url: https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward",
+  "url: https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt",
+  "name: AWAvenue Ads and Privacy",
+  "url: /data/adb/adblockpro/bin/userfilters/adblock-pro-shared-app-rules.txt",
+ } { if !strings.Contains(config,want) {t.Errorf("fresh config is missing %q",want)} }
+ for _, unwanted := range []string{"anti-ad.net", "AdGuardSDNSFilter", "filter_29.txt", "Adguard-Only.Ads.txt"} {
+  if strings.Contains(config,unwanted) {t.Errorf("fresh config unexpectedly includes %q",unwanted)}
+ }
+}
 func TestFreshConfigUsesBundledSchemaWithoutLegacyQueryLogReset(t *testing.T) {
  if !strings.Contains(initialConfig, "schema_version: 34\n") { t.Fatal("bundled core schema missing") }
  query := strings.Split(strings.Split(initialConfig, "querylog:\n")[1], "statistics:\n")[0]

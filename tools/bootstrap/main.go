@@ -35,12 +35,12 @@ filtering:
     - /data/adb/adblockpro/bin/userfilters/*
 filters:
   - enabled: true
-    url: https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
+    url: https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
     name: 10007 Base Ads
     id: 10007
   - enabled: true
-    url: https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt
-    name: AWAvenue Ads Only
+    url: https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt
+    name: AWAvenue Ads and Privacy
     id: 1791638912
   - enabled: true
     url: /data/adb/adblockpro/bin/userfilters/adblock-pro-shared-app-rules.txt

@@ -75,7 +75,7 @@
     <rect x="82" y="572" width="270" height="67" rx="14" fill="#f5faf8" stroke="#dce8e3"/>
     <text x="102" y="600" class="body" font-weight="700">10007 基础规则</text><text x="102" y="624" class="small muted">随模块提供</text>
     <rect x="374" y="572" width="300" height="67" rx="14" fill="#f5faf8" stroke="#dce8e3"/>
-    <text x="394" y="600" class="body" font-weight="700">秋风纯广告</text><text x="394" y="624" class="small muted">随包快照 · 均衡档启用</text>
+    <text x="394" y="600" class="body" font-weight="700">秋风 AdGuard 全规则</text><text x="394" y="624" class="small muted">随包快照 · 含广告与隐私规则</text>
     <rect x="696" y="572" width="300" height="67" rx="14" fill="#f5faf8" stroke="#dce8e3"/>
     <text x="716" y="600" class="body" font-weight="700">自选订阅源</text><text x="716" y="624" class="small muted">按需添加和更新</text>
     <rect x="1018" y="572" width="337" height="67" rx="14" fill="#f5faf8" stroke="#dce8e3"/>

@@ -2,9 +2,11 @@
 DIR=/data/adb/bindhosts_personal
 MODDIR=${0%/*}
 . "$MODDIR/scripts/compat.sh" || exit 1
-REWARD=https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
-AWAVENUE=https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt
-AWA_ADS=https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt
+REWARD=https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
+AWAVENUE=https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt
+LEGACY_REWARD=https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
+LEGACY_AWAVENUE=https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt
+LEGACY_AWA_ADS=https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt
 ANTIAD=https://anti-ad.net/easylist.txt
 ADRULES=https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt
 ADGUARD=https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
@@ -33,7 +35,7 @@ valid_custom_url() {
   case "$authority" in ''|*@*) return 1 ;; esac
 }
 is_builtin() {
-  case "$1" in "$REWARD"|"$AWAVENUE"|"$AWA_ADS"|"$ANTIAD"|"$ADRULES"|"$ADGUARD") return 0 ;; *) return 1 ;; esac
+  case "$1" in "$REWARD"|"$AWAVENUE") return 0 ;; *) return 1 ;; esac
 }
 valid_source_ref() {
   [ "$1" = "$SHARED_SOURCE" ] || valid_custom_url "$1"
@@ -46,7 +48,7 @@ valid_source_name() {
   return 0
 }
 source_id() {
-  case "$1" in "$REWARD") printf '10007' ;; "$AWAVENUE") printf 'awa-full' ;; "$AWA_ADS") printf 'awa-ads' ;; "$ANTIAD") printf 'antiad' ;; "$ADRULES") printf 'adrules' ;; "$ADGUARD") printf 'adguard' ;; "$SHARED_SOURCE") printf 'shared' ;; *) printf 'custom' ;; esac
+  case "$1" in "$REWARD") printf '10007' ;; "$AWAVENUE") printf 'awa-full' ;; "$ANTIAD") printf 'antiad' ;; "$ADRULES") printf 'adrules' ;; "$ADGUARD") printf 'adguard' ;; "$SHARED_SOURCE") printf 'shared' ;; *) printf 'custom' ;; esac
 }
 source_label() {
   if [ -f "$SOURCE_NAMES" ]; then
@@ -55,8 +57,7 @@ source_label() {
   fi
   case "$1" in
     "$REWARD") printf '10007 基础广告规则' ;;
-    "$AWAVENUE") printf '秋风完整规则（旧订阅）' ;;
-    "$AWA_ADS") printf '秋风纯广告（约 655 条）' ;;
+    "$AWAVENUE") printf '秋风 AdGuard 全规则' ;;
     "$ANTIAD") printf 'anti-AD EasyList（约 9.5 万条）' ;;
     "$ADRULES") printf 'AdRules DNS（约 20 万条 · 高内存）' ;;
     "$ADGUARD") printf 'AdGuard DNS' ;;
@@ -86,14 +87,54 @@ remove_line() {
 mode_sources() {
   case "$1" in
     light|balanced|strict)
-      printf '%s\n' "$REWARD" "$AWA_ADS"
+      printf '%s\n' "$REWARD" "$AWAVENUE"
       [ ! -f "$PROFILE_DIR/$1.txt" ] || cat "$PROFILE_DIR/$1.txt"
       ;;
   esac
 }
+migrate_source_url_file() {
+  file=$1
+  [ -f "$file" ] || return 0
+  if ! "$BB" grep -Fqx "$LEGACY_REWARD" "$file" && ! "$BB" grep -Fqx "$LEGACY_AWAVENUE" "$file" && ! "$BB" grep -Fqx "$LEGACY_AWA_ADS" "$file"; then return 0; fi
+  tmp="$file.migrate.$$"
+  raw="$tmp.raw"
+  "$BB" awk -v old_reward="$LEGACY_REWARD" -v reward="$REWARD" -v old_awa="$LEGACY_AWAVENUE" -v old_ads="$LEGACY_AWA_ADS" -v awa="$AWAVENUE" '
+    $0 == old_reward { print reward; next }
+    $0 == old_awa || $0 == old_ads { print awa; next }
+    $0 != "" { print }
+  ' "$file" > "$raw" || { rm -f "$raw" "$tmp"; return 1; }
+  "$BB" sort -u "$raw" -o "$tmp" || { rm -f "$raw" "$tmp"; return 1; }
+  rm -f "$raw"
+  chmod 600 "$tmp" && mv "$tmp" "$file"
+}
+migrate_source_names() {
+  [ -f "$SOURCE_NAMES" ] || return 0
+  if ! "$BB" awk -F '\t' -v old_reward="$LEGACY_REWARD" -v old_awa="$LEGACY_AWAVENUE" -v old_ads="$LEGACY_AWA_ADS" '$1 == old_reward || $1 == old_awa || $1 == old_ads { found=1 } END { exit !found }' "$SOURCE_NAMES"; then return 0; fi
+  tmp="$SOURCE_NAMES.migrate.$$"
+  "$BB" awk -F '\t' -v old_reward="$LEGACY_REWARD" -v reward="$REWARD" -v old_awa="$LEGACY_AWAVENUE" -v old_ads="$LEGACY_AWA_ADS" -v awa="$AWAVENUE" '
+    BEGIN { OFS="\t" }
+    {
+      original=$1; url=original; name=substr($0, index($0, "\t") + 1)
+      if (url == old_reward) url=reward
+      else if (url == old_awa || url == old_ads) url=awa
+      if (!(url in names) || (original == url && !preferred[url])) { names[url]=name; preferred[url]=(original == url) }
+    }
+    END { for (url in names) print url, names[url] }
+  ' "$SOURCE_NAMES" > "$tmp" || { rm -f "$tmp"; return 1; }
+  chmod 600 "$tmp" && mv "$tmp" "$SOURCE_NAMES"
+}
+migrate_source_state() {
+  for file in "$SOURCES_V2" "$DIR/custom-sources.txt" "$DIR/sources.txt" "$DIR/disabled-sources.txt" \
+    "$PROFILE_DIR/light.txt" "$PROFILE_DIR/balanced.txt" "$PROFILE_DIR/strict.txt"; do
+    migrate_source_url_file "$file" || return 1
+  done
+  migrate_source_names
+}
 init_sources() {
+  migrate_source_state || return 1
   [ -f "$SOURCES_V2" ] && return 0
   init_profiles || return 1
+  migrate_source_state || return 1
   read_mode
   tmp="$SOURCES_V2.tmp.$$"
   mode_sources "$mode" > "$tmp" || { rm -f "$tmp"; return 1; }
@@ -114,8 +155,8 @@ init_profiles() {
   [ -f "$DIR/profiles-initialized" ] && return 0
   mkdir -p "$PROFILE_DIR" || return 1
   [ -f "$PROFILE_DIR/light.txt" ] || : > "$PROFILE_DIR/light.txt"
-  [ -f "$PROFILE_DIR/balanced.txt" ] || printf '%s\n' "$AWA_ADS" > "$PROFILE_DIR/balanced.txt"
-  [ -f "$PROFILE_DIR/strict.txt" ] || printf '%s\n' "$ANTIAD" > "$PROFILE_DIR/strict.txt"
+  [ -f "$PROFILE_DIR/balanced.txt" ] || printf '%s\n' "$AWAVENUE" > "$PROFILE_DIR/balanced.txt"
+  [ -f "$PROFILE_DIR/strict.txt" ] || : > "$PROFILE_DIR/strict.txt"
   for legacy in "$DIR/sources.txt" "$DIR/custom-sources.txt"; do
     [ ! -f "$legacy" ] || while IFS= read -r url; do
       valid_custom_url "$url" || continue
@@ -271,7 +312,7 @@ case "$1" in
   list-sources)
     init_sources || exit 1
     catalog="$DIR/.abp-catalog.$$"; selected="$DIR/.abp-selected.$$"
-    printf '%s\n' "$REWARD" "$AWAVENUE" "$AWA_ADS" "$ANTIAD" "$ADRULES" "$ADGUARD" "$SHARED_SOURCE" > "$catalog"
+    printf '%s\n' "$REWARD" "$AWAVENUE" "$SHARED_SOURCE" > "$catalog"
     [ ! -f "$DIR/custom-sources.txt" ] || cat "$DIR/custom-sources.txt" >> "$catalog"
     cat "$SOURCES_V2" >> "$catalog"
     cp "$SOURCES_V2" "$selected" || { rm -f "$catalog" "$selected"; exit 1; }
@@ -279,7 +320,7 @@ case "$1" in
     "$BB" sort -u "$selected" -o "$selected" || { rm -f "$catalog" "$selected"; exit 1; }
     printf 'mode\tbalanced\n'
     "$BB" awk \
-      -v reward="$REWARD" -v awavenue="$AWAVENUE" -v awa_ads="$AWA_ADS" \
+      -v reward="$REWARD" -v awavenue="$AWAVENUE" \
       -v antiad="$ANTIAD" -v adrules="$ADRULES" -v adguard="$ADGUARD" -v shared="$SHARED_SOURCE" '
       FILENAME == ARGV[1] { if ($0 != "") selected[$0] = 1; next }
       $0 != "" {
@@ -290,8 +331,6 @@ case "$1" in
           id="10007"
         } else if (url == awavenue) {
           id="awa-full"
-        } else if (url == awa_ads) {
-          id="awa-ads"
         } else if (url == antiad) {
           id="antiad"
         } else if (url == adrules) {

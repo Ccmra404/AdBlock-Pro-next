@@ -97,8 +97,9 @@ test('a failed subscription download keeps the previous applied source record an
 
 test('built-in sources retry their verified HTTPS mirrors when original URLs fail', t => {
   const cases = [
+    ['https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward', 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward'],
+    ['https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt', 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt'],
     ['https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward', 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward'],
-    ['https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt', 'https://cdn.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt'],
     ['https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt', 'https://raw.githubusercontent.com/AdguardTeam/AdGuardSDNSFilter/gh-pages/Filters/filter.txt'],
   ];
   for (const [original, mirror] of cases) {

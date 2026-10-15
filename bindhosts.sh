@@ -393,7 +393,9 @@ source_name() {
   [ ! -f "$STATE/source-names.tsv" ] || custom_name=$($BB awk -F '\t' -v url="$1" '$1==url { print substr($0,index($0,"\t")+1); exit }' "$STATE/source-names.tsv")
   [ -z "$custom_name" ] || { printf '%s' "$custom_name"; return; }
   case "$1" in
+    https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward) printf '10007 应用与广告规则' ;;
     https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward) printf '10007 应用与广告规则' ;;
+    https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt) printf '秋风 AdGuard 全规则' ;;
     https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt) printf '秋风广告规则' ;;
     https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt) printf '秋风纯广告' ;;
     https://anti-ad.net/easylist.txt) printf 'anti-AD EasyList' ;;
@@ -405,8 +407,10 @@ source_name() {
 }
 source_mirror_url() {
   case "$1" in
+    https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward) printf 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' ;;
     https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward) printf 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
-    https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt) printf 'https://cdn.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt' ;;
+    https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt) printf 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt' ;;
+    https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt|https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt) printf 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt' ;;
     https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt) printf 'https://raw.githubusercontent.com/AdguardTeam/AdGuardSDNSFilter/gh-pages/Filters/filter.txt' ;;
     *) return 1 ;;
   esac
