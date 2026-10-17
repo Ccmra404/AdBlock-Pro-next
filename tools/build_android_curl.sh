@@ -33,7 +33,8 @@ make install_sw
 cd "$root/src/curl-$curl_version"
 CC=aarch64-linux-android23-clang \
   ./configure --host=aarch64-linux-android --with-openssl="$root/openssl" \
-    --with-ca-path=/system/etc/security/cacerts --disable-shared --enable-static \
+    --with-ca-bundle=/data/adb/adblockpro/certs/cacert.pem --without-ca-path \
+    --disable-shared --enable-static \
     --disable-ftp --disable-file --disable-ldap --disable-ldaps --disable-rtsp \
     --disable-dict --disable-telnet --disable-tftp --disable-pop3 --disable-imap \
     --disable-smb --disable-smtp --disable-gopher --disable-mqtt \
@@ -43,3 +44,4 @@ install -m 755 src/curl "$GITHUB_WORKSPACE/bin/curl"
 "$toolchain/llvm-strip" --strip-unneeded "$GITHUB_WORKSPACE/bin/curl"
 file "$GITHUB_WORKSPACE/bin/curl"
 readelf -h "$GITHUB_WORKSPACE/bin/curl" | grep -q 'Machine:.*AArch64'
+"$toolchain/llvm-strings" "$GITHUB_WORKSPACE/bin/curl" | grep -F '/data/adb/adblockpro/certs/cacert.pem'

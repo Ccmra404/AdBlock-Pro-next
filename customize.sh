@@ -22,6 +22,9 @@ export CURL
 "$CURL" --version >/dev/null 2>&1 || fail "The bundled ARM64 curl binary cannot run on this device."
 abp_find_curl >/dev/null || fail "The bundled curl binary is unavailable."
 command -v iptables >/dev/null 2>&1 || fail "IPv4 iptables is required for DNS redirection."
+ca_file="$TMPDIR/adblock-pro-cacert.pem"
+unzip -p "$ZIPFILE" certs/cacert.pem > "$ca_file" || fail "Module package is missing its CA certificate bundle."
+[ -s "$ca_file" ] || fail "Module CA certificate bundle is empty."
 ui_print "[AdBlock Pro] Root family: $(abp_root_family); BusyBox: $BB"
 ROOT_FAMILY=$(abp_root_family)
 
@@ -38,6 +41,10 @@ if [ -d /data/adb/modules/AdGuardHome ] && [ ! -f /data/adb/modules/AdGuardHome/
 fi
 
 mkdir -p "$MODPATH" "$DATA_DIR" "$STATE_DIR" || fail "Cannot create module data directories."
+# OpenSSL cannot use Android's old-hash CA directory as its native trust store.
+mkdir -p "$DATA_DIR/certs" || fail "Cannot prepare the CA certificate directory."
+cp "$ca_file" "$DATA_DIR/certs/cacert.pem" || fail "Cannot install the CA certificate bundle."
+chmod 644 "$DATA_DIR/certs/cacert.pem" || fail "Cannot read the installed CA certificate bundle."
 
 initialize_switch() {
   file="$STATE_DIR/$1"

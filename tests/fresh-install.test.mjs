@@ -16,7 +16,7 @@ function installFixture(t, family, preference, failWrite = false) {
     .replaceAll('/data/adb/modules/AdGuardHome', shellPath(path.join(root.dir, 'absent')));
   const files = ['action.sh', 'module.prop', 'service.sh', 'uninstall.sh', 'bindhosts.sh', 'webui-config.sh', 'webui-job.sh',
     'settings.conf', 'config-blacklist.txt', 'config-whitelist.txt',
-    'rules/shared-app-domains.txt',
+    'rules/shared-app-domains.txt', 'certs/cacert.pem',
     ...readdirSync(new URL('../scripts/', import.meta.url)).map(name => 'scripts/' + name),
     ...readdirSync(new URL('../webroot/', import.meta.url)).map(name => 'webroot/' + name)];
   for (const file of files) {
@@ -47,6 +47,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
   test(family + ': first install enables takeover without bundling device-specific personal rules', t => {
     const f = installFixture(t, family);
     const installed = f.install(); assert.equal(installed.status, 0, installed.stderr + installed.stdout);
+    assert.equal(readFileSync(path.join(f.runtime, 'certs/cacert.pem'), 'utf8'), readFileSync(new URL('../certs/cacert.pem', import.meta.url), 'utf8'));
     assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'on\n');
     assert.match(installed.stdout, /DNS takeover: on \(initialized\)/);
     const personal = path.join(f.runtime, 'bin/userfilters/adblock-pro-user-rules.txt');

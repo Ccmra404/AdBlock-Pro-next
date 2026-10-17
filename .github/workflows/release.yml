@@ -18,6 +18,7 @@ on:
       - "config-whitelist.txt"
       - "scripts/**"
       - "rules/**"
+      - "certs/**"
       - "webroot/**"
       - "META-INF/**"
       - "bin/AdGuardHome"
@@ -142,12 +143,12 @@ jobs:
             TAG="${TAG}-dev.${ARTIFACT_SHA:0:7}"
             sed -i "s/^version=.*/version=$TAG/" "$stage/module.prop"
           fi
-          cp -a META-INF scripts webroot rules "$stage/"
+          cp -a META-INF scripts webroot rules certs "$stage/"
           if [ "$GITHUB_REF" != refs/heads/main ]; then
             # Test packages sync the reviewed commit, never an unrelated main snapshot.
             sed -i "s@AdBlock-Pro-next/main/rules/@AdBlock-Pro-next/$ARTIFACT_SHA/rules/@" "$stage/scripts/rule-store.sh"
           fi
-          cp licenses/AWAvenue-GPL-3.0.txt licenses/curl-COPYING.txt licenses/openssl-LICENSE.txt "$stage/licenses/"
+          cp licenses/AWAvenue-GPL-3.0.txt licenses/curl-COPYING.txt licenses/openssl-LICENSE.txt licenses/cacert-MPL-2.0.txt "$stage/licenses/"
           cp bin/AdGuardHome bin/adblock-bootstrap bin/curl "$stage/bin/"
           cp bin/data/filters/10007.txt bin/data/filters/1791638912.txt "$stage/bin/data/filters/"
           chmod 755 "$stage/bin/AdGuardHome" "$stage/bin/adblock-bootstrap" "$stage/bin/curl"

@@ -91,6 +91,7 @@ unzip() {
   case "$3" in
     scripts/compat.sh) cat "$COMPAT_FIXTURE" ;;
     bin/curl) cat "$BUNDLED_CURL" ;;
+    certs/cacert.pem) printf '%s\\n' 'fixture-only-public-certificates' ;;
     *) return 1 ;;
   esac
 }
@@ -107,6 +108,36 @@ touch "$TMPDIR/modified"
   assert.equal(readFileSync(path.join(fixture.dir, 'selected-curl'), 'utf8').trim(), shellPath(path.join(fixture.dir, 'adblock-pro-curl')));
   assert.equal(existsSync(path.join(fixture.dir, 'modified')), true);
 });
+
+for (const ca of ['missing', 'empty']) {
+  test('installer rejects ' + ca + ' CA certificates before changing user data', t => {
+    const fixture = rootFixture(t);
+    fixture.addBusybox('Magisk');
+    const source = readFileSync(new URL('../customize.sh', import.meta.url), 'utf8');
+    const prefix = source.slice(0, source.indexOf('ui_print "[AdBlock Pro] Preparing'));
+    const script = `ui_print() { printf '%s\\n' "$*"; }
+abort() { echo "$1" >&2; exit 1; }
+command() { [ "$1" = -v ] && [ "$2" = iptables ] && return 0; builtin command "$@"; }
+unzip() {
+  case "$3" in
+    scripts/compat.sh) cat "$COMPAT_FIXTURE" ;;
+    bin/curl) printf '#!/bin/sh\\nexit 0\\n' ;;
+    certs/cacert.pem) ${ca === 'missing' ? 'return 1' : 'return 0'} ;;
+    *) return 1 ;;
+  esac
+}
+${prefix}
+touch "$TMPDIR/modified"
+`;
+    const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: {
+      ...fixture.env('Magisk'), TMPDIR: shellPath(fixture.dir),
+      COMPAT_FIXTURE: shellPath(fixture.compatFile), ZIPFILE: 'fixture.zip',
+    } });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout, /CA certificate bundle/);
+    assert.equal(existsSync(path.join(fixture.dir, 'modified')), false);
+  });
+}
 
 test('installer rejects a package that omits its bundled curl binary', t => {
   const fixture = rootFixture(t);
