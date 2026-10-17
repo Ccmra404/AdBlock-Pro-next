@@ -8,6 +8,8 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], sourceRenameUrl: '', sourceEditUrl: '', logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', logFilter: 'all' };
 Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', sharedUpdatedAt: 0, sharedError: '', sharedLoaded: false, sharedSearch: '', sharedPage: 0, apps: [], appsLoaded: false, appsLoading: false, appsError: '', appQuery: '', selectedApp: null, observeDuration: '10', observationResultsOpen: false, selectedObservationDomains: [] });
+Object.assign(state, { aiOpen: false, aiSettingsOpen: false, aiConfig: null, aiBusy: false, aiError: '', aiResults: [], aiSelected: [], aiPage: 0 });
+const AI_PENDING_KEY = 'abp-ai-job';
 const pages = { home: '总览', rules: '规则管理', lists: '名单', manage: '设置', logs: '运行日志' };
 const LOG_PAGE_SIZE = 10;
 const OBSERVATION_PAGE_SIZE = 10;
@@ -218,7 +220,7 @@ function managePage() {
   return `${heading('系统设置', '管理 DNS 接管、自动运行与维护')}
     <div class="stack"><section class="panel"><div class="panel-head"><div><h2 class="section-title">运行设置</h2><p class="section-sub">过滤暂停不会关闭 DNS 核心；DNS 接管可单独撤销</p></div></div><div class="rows">${row('globe','DNS 接管','控制本模块的 DNS 重定向规则',toggle('takeover',s?.dns_takeover === 'on','DNS 接管'))}${row('power','开机自动运行','关闭后下次开机不自动启动核心',toggle('autostart',s?.autostart !== 'off','开机自动运行'))}${row('refresh','每日自动更新','由 AdGuard Home 按每日周期更新规则',toggle('auto-update',s?.auto_update !== 'off','每日自动更新'))}</div><div class="notice warn" style="margin-top:14px">${icon('info')}<span>此模块只接管 IPv4 明文 DNS。私人 DNS、VPN、应用内 DoH/DoT 可能绕过过滤；IPv6 DNS 不接管。</span></div></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">运行维护</h2><p class="section-sub">诊断结果统一保存在运行日志中</p></div></div><div class="btn-row"><button class="btn" data-action="diagnose">${icon('activity')} 运行诊断</button><button class="btn" data-action="restart">${icon('refresh')} 重启 DNS 核心</button><button class="btn btn-danger" data-action="disable-takeover">${icon('power')} 紧急解除接管</button><button class="btn" data-nav="logs">查看运行日志</button></div></section>
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">管理入口</h2><p class="section-sub">规则高级配置由 AdGuard Home 原生后台提供</p></div></div><div class="action-grid"><a class="action-card" href="http://127.0.0.1:3000/" target="_blank" rel="noopener">${icon('external')}<span class="action-text"><strong>AdGuard Home 后台</strong><small>订阅、上游 DNS 与查询日志</small></span></a><button type="button" class="action-card" data-action="copy-gkd-link">${icon('activity')}<span class="action-text"><strong>GKD 项目</strong><small>复制项目链接，在浏览器中查看</small></span></button></div><p class="field-help">WebUI 不保存或展示 AdGuard Home 管理密码；首次登录凭据由安装包单独提供。</p></section></div>`;
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">管理入口</h2><p class="section-sub">规则高级配置由 AdGuard Home 原生后台提供</p></div></div><div class="action-grid"><a class="action-card" href="http://127.0.0.1:3000/" target="_blank" rel="noopener">${icon('external')}<span class="action-text"><strong>AdGuard Home 后台</strong><small>订阅、上游 DNS 与查询日志</small></span></a><button type="button" class="action-card" data-action="copy-gkd-link">${icon('activity')}<span class="action-text"><strong>GKD 项目</strong><small>复制项目链接，在浏览器中查看</small></span></button><button type="button" class="action-card" data-action="ai-settings">${icon('settings')}<span class="action-text"><strong>AI 域名分析</strong><small>DeepSeek 或自定义兼容接口</small></span></button></div><p class="field-help">WebUI 不保存或展示 AdGuard Home 管理密码；首次登录凭据由安装包单独提供。</p></section></div>`;
 }
 const actionNames = { '--sync-shared': '同步共享规则', 'import-lists': '导入个人名单', 'export-rules': '导出规则', '--update': '规则更新', '--pause': '暂停过滤核心', '--resume': '启动过滤核心', '--rollback': '恢复规则', '--rollback-history': '恢复历史规则', '--filtering': '过滤开关', '--takeover': 'DNS 接管', '--restart': '重启 DNS 核心', '--diagnose': '环境诊断', '--observe': '域名观察', diagnose: '环境诊断', 'set-mode': '切换过滤模式', 'set-source': '切换规则来源', 'add-source': '导入规则来源', 'remove-source': '删除规则来源', 'add-whitelist': '添加白名单', 'remove-whitelist': '删除白名单', 'add-blacklist': '添加黑名单', 'remove-blacklist': '删除黑名单', 'auto-update': '自动更新设置', autostart: '开机运行设置' };
 function logRow(line) {
@@ -279,13 +281,12 @@ function observationSelectionTools() {
   const visible = state.observationDomains.slice(start, start + OBSERVATION_PAGE_SIZE).map(item => item.domain).filter(validObservedDomain);
   const allVisibleSelected = visible.length > 0 && visible.every(domain => selected.includes(domain));
   const disabled = selected.length ? '' : 'disabled';
-  return `<div class="observe-selection-tools"><div class="observe-selection-head"><b>${fmt(selected.length)} 个已选</b><button class="btn" data-action="observe-select-visible" ${visible.length ? '' : 'disabled'}>${allVisibleSelected ? '取消本页选择' : '全选本页'}</button><button class="btn" data-action="observe-clear-selection" ${disabled}>清空选择</button></div><div class="btn-row observe-export-actions"><button class="btn" data-action="observe-copy-domains" ${disabled}>复制域名</button><button class="btn" data-action="observe-export" ${disabled}>导出 TXT</button><button class="btn" data-action="observe-copy-ai" ${disabled}>复制给 AI 分析</button><button class="btn" data-action="observe-import-personal" ${disabled}>导入个人拦截规则</button></div><p class="field-help">复制、导出和导入只处理勾选的域名，不含应用名、设备标识或原始 DNS 日志。提交共享候选请前往共享规则库。</p></div>`;
+  return `<div class="observe-selection-tools"><div class="observe-selection-head"><b>${fmt(selected.length)} 个已选</b><button class="btn" data-action="observe-select-visible" ${visible.length ? '' : 'disabled'}>${allVisibleSelected ? '取消本页选择' : '全选本页'}</button><button class="btn" data-action="observe-clear-selection" ${disabled}>清空选择</button></div><div class="btn-row observe-export-actions"><button class="btn" data-action="observe-copy-domains" ${disabled}>复制域名</button><button class="btn" data-action="observe-export" ${disabled}>导出 TXT</button><button class="btn" data-action="ai-open" ${disabled}>AI 分析</button><button class="btn" data-action="observe-copy-ai" ${disabled}>复制给 AI 分析</button><button class="btn" data-action="observe-import-personal" ${disabled}>导入个人拦截规则</button></div><p class="field-help">复制、导出和导入只处理勾选的域名，不含应用名、设备标识或原始 DNS 日志。提交共享候选请前往共享规则库。</p></div>`;
 }
 function observationAIPrompt() {
   return `请分析下面这些在短时 DNS 观察中出现的候选域名。观察期间可能混入后台应用请求，请将每项谨慎分为“疑似广告/跟踪”“疑似正常服务”“无法判断”，说明判断依据，不要声称仅凭域名可以确定。只返回输入中已有的域名，不要编造域名。最后只输出可导入的纯文本，不要代码围栏、解释文字或列表标记：\n[拦截名单]\n<仅放入有较强广告/跟踪证据的域名>\n\n[放行名单]\n<确认属于必要服务且用户希望放行的域名>\n\n候选域名：\n${selectedObservationDomains().join('\n')}`;
 }
-function communityIssueUrl() {
-  const domains = selectedObservationDomains();
+function communityIssueUrl(domains = selectedObservationDomains()) {
   if (!domains.length) throw new Error('请先在域名观察结果中选择候选域名');
   const title = `[规则候选] ${domains.length} 个域名`;
   const body = `## 候选域名\n\n每行一个完整域名。请只提交你愿意公开的域名。\n\n\`\`\`text\n${domains.join('\n')}\n\`\`\`\n\n## 观察说明\n\n来自短时 DNS 域名观察的候选，可能混入后台请求，尚待人工核验。\n\n## 隐私确认\n\n- [ ] 我检查过内容，只包含我愿意公开的域名与说明。\n- [ ] 我没有附上原始 DNS 查询日志、应用名称、设备标识、IP 地址、账号信息或其他个人数据。\n\n维护者会检查格式、重复项、误拦截风险及必要服务影响；未经审核的候选不会进入共享规则，也不会影响其他用户。`;
@@ -306,6 +307,7 @@ function renderObservationSelection() {
   const selected = selectedObservationDomains();
   $$('[data-observation-domain]').forEach(input => { input.checked = selected.includes(input.dataset.observationDomain); });
   const tools = $('#observation-selection-tools'); if (tools) tools.innerHTML = observationSelectionTools();
+  if (state.aiOpen) renderAI();
 }
 function observationRows() {
   if (!state.observationDomains.length) return `<div class="empty-state">观察期间没有发现新域名。可重新观察并在目标应用里复现广告。</div>`;
@@ -328,8 +330,101 @@ function observationPanel() {
   const status = active ? `<div id="observe-progress" class="notice observe-progress" role="status">${icon('activity')}<span>记录中 · 约 ${remaining} 秒后分析。${esc(observation.appLabel || '目标应用')}已重新打开，请复现广告，然后返回此页。</span></div>` : '';
   const error = state.observationError ? `<div class="notice warn observe-error">${icon('info')}<span>${esc(state.observationError)}${observation?.id ? ` <button class="btn btn-plain" data-action="observe-retry">重试读取</button>` : ''}</span></div>` : '';
   const results = observation && !active && !state.observationError ? `<details id="observe-results" class="observe-results" ${state.observationResultsOpen ? 'open' : ''}><summary class="observe-results-head"><b>观察结果</b><span class="tag">${fmt(state.observationDomains.length)} 个新域名</span></summary><p class="field-help">${esc(observation.appLabel || '本次观察')} · 新域名只是时间段内的候选，手机后台应用也可能产生请求。筛选并勾选域名后，可复制给 AI、导入个人规则，或前往共享库提交候选。</p><div id="observation-selection-tools">${observationSelectionTools()}</div><div id="observation-list" class="observe-list">${observationRows()}</div></details>` : '';
-  return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">域名观察</h2><p class="section-sub">选择本机应用，自动重新打开并观察开屏请求</p></div><div class="btn-row">${tag('仅本机处理')}<button class="btn" data-action="apps-refresh" ${state.busy || state.appsLoading ? 'disabled' : ''}>${state.appsLoading ? '读取中…' : '刷新应用'}</button></div></div><p class="field-help observe-help">输入应用名称或包名并选择匹配项。开始后会重新打开这个应用，结束后返回本页查看。窗口内也可能包含后台应用的 DNS 请求，结果只是候选；原查询日志设置会恢复，结果不会上传。</p><div class="observe-controls"><label class="observe-app-label">本机应用<input id="observe-app" class="field" maxlength="255" placeholder="例如：酷安" autocomplete="off" value="${esc(state.appQuery)}"></label><label class="observe-duration-label">观察时长<select id="observe-duration" class="field">${['5','10','15','30'].map(n => `<option value="${n}" ${state.observeDuration === n ? 'selected' : ''}>${n} 秒</option>`).join('')}</select></label><button class="btn btn-primary" data-action="observe-start" ${active || state.appsLoading || !state.selectedApp ? 'disabled' : ''}>${active ? '观察中…' : '开始并打开应用'}</button></div><div id="observe-app-results" class="app-results">${applicationResults()}</div>${status}${error}${results}</section>`;
+  return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">域名观察</h2><p class="section-sub">选择本机应用，自动重新打开并观察开屏请求</p></div><div class="btn-row">${tag('仅本机处理')}<button class="btn" data-action="apps-refresh" ${state.busy || state.appsLoading ? 'disabled' : ''}>${state.appsLoading ? '读取中…' : '刷新应用'}</button></div></div><p class="field-help observe-help">输入应用名称或包名并选择匹配项。开始后会重新打开这个应用，结束后返回本页查看。窗口内也可能包含后台应用的 DNS 请求，结果只是候选；原查询日志设置会恢复，结果不会自动上传；AI 分析需另行确认。</p><div class="observe-controls"><label class="observe-app-label">本机应用<input id="observe-app" class="field" maxlength="255" placeholder="例如：酷安" autocomplete="off" value="${esc(state.appQuery)}"></label><label class="observe-duration-label">观察时长<select id="observe-duration" class="field">${['5','10','15','30'].map(n => `<option value="${n}" ${state.observeDuration === n ? 'selected' : ''}>${n} 秒</option>`).join('')}</select></label><button class="btn btn-primary" data-action="observe-start" ${active || state.appsLoading || !state.selectedApp ? 'disabled' : ''}>${active ? '观察中…' : '开始并打开应用'}</button></div><div id="observe-app-results" class="app-results">${applicationResults()}</div>${status}${error}${results}<div id="ai-panel">${aiPanelMarkup()}</div></section>`;
 }
+function aiPanelMarkup() {
+  if (!state.aiOpen) return '';
+  const c = state.aiConfig;
+  const settings = state.aiSettingsOpen ? `<form id="ai-config-form" class="ai-form"><label>接口地址<input class="field" name="endpoint" type="url" required maxlength="2048" value="${esc(c?.endpoint || 'https://api.deepseek.com/chat/completions')}" placeholder="https://…/v1/chat/completions"></label><label>模型名称<input class="field" name="model" required maxlength="120" value="${esc(c?.model || 'deepseek-flash')}" placeholder="服务商提供的模型 ID"></label><label>API 密钥<input class="field" name="key" type="password" maxlength="4096" autocomplete="new-password" placeholder="${c?.configured ? '留空保留原密钥；换接口需重新填写' : '在本机填写，不要发到聊天或 GitHub'}"></label><p class="field-help">支持 OpenAI Chat Completions 兼容接口（需支持 JSON 输出），也可填写 OpenRouter、LiteLLM 或 New API 网关地址。密钥仅保存于本机 Root 私有目录。</p><div class="btn-row"><button class="btn btn-primary" ${state.aiBusy ? 'disabled' : ''}>保存配置</button><button class="btn" type="button" data-action="ai-deepseek" ${state.aiBusy ? 'disabled' : ''}>填入 DeepSeek 预设</button><button class="btn btn-danger" type="button" data-action="ai-clear" ${!c?.configured || state.aiBusy ? 'disabled' : ''}>删除密钥与配置</button></div></form>` : '';
+  const selected = selectedAIResults();
+  const total = state.aiResults.length, pages = Math.max(1, Math.ceil(total / 10));
+  state.aiPage = Math.max(0, Math.min(state.aiPage, pages - 1));
+  const labels = { ad: '疑似广告/跟踪', essential: '疑似正常服务', unknown: '无法判断' };
+  const results = total ? `<p class="field-help">AI 仅凭域名给出建议，可能误判。正常服务不可批量拦截，其余建议请逐条核对，默认不勾选。</p><div class="ai-results">${state.aiResults.slice(state.aiPage * 10, state.aiPage * 10 + 10).map(r => `<label class="observe-row"><input type="checkbox" data-ai-domain="${esc(r.domain)}" aria-label="选择 ${esc(r.domain)}" ${r.verdict === 'essential' ? 'disabled' : ''} ${selected.includes(r.domain) ? 'checked' : ''}><span class="observe-copy"><strong>${esc(r.domain)}</strong><small>${esc(r.reason)}</small></span>${tag(labels[r.verdict], r.verdict === 'ad' ? 'yellow' : '')}</label>`).join('')}</div><nav class="logs-pagination" aria-label="AI 结果分页"><button class="btn" data-action="ai-page" data-page="${state.aiPage - 1}" ${state.aiPage === 0 ? 'disabled' : ''}>上一页</button><span>第 ${state.aiPage + 1} / ${pages} 页 · 共 ${total} 条</span><button class="btn" data-action="ai-page" data-page="${state.aiPage + 1}" ${state.aiPage >= pages - 1 ? 'disabled' : ''}>下一页</button></nav><div class="btn-row"><button class="btn" data-action="ai-import" ${selected.length ? '' : 'disabled'}>加入个人拦截（${selected.length}）</button><button class="btn" data-action="ai-submit" ${selected.length ? '' : 'disabled'}>提交共享候选</button></div>` : '';
+  return `<div class="ai-panel"><div class="panel-head"><div><h3>AI 域名分析</h3><p class="section-sub">可选功能 · 分析后由你决定如何处理</p></div><button class="btn" data-action="ai-settings-toggle" ${state.aiBusy ? 'disabled' : ''}>接口设置</button></div>${settings}<p class="field-help ai-target">${c?.configured ? `${esc(c.model)} · ${esc(c.endpoint)}` : '先配置接口和密钥，再勾选观察结果中的域名。'}</p><div class="btn-row"><button class="btn btn-primary" data-action="ai-analyze" ${!c?.configured || state.aiBusy || !selectedObservationDomains().length ? 'disabled' : ''}>${state.aiBusy ? '正在分析…' : `分析所选域名（${selectedObservationDomains().length}）`}</button></div><p class="field-help" role="status">${state.aiBusy ? '独立后台任务运行中，通常需数十秒；可切换页面，返回后继续查看。' : '只发送所选域名，不发送应用名、IP、完整日志或设备信息。结果在设备上短暂保留。'}</p>${state.aiError ? `<div class="notice warn" role="alert">${esc(state.aiError)}</div>` : ''}${results}</div>`;
+}
+function renderAI() {
+  pageFragments.delete('lists');
+  const panel = $('#ai-panel'); if (panel) panel.innerHTML = aiPanelMarkup();
+}
+function aiPayload(value) { return btoa(String.fromCharCode(...new TextEncoder().encode(JSON.stringify(value)))); }
+async function aiCall(action, ...args) {
+  const r = await exec(`${JOB} ai-${action}${args.length ? ' ' + args.map(shellArg).join(' ') : ''}`);
+  if (Number(r.errno)) throw new Error(textOf(r) || 'AI 操作失败，请检查接口设置');
+  try { return JSON.parse(r.stdout); } catch { throw new Error('AI 组件返回格式无效，请升级模块'); }
+}
+async function openAI(settings = false) {
+  state.aiOpen = true; state.aiSettingsOpen = settings;
+  state.rulesView = 'local'; pageFragments.delete('lists');
+  if (state.page !== 'lists') await navigate('lists'); else render(true);
+  try { state.aiConfig = await aiCall('status'); state.aiSettingsOpen ||= !state.aiConfig.configured; state.aiError = ''; }
+  catch (e) { state.aiError = e.message; }
+  renderAI();
+}
+function normalizeAIEndpoint(raw) {
+  const u = new URL(String(raw).trim());
+  if (u.protocol !== 'https:' || u.username || u.password || u.search || u.hash) throw new Error('请填写不含账号或参数的 HTTPS 接口地址');
+  u.pathname = u.pathname.replace(/\/+$/, '');
+  if (!u.pathname.endsWith('/chat/completions')) u.pathname += '/chat/completions';
+  return u.href;
+}
+async function saveAIConfig(form) {
+  const data = new FormData(form), key = form.querySelector('[name="key"]');
+  const c = { endpoint: normalizeAIEndpoint(data.get('endpoint')), model: String(data.get('model') || '').trim(), key: String(data.get('key') || '').trim() };
+  try { state.aiConfig = await aiCall('config', aiPayload(c)); state.aiSettingsOpen = false; state.aiError = ''; toast('AI 配置已保存'); }
+  finally { if (key) key.value = ''; c.key = ''; }
+  renderAI();
+}
+function selectedAIResults() {
+  const allowed = new Set(state.aiResults.filter(r => r.verdict !== 'essential').map(r => r.domain));
+  return [...new Set(state.aiSelected)].filter(d => allowed.has(d) && validObservedDomain(d));
+}
+function validateAIResult(j) {
+  if (!Array.isArray(j.domains) || !j.domains.length || j.domains.length > 50 || j.domains.some(d => typeof d !== 'string' || !validObservedDomain(d)) || new Set(j.domains).size !== j.domains.length) throw new Error('AI 候选格式无效，未修改名单');
+  if (!Array.isArray(j.results) || j.results.length !== j.domains.length || new Set(j.results.map(r => r.domain)).size !== j.domains.length || j.results.some(r => !j.domains.includes(r.domain) || !['ad','essential','unknown'].includes(r.verdict) || typeof r.reason !== 'string' || [...r.reason].length > 240)) throw new Error('AI 结果与候选不匹配，未修改名单');
+  return j.results;
+}
+let aiMonitoring = false;
+async function monitorAI(id) {
+  if (aiMonitoring) return;
+  aiMonitoring = true; state.aiBusy = true;
+  try {
+    for (let attempt = 0; attempt < 55; attempt++) {
+      const j = await aiCall('poll', id);
+      if (j.status === 'success') { state.aiResults = validateAIResult(j); state.aiSelected = []; state.aiPage = 0; state.aiError = ''; return; }
+      if (j.status === 'failed') throw new Error(j.error || 'AI 分析失败，未修改名单');
+      if (!['queued','running'].includes(j.status)) throw new Error('AI 任务状态无效');
+      await sleep(2000);
+    }
+    throw new Error('AI 分析未完成，请稍后重新分析');
+  } catch (e) { state.aiError = e.message; }
+  finally { state.aiBusy = false; aiMonitoring = false; localStorage.removeItem(AI_PENDING_KEY); renderAI(); }
+}
+function requestAIAnalysis() {
+  if (state.aiBusy) return;
+  const domains = selectedObservationDomains(), c = state.aiConfig;
+  if (!c?.configured || !domains.length || domains.length > 50) { toast('请配置接口并选择 1–50 个域名'); return; }
+  // Freeze the consent snapshot before confirming an external request.
+  const target = { domains, endpoint: c.endpoint, model: c.model };
+  confirm('发送域名给 AI？', `将 ${domains.length} 个所选域名发送到 ${c.endpoint}，模型 ${c.model}。服务商会收到这些域名，可能产生 API 费用。不会发送完整日志，也不会自动修改名单。`, '确认并分析', async () => {
+    if (state.aiBusy) return;
+    const id = nextJobId(); state.aiBusy = true; state.aiError = ''; state.aiResults = []; state.aiSelected = []; renderAI();
+    try { await aiCall('start', id, aiPayload(target)); localStorage.setItem(AI_PENDING_KEY, id); void monitorAI(id); }
+    catch (e) { state.aiBusy = false; state.aiError = e.message; renderAI(); }
+  });
+}
+async function importAIResults() {
+  const domains = selectedAIResults(); if (!domains.length) return;
+  await Promise.all([loadList('whitelist', true), loadList('blacklist', true)]);
+  if (state.listErrors.whitelist || state.listErrors.blacklist) throw new Error('请先刷新本机名单，避免覆盖已有规则');
+  const preview = preparePersonalImport({ blacklist: domains, whitelist: [] });
+  const count = preview.lists.blacklist.length;
+  if (!count) { toast('所选域名已存在或与放行名单重叠，未修改名单'); return; }
+  confirm('加入个人拦截名单？', `合并导入 ${count} 个域名；保留已有名单并跳过放行项。AI 可能误判，请核对后操作。保存后执行规则更新生效。`, '合并导入', async () => {
+    try { await importPersonalLists(preview.lists); state.aiSelected = []; renderAI(); } catch (e) { toast(e.message); }
+  });
+}
+
 function logsPage() {
   const filters = [['all', '全部'], ['running', '进行中'], ['failure', '提醒'], ['success', '成功']];
   return `${heading('运行日志', '统一查看模块操作与环境诊断')}
@@ -1040,6 +1135,15 @@ document.addEventListener('click', async event => {
   if (!button || (state.busy && button.dataset.action !== 'theme' && !button.dataset.filter)) return;
   if (button.dataset.filter) { state.logFilter = button.dataset.filter; state.logPage = 0; $$('.log-filter').forEach(x => x.classList.toggle('selected', x === button)); renderLogList(); return; }
   switch (button.dataset.action) {
+    case 'ai-open': void openAI(); break;
+    case 'ai-settings': void openAI(true); break;
+    case 'ai-settings-toggle': state.aiSettingsOpen = !state.aiSettingsOpen; renderAI(); break;
+    case 'ai-deepseek': { const f = $('#ai-config-form'); if (f) { f.elements.endpoint.value = 'https://api.deepseek.com/chat/completions'; f.elements.model.value = 'deepseek-flash'; f.elements.key.value = ''; } break; }
+    case 'ai-clear': confirm('删除 AI 配置？', '删除本机保存的接口密钥，不影响 DNS 或个人规则。', '删除配置', async () => { try { await aiCall('clear'); state.aiConfig = null; state.aiSettingsOpen = true; renderAI(); } catch (e) { toast(e.message); } }); break;
+    case 'ai-analyze': requestAIAnalysis(); break;
+    case 'ai-page': state.aiPage = Math.max(0, Number(button.dataset.page) || 0); renderAI(); break;
+    case 'ai-import': importAIResults().catch(e => toast(e.message)); break;
+    case 'ai-submit': { const domains = selectedAIResults(); if (domains.length) confirm('准备共享候选草稿？', '所选域名将写入 GitHub 草稿链接。请仅选择愿意公开的域名；需你手动提交，审核通过后才会进入共享规则。', '复制草稿链接', async () => { try { await copyText(communityIssueUrl(domains)); toast('草稿链接已复制，请在浏览器检查并手动提交'); } catch (e) { toast(e.message); } }); break; }
     case 'theme': state.theme = state.theme === 'dark' ? 'light' : 'dark'; localStorage.setItem('abp-theme', state.theme); document.documentElement.dataset.theme = state.theme; break;
     case 'personal-rules-export': exportPersonalRules().catch(e => toast(e.message)); break;
     case 'personal-rules-import': $('#personal-rules-file')?.click(); break;
@@ -1150,6 +1254,11 @@ document.addEventListener('click', async event => {
 
 document.addEventListener('change', async event => {
   const input = event.target;
+  if (input.matches('[data-ai-domain]')) {
+    const domain = input.dataset.aiDomain;
+    state.aiSelected = input.checked ? [...new Set([...selectedAIResults(), domain])] : selectedAIResults().filter(d => d !== domain);
+    state.aiSelected = selectedAIResults(); renderAI(); return;
+  }
   if (input.matches('[data-observation-domain]')) {
     const domain = input.dataset.observationDomain;
     const selected = selectedObservationDomains();
@@ -1190,7 +1299,9 @@ document.addEventListener('change', async event => {
 document.addEventListener('submit', async event => {
   if (state.busy) { event.preventDefault(); return; }
   const form = event.target;
-  if (form.id === 'source-form') {
+  if (form.id === 'ai-config-form') {
+    event.preventDefault(); if (!state.aiBusy) { try { await saveAIConfig(form); } catch (e) { state.aiError = e.message; renderAI(); } }
+  } else if (form.id === 'source-form') {
     event.preventDefault(); const data = new FormData(form); const name = data.get('name')?.toString().trim(); const url = data.get('url')?.toString().trim();
     try { await runConfig('add-source', url, name); invalidateSources(); await loadSources(); form.reset(); toast('规则来源已导入；更新后生效'); } catch (e) { toast(e.message); }
   } else if (form.matches('.source-rename-form')) {
@@ -1223,6 +1334,9 @@ document.addEventListener('toggle', async event => {
 
 async function init() {
   render();
+  const aiPending = localStorage.getItem(AI_PENDING_KEY);
+  if (/^\d{1,20}$/.test(aiPending || '')) { state.aiOpen = true; void monitorAI(aiPending); }
+  else localStorage.removeItem(AI_PENDING_KEY);
   await Promise.allSettled([refreshStatus(true), loadSources(), loadList('whitelist'), loadList('blacklist')]);
   syncStatusView();
   const pending = localStorage.getItem('abp-pending-job');

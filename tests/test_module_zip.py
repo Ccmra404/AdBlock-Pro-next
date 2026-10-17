@@ -30,7 +30,7 @@ class ModuleZipTests(unittest.TestCase):
                     data = props.encode()
                 if name == 'certs/cacert.pem':
                     data = b'broken' if corrupt_ca else (Path(__file__).resolve().parents[1] / name).read_bytes()
-                if name in ['bin/AdGuardHome', 'bin/adblock-bootstrap', 'bin/curl']:
+                if name in ['bin/AdGuardHome', 'bin/adblock-bootstrap', 'bin/curl', 'bin/adblock-ai']:
                     data = bytearray(64)
                     data[:6] = b'\x7fELF\x02\x01'
                     struct.pack_into('<H', data, 18, 183 if arm else 62)
@@ -43,9 +43,14 @@ class ModuleZipTests(unittest.TestCase):
         validator.validate(self.fixture(), VERSION, 45)
 
     def test_credentials_and_unsafe_paths_are_rejected(self):
-        for name in ['admin.auth', 'bin/AdGuardHome.yaml', 'config/api.auth', '../other']:
+        for name in ['admin.auth', 'bin/AdGuardHome.yaml', 'config/api.auth', '../other', 'ai/config.json', 'private/ai/jobs/123/result.json']:
             with self.subTest(name=name), self.assertRaises(ValueError):
                 validator.validate(self.fixture(extra=name), VERSION, 45)
+
+    def test_missing_ai_component_or_license_is_rejected(self):
+        for name in ['bin/adblock-ai', 'licenses/go-openai-Apache-2.0.txt']:
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'missing installer'):
+                validator.validate(self.fixture(missing=name), VERSION, 45)
 
     def test_missing_compat_layer_is_rejected(self):
         with self.assertRaisesRegex(ValueError, 'missing installer'):
