@@ -13,7 +13,7 @@ VERSION = 'v0.13.0-rc.3-dev.abcdef0'
 
 
 class ModuleZipTests(unittest.TestCase):
-    def fixture(self, extra=None, missing='', arm=True, version=VERSION):
+    def fixture(self, extra=None, missing='', arm=True, version=VERSION, corrupt_ca=False):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         target = Path(folder.name) / 'candidate.zip'
@@ -24,6 +24,8 @@ class ModuleZipTests(unittest.TestCase):
                 data = b'fixture'
                 if name == 'module.prop':
                     data = f'id=bindhosts_personal\nversion={version}\nversionCode=45\n'.encode()
+                if name == 'certs/cacert.pem':
+                    data = b'broken' if corrupt_ca else (Path(__file__).resolve().parents[1] / name).read_bytes()
                 if name in ['bin/AdGuardHome', 'bin/adblock-bootstrap', 'bin/curl']:
                     data = bytearray(64)
                     data[:6] = b'\x7fELF\x02\x01'
@@ -47,9 +49,15 @@ class ModuleZipTests(unittest.TestCase):
 
     def test_missing_upstream_notices_are_rejected(self):
         for name in ['THIRD_PARTY_NOTICES.md', 'licenses/AWAvenue-GPL-3.0.txt',
-                     'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt']:
+                     'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt', 'licenses/cacert-MPL-2.0.txt']:
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'missing installer'):
                 validator.validate(self.fixture(missing=name), VERSION, 45)
+
+    def test_missing_or_modified_ca_bundle_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'missing installer'):
+            validator.validate(self.fixture(missing='certs/cacert.pem'), VERSION, 45)
+        with self.assertRaisesRegex(ValueError, 'certificate bundle checksum'):
+            validator.validate(self.fixture(corrupt_ca=True), VERSION, 45)
 
     def test_wrong_cpu_or_unmarked_test_version_is_rejected(self):
         for options in [{'arm': False}, {'version': 'v0.13.0-rc.3'}]:

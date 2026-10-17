@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Validate a candidate installer without executing it or reading device data."""
 import argparse
+import hashlib
 from pathlib import Path
 import re
+import ssl
 import struct
 import zipfile
 
@@ -15,11 +17,12 @@ REQUIRED = {
     'scripts/rule-store.sh', 'rules/shared-app-domains.txt',
     'scripts/footprint.sh', 'scripts/memory.sh', 'scripts/detach.sh', 'META-INF/com/google/android/update-binary',
     'bin/AdGuardHome', 'bin/adblock-bootstrap',
-    'bin/curl',
+    'bin/curl', 'certs/cacert.pem',
     'bin/data/filters/10007.txt', 'bin/data/filters/1791638912.txt',
     'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/AWAvenue-GPL-3.0.txt',
-    'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt',
+    'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt', 'licenses/cacert-MPL-2.0.txt',
 }
+CA_SHA256 = 'a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505'
 
 
 def validate(path, version, version_code):
@@ -37,6 +40,15 @@ def validate(path, version, version_code):
             raise ValueError('missing installer files: ' + ', '.join(sorted(REQUIRED - set(names))))
         if archive.testzip() is not None:
             raise ValueError('corrupt ZIP entry')
+        ca_data = archive.read('certs/cacert.pem')
+        if hashlib.sha256(ca_data).hexdigest() != CA_SHA256:
+            raise ValueError('incorrect CA certificate bundle checksum')
+        # Loading the PEM proves the package contains usable roots, not just a file.
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        pem = b'\n'.join(re.findall(rb'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', ca_data, re.S))
+        context.load_verify_locations(cadata=pem.decode('ascii'))
+        if not context.cert_store_stats()['x509_ca']:
+            raise ValueError('empty CA certificate store')
         props = dict(line.split('=', 1) for line in archive.read('module.prop').decode().splitlines() if '=' in line)
         if props.get('id') != 'bindhosts_personal':
             raise ValueError('module identity changed')

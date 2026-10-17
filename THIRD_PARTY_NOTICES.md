@@ -6,5 +6,6 @@ This project includes or redistributes the following upstream components and rul
 - **10007 filter snapshot**: `bin/data/filters/10007.txt`, from https://github.com/lingeringsound/10007_auto. Repository license metadata reports GPL-3.0.
 - **AWAvenue Ads Rule snapshot**: `bin/data/filters/1791638912.txt`, from https://github.com/TG-Twilight/AWAvenue-Ads-Rule. Repository license metadata reports GPL-3.0.
 - **curl 8.23.0**: ARM64 Android binary at `bin/curl`, built from the upstream source with OpenSSL 3.5.9. curl is licensed under the curl license; OpenSSL is licensed under Apache-2.0. Full license texts are included at `licenses/curl-COPYING.txt` and `licenses/openssl-LICENSE.txt`.
+- **Mozilla CA root certificates (2026-09-25)**: PEM bundle at `certs/cacert.pem`, distributed by https://curl.se/docs/caextract.html under MPL-2.0. Source, checksum and update instructions are in `certs/README.md`; the license is at `licenses/cacert-MPL-2.0.txt`.
 
 See each upstream repository for its complete license and current source. The original AdBlock Pro code is licensed under GPL-3.0-only. The maintainer-approved public app-domain snapshot is included at `rules/shared-app-domains.txt`; local personal lists, credentials and device query logs are not included.

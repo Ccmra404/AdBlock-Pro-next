@@ -26,12 +26,19 @@ test('PR ARM64 ZIP is always labelled a test build', () => {
   assert.match(workflow, /actions\/upload-artifact@v4/);
 });
 
+test('bundled curl trusts the installed PEM bundle instead of Android old-hash CA paths', () => {
+  const build = readFileSync(new URL('../tools/build_android_curl.sh', import.meta.url), 'utf8');
+  assert.match(build, /--with-ca-bundle=\/data\/adb\/adblockpro\/certs\/cacert\.pem/);
+  assert.match(build, /--without-ca-path/);
+  assert.match(workflow, /cp -a META-INF scripts webroot rules certs/);
+});
+
 test('changes to every installable file family trigger ARM64 package validation', () => {
   for (const pattern of [
     'tools/bootstrap/**', 'customize.sh', 'module.prop', 'action.sh',
     'service.sh', 'uninstall.sh', 'bindhosts.sh', 'webui-config.sh',
     'webui-job.sh', 'scripts/**', 'rules/**', 'settings.conf', 'webroot/**',
-    'META-INF/**', 'bin/AdGuardHome', 'bin/data/filters/**',
+    'META-INF/**', 'bin/AdGuardHome', 'bin/data/filters/**', 'certs/**',
   ]) {
     assert(triggers.includes('"' + pattern + '"'), pattern + ' must trigger packaging');
   }
