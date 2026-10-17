@@ -1,5 +1,5 @@
 # AdBlock Pro maintainer-reviewed app ad domains
-# revision: 2026101701
+# revision: 2026101702
 # Public domain list. Update the revision when reviewing a changed snapshot.
 ad-open2.fancydsp.com
 ads.app.qc-up.com
@@ -35,5 +35,7 @@ sf3-fe-tos.pglstatp-toutiao.com
 sf6-fe-tos.pglstatp-toutiao.com
 t2.fancyapi.com
 td-nexus.advlion.com
+v26-be-pack.pglstatp-toutiao.com
 vt.bidex.cn
+youku-dsp.youku.com
 yumao.puata.info
