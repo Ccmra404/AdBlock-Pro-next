@@ -54,7 +54,7 @@ test('switching between raw and AI results reuses the result without extra reque
 test('a new observation clears old AI suggestions and cannot overlap a running analysis', async () => {
   const h = harness(); ready(h); h.state.aiResults = result.results; h.state.aiBusy = true;
   await assert.rejects(h.startObservation(), /等待当前 AI/); assert.equal(h.state.aiResults.length, 2);
-  h.state.aiBusy = false; h.state.selectedApp = { label: '测试', packageName: 'app.example' };
+  h.state.aiBusy = false; h.state.status = { state: 'active' }; h.state.selectedApp = { label: '测试', packageName: 'app.example' };
   vm.runInContext('startJob = async () => {};', h.context);
   await h.startObservation(); assert.equal(h.state.aiResults.length, 0); assert.equal(h.state.aiOpen, false);
   assert.equal(h.pending.length, 0);
