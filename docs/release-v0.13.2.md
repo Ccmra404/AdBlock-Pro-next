@@ -16,7 +16,7 @@
 
 ## 验证及范围
 
-- 修复提交 `f5d1045` 的代码检查、245 项 Node 测试、24 项 Python 测试、Go 测试及 ARM64 ZIP 构建通过；证据见 [PR #18](https://github.com/Ccmra404/AdBlock-Pro-next/pull/18)。发布准备提交还需通过对应 CI。
+- 功能修复已通过代码检查、245 项 Node 测试、24 项 Python 测试、Go 测试及 ARM64 ZIP 构建；完整提交与验证记录见 [PR #18](https://github.com/Ccmra404/AdBlock-Pro-next/pull/18)。
 - 已离线复现 Android 旧哈希证书目录校验失败，并验证 PEM 证书文件可正常校验；电脑使用随包证书成功通过 HTTPS 获取共享规则。
 - 维护者反馈该修复测试包实机测试通过。未记录具体机型、Root 管理器和网络组合，因此不将此反馈扩大为所有设备兼容性结论。
 
