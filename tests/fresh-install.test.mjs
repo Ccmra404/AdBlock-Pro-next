@@ -27,6 +27,7 @@ function installFixture(t, family, preference, failWrite = false) {
   writeFileSync(path.join(stage, 'bin/AdGuardHome'), 'fixture-only-engine');
   writeFileSync(path.join(stage, 'bin/curl'), '#!/bin/sh\necho "curl fixture"\n');
   for (const file of ['10007.txt', '1791638912.txt']) writeFileSync(path.join(stage, 'bin/data/filters', file), '||ads.cache.example^\n');
+  writeFileSync(path.join(stage, 'bin/adblock-ai'), '#!/bin/sh\necho AI-fixture\n');
   const config = readFileSync(new URL('../tools/bootstrap/main.go', import.meta.url), 'utf8').match(/const initialConfig = `([\s\S]*?)`/)[1];
   // Fixture only: Linux ARM64 CI separately runs the real Go generator/core.
   writeFileSync(path.join(stage, 'bin/adblock-bootstrap'), '#!/bin/sh\ncat > "$1" <<\'ABP_CONFIG\'\n' + remap(config.replace('%s', 'fixture-only-hash')) + '\nABP_CONFIG\nprintf "fixture-only-credential\\n" > "$2"\n');
@@ -50,6 +51,9 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     assert.equal(readFileSync(path.join(f.runtime, 'certs/cacert.pem'), 'utf8'), readFileSync(new URL('../certs/cacert.pem', import.meta.url), 'utf8'));
     assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'on\n');
     assert.match(installed.stdout, /DNS takeover: on \(initialized\)/);
+    assert.match(readFileSync(path.join(f.runtime, 'bin/adblock-ai'), 'utf8'), /AI-fixture/);
+    mkdirSync(path.join(f.state, 'ai'), { recursive: true });
+    writeFileSync(path.join(f.state, 'ai/config.json'), 'fixture-private-config');
     const personal = path.join(f.runtime, 'bin/userfilters/adblock-pro-user-rules.txt');
     const defaults = readFileSync(new URL('../config-blacklist.txt', import.meta.url), 'utf8').split('\n').filter(row => row && !row.startsWith('#'));
     const rules = readFileSync(personal, 'utf8').split('\n').filter(row => row.startsWith('||'));
@@ -70,6 +74,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), 'custom.personal.example\ncustom.personal.example\n');
     assert.equal(readFileSync(path.join(f.runtime, 'bin/userfilters/adblock-pro-shared-app-rules.txt'), 'utf8'), shared);
     assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'off\n');
+    assert.equal(readFileSync(path.join(f.state, 'ai/config.json'), 'utf8'), 'fixture-private-config');
     assert.match(again.stdout, /DNS takeover: off \(preserved\)/);
     assert.equal(readFileSync(personal, 'utf8').split('||custom.personal.example^').length, 2);
     assert.match(readFileSync(personal, 'utf8'), /@@\|\|login.personal.example\^/);

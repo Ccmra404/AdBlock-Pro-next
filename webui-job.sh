@@ -32,6 +32,26 @@ prune_jobs() {
 }
 
 case "$1" in
+ ai-status|ai-config|ai-clear|ai-start|ai-poll)
+  ai=/data/adb/adblockpro/bin/adblock-ai
+  [ -x "$ai" ] || { echo 'AI 分析组件不可用，请安装包含此功能的测试包。' >&2; exit 1; }
+  case "$1" in
+   ai-status) exec "$ai" status ;;
+   ai-clear) exec "$ai" clear ;;
+   ai-poll) case "$2" in ''|*[!0-9]*) exit 1;; esac; [ ${#2} -le 20 ] || exit 1; exec "$ai" poll "$2" ;;
+   ai-config) payload=$2; operation=configure ;;
+   ai-start) case "$2" in ''|*[!0-9]*) exit 1;; esac; [ ${#2} -le 20 ] || exit 1; payload=$3; operation=start ;;
+  esac
+  case "$payload" in ''|*[!A-Za-z0-9+/=]*) exit 1;; esac
+  [ ${#payload} -le 24000 ] || exit 1
+  # AI credentials and domain payloads must never enter operation logs.
+  if [ "$operation" = start ]; then
+   printf '%s' "$payload" | "$BB" base64 -d | "$ai" start "$2"
+  else
+   printf '%s' "$payload" | "$BB" base64 -d | "$ai" configure
+  fi
+  exit "$?"
+  ;;
  config)
   case "$2" in
    list-whitelist|list-blacklist|shared-rules) ;;

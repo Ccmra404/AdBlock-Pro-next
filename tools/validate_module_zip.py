@@ -17,10 +17,11 @@ REQUIRED = {
     'scripts/rule-store.sh', 'rules/shared-app-domains.txt',
     'scripts/footprint.sh', 'scripts/memory.sh', 'scripts/detach.sh', 'META-INF/com/google/android/update-binary',
     'bin/AdGuardHome', 'bin/adblock-bootstrap',
-    'bin/curl', 'certs/cacert.pem',
+    'bin/curl', 'bin/adblock-ai', 'certs/cacert.pem',
     'bin/data/filters/10007.txt', 'bin/data/filters/1791638912.txt',
     'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/AWAvenue-GPL-3.0.txt',
     'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt', 'licenses/cacert-MPL-2.0.txt',
+    'licenses/go-openai-Apache-2.0.txt',
 }
 CA_SHA256 = 'a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505'
 
@@ -36,6 +37,8 @@ def validate(path, version, version_code):
                 raise ValueError('unsafe ZIP path')
             if re.search(r'(^|/)(admin\.auth|AdGuardHome\.yaml|[^/]+\.auth)$', name):
                 raise ValueError('private credentials/configuration in ZIP')
+            if 'ai' in parts[:-1]:
+                raise ValueError('private AI configuration/results in ZIP')
         if not REQUIRED.issubset(names):
             raise ValueError('missing installer files: ' + ', '.join(sorted(REQUIRED - set(names))))
         if archive.testzip() is not None:
@@ -56,7 +59,7 @@ def validate(path, version, version_code):
             raise ValueError('incorrect candidate version metadata')
         if props.get('updateJson') != 'https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest/download/update.json':
             raise ValueError('incorrect Root-manager update URL')
-        for name in ['bin/AdGuardHome', 'bin/adblock-bootstrap', 'bin/curl']:
+        for name in ['bin/AdGuardHome', 'bin/adblock-bootstrap', 'bin/curl', 'bin/adblock-ai']:
             with archive.open(name) as binary:
                 header = binary.read(64)
             if len(header) < 64 or header[:6] != b'\x7fELF\x02\x01' or struct.unpack_from('<H', header, 18)[0] != 183:
