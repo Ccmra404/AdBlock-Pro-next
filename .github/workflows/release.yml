@@ -205,4 +205,8 @@ jobs:
           notes="docs/release-$TAG.md"
           test -s "$notes" || { echo "Missing release notes: $notes" >&2; exit 1; }
           cp "$notes" /tmp/release-notes.md
+          if [ "$CHANNEL" = stable ]; then
+            cp "$notes" dist/changelog.md
+            python3 tools/module_update.py --module-prop module.prop --tag "$TAG" --output dist/update.json
+          fi
           gh release create "$TAG" dist/* --target "$GITHUB_SHA" --title "AdBlock Pro $TAG ($build_type)" --notes-file /tmp/release-notes.md --prerelease="$prerelease" --latest="$latest"

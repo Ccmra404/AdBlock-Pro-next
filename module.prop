@@ -4,3 +4,4 @@ version=v0.13.2
 versionCode=48
 author=Ccmra
 description=AdGuard Home DNS filtering for KernelSU, Magisk and APatch
+updateJson=https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest/download/update.json

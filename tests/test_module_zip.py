@@ -13,7 +13,8 @@ VERSION = 'v0.13.0-rc.3-dev.abcdef0'
 
 
 class ModuleZipTests(unittest.TestCase):
-    def fixture(self, extra=None, missing='', arm=True, version=VERSION, corrupt_ca=False):
+    def fixture(self, extra=None, missing='', arm=True, version=VERSION, corrupt_ca=False,
+                update_url='https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest/download/update.json'):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         target = Path(folder.name) / 'candidate.zip'
@@ -23,7 +24,10 @@ class ModuleZipTests(unittest.TestCase):
                 info.external_attr = 0o100755 << 16
                 data = b'fixture'
                 if name == 'module.prop':
-                    data = f'id=bindhosts_personal\nversion={version}\nversionCode=45\n'.encode()
+                    props = f'id=bindhosts_personal\nversion={version}\nversionCode=45\n'
+                    if update_url is not None:
+                        props += 'updateJson=' + update_url + '\n'
+                    data = props.encode()
                 if name == 'certs/cacert.pem':
                     data = b'broken' if corrupt_ca else (Path(__file__).resolve().parents[1] / name).read_bytes()
                 if name in ['bin/AdGuardHome', 'bin/adblock-bootstrap', 'bin/curl']:
@@ -58,6 +62,11 @@ class ModuleZipTests(unittest.TestCase):
             validator.validate(self.fixture(missing='certs/cacert.pem'), VERSION, 45)
         with self.assertRaisesRegex(ValueError, 'certificate bundle checksum'):
             validator.validate(self.fixture(corrupt_ca=True), VERSION, 45)
+
+    def test_missing_or_unexpected_update_endpoint_is_rejected(self):
+        for url in [None, 'http://example.org/update.json', 'https://example.org/update.json']:
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, 'Root-manager update URL'):
+                validator.validate(self.fixture(update_url=url), VERSION, 45)
 
     def test_wrong_cpu_or_unmarked_test_version_is_rejected(self):
         for options in [{'arm': False}, {'version': 'v0.13.0-rc.3'}]:

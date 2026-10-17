@@ -54,6 +54,8 @@ def validate(path, version, version_code):
             raise ValueError('module identity changed')
         if props.get('version') != version or props.get('versionCode') != str(version_code):
             raise ValueError('incorrect candidate version metadata')
+        if props.get('updateJson') != 'https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest/download/update.json':
+            raise ValueError('incorrect Root-manager update URL')
         for name in ['bin/AdGuardHome', 'bin/adblock-bootstrap', 'bin/curl']:
             with archive.open(name) as binary:
                 header = binary.read(64)
