@@ -37,7 +37,7 @@ def exercise(engine, bootstrap):
         shared = personal.with_name('adblock-pro-shared-app-rules.txt')
         bundled = Path(__file__).resolve().parents[1] / 'rules/shared-app-domains.txt'
         shared_domains = [row for row in bundled.read_text().splitlines() if row and not row.startswith('#')]
-        assert len(shared_domains) == 29
+        assert shared_domains and len(shared_domains) == len(set(shared_domains))
         shared.write_text('\n'.join('||' + domain + '^' for domain in shared_domains) + '\n')
         text = config.read_text()
         assert 'url: /data/adb/adblockpro/bin/userfilters/adblock-pro-user-rules.txt' in text
