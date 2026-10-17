@@ -56,7 +56,8 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     assert.equal(rules.length, defaults.length);
     assert.deepEqual(defaults, []);
     const shared = readFileSync(path.join(f.runtime, 'bin/userfilters/adblock-pro-shared-app-rules.txt'), 'utf8');
-    assert.equal(shared.split('\n').filter(row => row.startsWith('||')).length, 29);
+    const expectedShared = readFileSync(new URL('../rules/shared-app-domains.txt', import.meta.url), 'utf8').split(/\r?\n/).filter(row => row && !row.startsWith('#')).map(domain => '||' + domain + '^').sort();
+    assert.deepEqual(shared.trim().split('\n').sort(), expectedShared);
     assert.match(shared, /\|\|adsmind\.ugdtimg\.com\^/);
     assert.deepEqual(rules, [...new Set(defaults.map(domain => '||' + domain + '^'))].sort());
     assert.match(readFileSync(path.join(f.runtime, 'bin/AdGuardHome.yaml'), 'utf8'), new RegExp('url: ' + shellPath(personal).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
