@@ -11,12 +11,54 @@ function harness() {
     localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) }, window: {},
     exec: command => new Promise(resolve => pending.push({ command, resolve })), setTimeout, clearTimeout, setInterval() {}, requestAnimationFrame() {} });
   vm.runInContext(source, context);
-  return { context, pending, handlers, storage, nodes, ...vm.runInContext('({state,aiPanelMarkup,normalizeAIEndpoint,requestAIAnalysis,monitorAI,validateAIResult,selectedAIResults,importAIResults,communityIssueUrl,aiPayload,saveAIConfig})', context) };
+  return { context, pending, handlers, storage, nodes, ...vm.runInContext('({state,aiPanelMarkup,aiSettingsMarkup,managePage,observationSelectionTools,startObservation,openAI,normalizeAIEndpoint,requestAIAnalysis,monitorAI,validateAIResult,selectedAIResults,importAIResults,communityIssueUrl,aiPayload,saveAIConfig})', context) };
 }
 const result = { domains: ['ads.example', 'login.example'], results: [{ domain: 'ads.example', verdict: 'ad', reason: '疑似广告' }, { domain: 'login.example', verdict: 'essential', reason: '登录服务' }] };
 function ready(h) {
   Object.assign(h.state, { aiOpen: true, aiConfig: { configured: true, endpoint: 'https://api.deepseek.com/chat/completions', model: 'deepseek-flash' }, observationDomains: [{ domain: 'ads.example' }], selectedObservationDomains: ['ads.example'] });
 }
+test('observation AI action opens consent directly, and rapid clicks share the status read', async () => {
+  const h = harness(); ready(h); h.state.page = 'lists';
+  const a = h.openAI(), b = h.openAI(); assert.equal(h.pending.length, 1);
+  h.pending.shift().resolve({ errno: 0, stdout: JSON.stringify(h.state.aiConfig) });
+  await Promise.all([a, b]);
+  assert.match(h.nodes.get('#modal').innerHTML, /发送域名给 AI/);
+  assert.equal(h.pending.length, 0); assert.equal(h.state.page, 'lists');
+});
+test('unconfigured analysis routes to settings without starting a request', async () => {
+  const h = harness(); ready(h);
+  vm.runInContext('navigate = page => { state.page = page; }; render = () => {};', h.context);
+  let revealed = 0; h.nodes.set('#ai-settings-panel', { innerHTML: '', scrollIntoView() { revealed++; } });
+  const opening = h.openAI(); h.pending.shift().resolve({ errno: 0, stdout: '{"configured":false}' }); await opening;
+  assert.equal(h.state.page, 'manage'); assert.equal(h.state.aiSettingsOpen, true); assert.equal(revealed, 1);
+  assert.match(h.nodes.get('#ai-settings-panel').innerHTML, /id="ai-config-form"/);
+  assert.equal(h.pending.length, 0); assert.equal(h.nodes.get('#modal').innerHTML, undefined);
+});
+test('settings and result surfaces do not repeat configuration or the analysis button', () => {
+  const h = harness(); ready(h); h.state.aiSettingsOpen = true; h.state.aiResults = result.results;
+  h.state.lists.blacklist = ['ads.example'];
+  assert.match(h.observationSelectionTools(), /AI 分析所选/);
+  const results = h.aiPanelMarkup(); assert.match(results, /AI 分析结果/); assert.match(results, /已保存到个人名单/);
+  assert.doesNotMatch(results, /ai-config-form|ai-analyze|接口地址|name="key"/);
+  assert.match(h.aiSettingsMarkup(), /ai-config-form/);
+  assert.match(h.managePage(), /id="ai-settings-panel"/);
+});
+test('switching between raw and AI results reuses the result without extra requests', async () => {
+  const h = harness(); ready(h); h.state.aiResults = result.results;
+  const raw = { open: false, hidden: true, classList: { toggle(_, value) { raw.hidden = value; } } }; h.nodes.set('#observe-results', raw);
+  const click = action => h.handlers.click({ target: { closest: selector => selector.includes('[data-action]') ? { dataset: { action } } : null } });
+  await click('ai-back-observation'); assert.equal(h.state.aiOpen, false); assert.equal(raw.open, true); assert.equal(raw.hidden, false);
+  await click('ai-view-results'); assert.equal(h.state.aiOpen, true); assert.equal(raw.hidden, true);
+  assert.equal(h.pending.length, 0); assert.equal(h.state.aiResults.length, 2);
+});
+test('a new observation clears old AI suggestions and cannot overlap a running analysis', async () => {
+  const h = harness(); ready(h); h.state.aiResults = result.results; h.state.aiBusy = true;
+  await assert.rejects(h.startObservation(), /等待当前 AI/); assert.equal(h.state.aiResults.length, 2);
+  h.state.aiBusy = false; h.state.selectedApp = { label: '测试', packageName: 'app.example' };
+  vm.runInContext('startJob = async () => {};', h.context);
+  await h.startObservation(); assert.equal(h.state.aiResults.length, 0); assert.equal(h.state.aiOpen, false);
+  assert.equal(h.pending.length, 0);
+});
 test('base URLs are normalized without accepting HTTP, credentials or query parameters', () => {
   const h = harness();
   assert.equal(h.normalizeAIEndpoint('https://gateway.example/v1/'), 'https://gateway.example/v1/chat/completions');
