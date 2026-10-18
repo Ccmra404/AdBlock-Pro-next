@@ -6,6 +6,7 @@ import vm from 'node:vm';
 const appSource = readFileSync(new URL('../webroot/app.js', import.meta.url), 'utf8')
   .replace(/^import[^\n]*\n/, '').replace(/\ninit\(\);/, '\n');
 const jobSource = readFileSync(new URL('../webui-job.sh', import.meta.url), 'utf8');
+const installer = readFileSync(new URL('../customize.sh', import.meta.url), 'utf8');
 const debugScript = readFileSync(new URL('../scripts/adb-debug.sh', import.meta.url), 'utf8');
 const workflow = readFileSync(new URL('../.github/workflows/debug-release.yml', import.meta.url), 'utf8');
 const debugDocs = readFileSync(new URL('../docs/adb-debug.md', import.meta.url), 'utf8');
@@ -85,6 +86,8 @@ test('debug storage is opt-in, validates a bounded TSV, and uses private atomic 
   assert.match(debugScript, /latest-observation\.tsv/);
   assert.match(debugScript, /dns_listener\|dns_listener_udp\|dns_listener_tcp\|dns_api/);
   assert.match(debugScript, /86400/);
+  assert.match(installer, /scripts\/adb-debug\.sh" -d "\$MODPATH/);
+  assert.match(installer, /if unzip -Z1 "\$ZIPFILE" \| grep -Fxq 'debug-build'; then/);
   assert.doesNotMatch(debugScript, /debug\.log|AdGuardHome\.yaml|admin\.auth|ip addr|iptables -t nat -L/);
 });
 
