@@ -3,10 +3,11 @@ import { exec, listApplications } from './kernelsu.js';
 const MODULE_DIR = '/data/adb/modules/bindhosts_personal';
 const COMMAND = `sh ${MODULE_DIR}/bindhosts.sh`;
 const JOB = `sh ${MODULE_DIR}/webui-job.sh`;
+const DEBUG_BUILD = window.ABP_DEBUG_BUILD === true;
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], sourceRenameUrl: '', sourceEditUrl: '', logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', observationTruncated: false, logFilter: 'all' };
+const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], sourceRenameUrl: '', sourceEditUrl: '', logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', observationTruncated: false, debugSaveError: '', logFilter: 'all' };
 Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', sharedUpdatedAt: 0, sharedError: '', sharedLoaded: false, sharedSearch: '', sharedPage: 0, apps: [], appsLoaded: false, appsLoading: false, appsError: '', appQuery: '', selectedApp: null, observeDuration: '10', observationResultsOpen: false, selectedObservationDomains: [] });
 Object.assign(state, { aiOpen: false, aiSettingsOpen: false, aiConfig: null, aiBusy: false, aiError: '', aiResults: [], aiSelected: [], aiPage: 0, personalApplyMessage: '', personalApplyError: false });
 const AI_PENDING_KEY = 'abp-ai-job';
@@ -332,7 +333,8 @@ function observationPanel() {
   const status = active ? `<div id="observe-progress" class="notice observe-progress" role="status">${icon('activity')}<span>记录中 · 约 ${remaining} 秒后分析。${esc(observation.appLabel || '目标应用')}已重新打开，请复现广告，然后返回此页。</span></div>` : '';
   const error = state.observationError ? `<div class="notice warn observe-error">${icon('info')}<span>${esc(state.observationError)}${observation?.id ? ` <button class="btn btn-plain" data-action="observe-retry">重试读取</button>` : ''}</span></div>` : '';
   const truncation = state.observationTruncated ? '<div class="notice warn" role="status">请求量较高或后续分页读取失败，本次最多读取 2,000 条 DNS 记录，结果可能不完整。</div>' : '';
-  const results = observation && !active && !state.observationError ? `<details id="observe-results" class="observe-results${state.aiOpen && (state.aiBusy || state.aiResults.length) ? ' hidden' : ''}" ${state.observationResultsOpen ? 'open' : ''}><summary class="observe-results-head"><b>观察结果</b><span class="tag">${fmt(state.observationDomains.length)} 个域名</span></summary><p class="field-help">${esc(observation.appLabel || '本次观察')} · 显示观察窗口内查到的域名，重复请求合并计数；以前出现过的域名再次查询也会显示。观察记录来自整台设备的 DNS，可能混入后台应用请求；缓存、应用自带 DoH/HTTPDNS 或绕过模块的 VPN 请求可能不可见。</p>${truncation}<div id="observation-selection-tools">${observationSelectionTools()}</div><div id="observation-list" class="observe-list">${observationRows()}</div></details>` : '';
+  const debugNotice = DEBUG_BUILD && observation && !active ? `<p class="field-help">${state.debugSaveError ? esc(state.debugSaveError) : '调试版会在本机保留脱敏后的域名摘要 24 小时，供电脑通过 ADB 读取；不保存原始 DNS 日志。'}</p>` : '';
+  const results = observation && !active && !state.observationError ? `<details id="observe-results" class="observe-results${state.aiOpen && (state.aiBusy || state.aiResults.length) ? ' hidden' : ''}" ${state.observationResultsOpen ? 'open' : ''}><summary class="observe-results-head"><b>观察结果</b><span class="tag">${fmt(state.observationDomains.length)} 个域名</span></summary><p class="field-help">${esc(observation.appLabel || '本次观察')} · 显示观察窗口内查到的域名，重复请求合并计数；以前出现过的域名再次查询也会显示。观察记录来自整台设备的 DNS，可能混入后台应用请求；缓存、应用自带 DoH/HTTPDNS 或绕过模块的 VPN 请求可能不可见。</p>${truncation}${debugNotice}<div id="observation-selection-tools">${observationSelectionTools()}</div><div id="observation-list" class="observe-list">${observationRows()}</div></details>` : '';
   return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">域名观察</h2><p class="section-sub">选择本机应用，自动重新打开并观察开屏请求</p></div><div class="btn-row">${tag('仅本机处理')}<button class="btn" data-action="apps-refresh" ${state.busy || state.appsLoading ? 'disabled' : ''}>${state.appsLoading ? '读取中…' : '刷新应用'}</button></div></div><p class="field-help observe-help">输入应用名称或包名并选择匹配项。开始后会重新打开这个应用，结束后返回本页查看。这里只能记录经过 AdGuard Home 的 DNS 请求；结果不会自动上传，AI 分析需另行确认。</p><div class="observe-controls"><label class="observe-app-label">本机应用<input id="observe-app" class="field" maxlength="255" placeholder="例如：酷安" autocomplete="off" value="${esc(state.appQuery)}"></label><label class="observe-duration-label">观察时长<select id="observe-duration" class="field">${['5','10','15','30'].map(n => `<option value="${n}" ${state.observeDuration === n ? 'selected' : ''}>${n} 秒</option>`).join('')}</select></label><button class="btn btn-primary" data-action="observe-start" ${active || state.appsLoading || !state.selectedApp ? 'disabled' : ''}>${active ? '观察中…' : '开始并打开应用'}</button></div><div id="observe-app-results" class="app-results">${applicationResults()}</div>${status}${error}${results}<div id="ai-panel">${aiPanelMarkup()}</div></section>`;
 }
 function aiSettingsMarkup() {
@@ -911,6 +913,34 @@ function parseObservationSnapshot(raw, startedAt) {
   }
   return { domains: [...domains.values()].sort((a, b) => b.count - a.count || b.time - a.time), truncated };
 }
+function observationDebugText(domains, startedAt, sourceTruncated = false) {
+  const validDomains = domains.filter(item => validObservedDomain(String(item?.domain || '')));
+  const included = validDomains.slice(0, 200);
+  const lines = [
+    `captured_at\t${Math.floor(Date.now() / 1000)}`,
+    `started_at\t${Math.floor(Number(startedAt) / 1000)}`,
+    `domain_count\t${validDomains.length}`,
+    `included_count\t${included.length}`,
+    `source_truncated\t${sourceTruncated ? 1 : 0}`,
+    'domain\trequests\tlast_seen\treason\tfilter_id',
+  ];
+  for (const item of included) {
+    const count = Math.max(0, Math.floor(Number(item.count) || 0));
+    const lastSeen = Math.max(0, Math.floor(Number(item.time) / 1000) || 0);
+    const reason = /^[A-Za-z0-9_-]{0,64}$/.test(String(item.reason || '')) ? String(item.reason || '') : '';
+    const filterId = /^[0-9]{1,12}$/.test(String(item.filterId || '')) ? String(item.filterId) : '';
+    lines.push(`${item.domain}\t${count}\t${lastSeen}\t${reason}\t${filterId}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+async function saveObservationDebug(domains, startedAt, sourceTruncated = false) {
+  if (!DEBUG_BUILD) return;
+  const payload = observationDebugText(domains, startedAt, sourceTruncated);
+  const encoded = btoa(payload);
+  if (encoded.length > 100000) throw new Error('本次观察结果过大，未保存调试摘要');
+  const result = await exec(`${JOB} debug-save ${shellArg(encoded)}`);
+  if (Number(result.errno)) throw new Error(textOf(result) || '调试摘要保存失败');
+}
 async function loadObservationResult(id) {
   const result = await exec(`${JOB} observe-result ${id}`);
   if (Number(result.errno)) throw new Error(textOf(result) || '无法读取观察结果');
@@ -919,6 +949,11 @@ async function loadObservationResult(id) {
   const snapshot = parseObservationSnapshot(result.stdout || '', Number(saved.startedAt));
   state.observationDomains = snapshot.domains;
   state.observationTruncated = snapshot.truncated;
+  if (DEBUG_BUILD) {
+    state.debugSaveError = '';
+    try { await saveObservationDebug(state.observationDomains, saved.startedAt, state.observationTruncated); }
+    catch { state.debugSaveError = '调试摘要保存失败；页面观察结果仍可正常查看。'; }
+  }
   state.selectedObservationDomains = [];
   state.observationPage = 0;
   state.observationResultsOpen = false;

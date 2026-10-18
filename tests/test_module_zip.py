@@ -56,6 +56,10 @@ class ModuleZipTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'missing installer'):
             validator.validate(self.fixture(missing='scripts/compat.sh'), VERSION, 45)
 
+    def test_debug_interface_is_included_in_installable_archives(self):
+        with self.assertRaisesRegex(ValueError, 'missing installer'):
+            validator.validate(self.fixture(missing='scripts/adb-debug.sh'), VERSION, 45)
+
     def test_missing_upstream_notices_are_rejected(self):
         for name in ['THIRD_PARTY_NOTICES.md', 'licenses/AWAvenue-GPL-3.0.txt',
                      'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt', 'licenses/cacert-MPL-2.0.txt']:
