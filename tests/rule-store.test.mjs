@@ -112,10 +112,22 @@ test('failed second personal-file rename restores both previous lists', t=>{
 test('exports preserve separate scopes and refuse overwriting a prior download', t=>{
   const f=fixture(t); assert.equal(f.run('init').status,0);
   assert.equal(f.run('export','local','123').status,0);
-  const target=path.join(f.dir,'exports/adblock-pro-local-rules-123.txt');
+  const target=path.join(f.dir,'exports/AdBlock-Pro-personal-rules-123.txt');
   assert.match(readFileSync(target,'utf8'),/\[拦截名单\][\s\S]*ads.local.example[\s\S]*\[放行名单\][\s\S]*login.local.example/);
   assert.notEqual(f.run('export','local','123').status,0);
   assert.equal(f.run('export','shared','124').status,0);
-  assert.match(readFileSync(path.join(f.dir,'exports/adblock-pro-shared-rules-124.txt'),'utf8'),/# revision:/);
+  assert.match(readFileSync(path.join(f.dir,'exports/AdBlock-Pro-shared-rules-124.txt'),'utf8'),/# revision:/);
   assert.equal(existsSync(path.join(f.state,'shared-app-domains.txt')),true);
+});
+
+test('logs and observed-domain exports share the module folder and refuse overwrites', t=>{
+  const f=fixture(t);
+  const logs=Buffer.from('[{"status":"success"}]').toString('base64');
+  const domains=Buffer.from('ads.example\n').toString('base64');
+  assert.equal(f.run('write','operation-logs','125',logs).status,0);
+  assert.equal(readFileSync(path.join(f.dir,'exports/AdBlock-Pro-operation-logs-125.json'),'utf8'),'[{"status":"success"}]');
+  assert.equal(f.run('write','observed-domains','126',domains).status,0);
+  assert.equal(readFileSync(path.join(f.dir,'exports/AdBlock-Pro-observed-domains-126.txt'),'utf8'),'ads.example\n');
+  assert.notEqual(f.run('write','observed-domains','126',domains).status,0);
+  assert.notEqual(f.run('write','arbitrary-file','127',domains).status,0);
 });

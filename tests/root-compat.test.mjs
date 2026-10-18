@@ -43,11 +43,15 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     run('webui-job.sh', ['config', 'edit-source', oldSource, newSource, '1003']);
     assert.match(run('webui-job.sh', ['config', 'list-sources', 'balanced']), /mirror\.example/);
     assert.equal(readFileSync(path.join(jobs, '1003.done'), 'utf8').trim(), '0');
-    writeFileSync(path.join(fixture.dir, 'bindhosts.sh'), '#!/bin/sh\nprintf "worker-action=%s\\n" "$1"\n');
+    writeFileSync(path.join(fixture.dir, 'bindhosts.sh'), '#!/bin/sh\nprintf "worker-action=%s %s\\n" "$1" "$2"\n');
     run('webui-job.sh', ['start', '1002', '--filtering', 'on']);
     for (let i = 0; i < 100 && !existsSync(path.join(jobs, '1002.done')); i++) await delay(20);
     assert.equal(readFileSync(path.join(jobs, '1002.done'), 'utf8').trim(), '0');
     assert.match(run('webui-job.sh', ['poll', '1002']), /worker-action=--filtering[\s\S]*JOB_DONE=0/);
+    run('webui-job.sh', ['start', '1004', '--factory-reset']);
+    for (let i = 0; i < 100 && !existsSync(path.join(jobs, '1004.done')); i++) await delay(20);
+    assert.equal(readFileSync(path.join(jobs, '1004.done'), 'utf8').trim(), '0');
+    assert.match(run('webui-job.sh', ['poll', '1004']), /worker-action=--factory-reset 1004[\s\S]*JOB_DONE=0/);
   });
 
   test(family + ': current manager takes priority over stale tool directories', t => {

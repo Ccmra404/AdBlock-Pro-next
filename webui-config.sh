@@ -21,7 +21,7 @@ REMOVED_SOURCES=$DIR/removed-sources.txt
 SHARED_SOURCE=shared
 umask 077
 
-case "$1" in list-whitelist|list-blacklist|list-sources|shared-rules) ;; *)
+case "$1" in list-whitelist|list-blacklist|list-sources|shared-rules|export-file) ;; *)
   if [ "${ABP_CONFIG_LOCKED:-0}" != 1 ]; then
     export ABP_CONFIG_LOCKED=1
     exec "$BB" flock -n "$DIR/update.lock" "$BB" sh "$0" "$@"
@@ -210,6 +210,9 @@ case "$1" in
     ;;
   export-rules)
     "$BB" sh /data/adb/adblockpro/scripts/rule-store.sh export "$2" "$3"
+    ;;
+  export-file)
+    "$BB" sh /data/adb/adblockpro/scripts/rule-store.sh write "$2" "$3" "$4"
     ;;
   add-whitelist|add-blacklist)
     domain=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
