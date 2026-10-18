@@ -245,7 +245,7 @@ case "$1" in
  observe-clean)
   case "$2" in ''|*[!0-9]*) exit 1 ;; esac
   [ ${#2} -le 20 ] || exit 1
-  rm -f "/data/adb/bindhosts_personal/observations/$2.result" "/data/adb/bindhosts_personal/observations/$2.meta"
+  rm -f "/data/adb/bindhosts_personal/observations/$2.result" "/data/adb/bindhosts_personal/observations/$2.result.tmp" "/data/adb/bindhosts_personal/observations/$2.page.tmp" "/data/adb/bindhosts_personal/observations/$2.meta"
   ;;
  *) exit 1;;
 esac

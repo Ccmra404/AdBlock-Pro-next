@@ -130,7 +130,7 @@ observe_restore() {
 
 observe_abort() {
   [ "${observe_restored:-0}" = 1 ] || observe_restore "${observe_id:-}" || return 1
-  rm -f "$OBS_DIR/active" "$OBS_DIR/${observe_id:-}.result" "$OBS_DIR/${observe_id:-}.result.tmp" "$OBS_DIR/${observe_id:-}.meta"
+  rm -f "$OBS_DIR/active" "$OBS_DIR/${observe_id:-}.result" "$OBS_DIR/${observe_id:-}.result.tmp" "$OBS_DIR/${observe_id:-}.page.tmp" "$OBS_DIR/${observe_id:-}.meta"
   rmdir "$OBS_DIR/lock" 2>/dev/null
 }
 
@@ -199,24 +199,77 @@ observe_capture() {
   fi
   sleep "$observe_seconds"
   observe_result="$OBS_DIR/$observe_id.result"
-  if ! api GET '/querylog?limit=200' 15 > "$observe_result.tmp"; then
-    rm -f "$observe_result.tmp"
-    observe_restore "$observe_id" || { echo '[!] Query-log restoration failed; it will be retried after service startup.' >&2; return 1; }
-    observe_restored=1
-    rm -f "$OBS_DIR/active"
-    rmdir "$OBS_DIR/lock" 2>/dev/null
-    echo '[!] Could not read the DNS query log.' >&2
-    return 1
+  observe_page="$OBS_DIR/$observe_id.page.tmp"
+  # Bound WebView memory use while reading a busy device's query log.
+  observe_page_size=200
+  observe_max_pages=10
+  observe_offset=0
+  observe_cursor=''
+  observe_last_cursor=''
+  observe_requested_cursor=''
+  observe_pages=0
+  observe_truncated=0
+  : > "$observe_result.tmp" || return 1
+  while [ "$observe_pages" -lt "$observe_max_pages" ]; do
+    observe_requested_cursor=''
+    if [ "$observe_pages" -gt 0 ] && [ -n "$observe_cursor" ] && [ "$observe_cursor" != "$observe_last_cursor" ]; then
+      observe_encoded_cursor=$(printf '%s' "$observe_cursor" | sed 's/+/%2B/g')
+      observe_query_path="/querylog?limit=$observe_page_size&older_than=$observe_encoded_cursor"
+      observe_requested_cursor=$observe_cursor
+      observe_last_cursor=$observe_cursor
+    else
+      observe_query_path="/querylog?limit=$observe_page_size&offset=$observe_offset"
+    fi
+    if ! api GET "$observe_query_path" 8 > "$observe_page"; then
+      if [ "$observe_pages" -eq 0 ]; then
+        rm -f "$observe_result.tmp" "$observe_page"
+        observe_restore "$observe_id" || { echo '[!] Query-log restoration failed; it will be retried after service startup.' >&2; return 1; }
+        observe_restored=1
+        rm -f "$OBS_DIR/active"
+        rmdir "$OBS_DIR/lock" 2>/dev/null
+        echo '[!] Could not read the DNS query log.' >&2
+        return 1
+      fi
+      observe_truncated=1
+      break
+    fi
+    if ! "$BB" grep -q '"data"' "$observe_page"; then
+      if [ "$observe_pages" -eq 0 ]; then
+        rm -f "$observe_result.tmp" "$observe_page"
+        observe_restore "$observe_id" || { echo '[!] Query-log restoration failed; it will be retried after service startup.' >&2; return 1; }
+        observe_restored=1
+        rm -f "$OBS_DIR/active"
+        rmdir "$OBS_DIR/lock" 2>/dev/null
+        echo '[!] AdGuard Home returned an unexpected query-log response.' >&2
+        return 1
+      fi
+      observe_truncated=1
+      break
+    fi
+    observe_entries=$("$BB" grep -Eo '"question"[[:space:]]*:' "$observe_page" | wc -l | tr -d '[:space:]')
+    case "$observe_entries" in ''|*[!0-9]*) observe_entries=0 ;; esac
+    observe_next_cursor=$("$BB" grep -Eo '"oldest"[[:space:]]*:[[:space:]]*"[^"]*"' "$observe_page" | "$BB" head -n 1 | "$BB" sed -E 's/^"oldest"[[:space:]]*:[[:space:]]*"([^"]*)".*$/\1/')
+    if [ "$observe_entries" -ge "$observe_page_size" ] && [ -n "$observe_requested_cursor" ] && { [ -z "$observe_next_cursor" ] || [ "$observe_next_cursor" = "$observe_requested_cursor" ]; }; then
+      observe_truncated=1
+      break
+    fi
+    [ -n "$observe_next_cursor" ] && observe_cursor=$observe_next_cursor
+    if [ "$observe_pages" -gt 0 ]; then printf '\n__ABP_PAGE__\n' >> "$observe_result.tmp" || return 1; fi
+    cat "$observe_page" >> "$observe_result.tmp" || return 1
+    observe_pages=$((observe_pages + 1))
+    observe_offset=$((observe_offset + observe_page_size))
+    rm -f "$observe_page"
+    [ "$observe_entries" -ge "$observe_page_size" ] || break
+    if [ "$observe_pages" -ge "$observe_max_pages" ]; then
+      observe_truncated=1
+      break
+    fi
+  done
+  rm -f "$observe_page"
+  if [ "$observe_pages" -eq 0 ]; then
+    printf '{"data":[]}' > "$observe_result.tmp" || return 1
   fi
-  if ! "$BB" grep -q '"data"' "$observe_result.tmp"; then
-    rm -f "$observe_result.tmp"
-    observe_restore "$observe_id" || { echo '[!] Query-log restoration failed; it will be retried after service startup.' >&2; return 1; }
-    observe_restored=1
-    rm -f "$OBS_DIR/active"
-    rmdir "$OBS_DIR/lock" 2>/dev/null
-    echo '[!] AdGuard Home returned an unexpected query-log response.' >&2
-    return 1
-  fi
+  printf '\n__ABP_META__truncated=%s\n' "$observe_truncated" >> "$observe_result.tmp" || return 1
   chmod 600 "$observe_result.tmp" && mv "$observe_result.tmp" "$observe_result" || { rm -f "$observe_result.tmp"; return 1; }
   observe_restore "$observe_id" || { echo '[!] Query-log restoration failed; it will be retried after service startup.' >&2; return 1; }
   observe_restored=1
@@ -224,9 +277,10 @@ observe_capture() {
   rmdir "$OBS_DIR/lock" 2>/dev/null
   trap - EXIT HUP INT TERM
   echo '[结果] DNS 域名观察完成；原查询日志设置已恢复。'
+  [ "$observe_truncated" = 0 ] || echo '[提醒] 查询记录已达读取上限或后续分页失败；本次结果可能不完整。'
   # A result that is never opened is removed after ten minutes.
-  "$BB" sh "$AGH/scripts/detach.sh" "$BB" "$BB" sh -c 'sleep 600; rm -f "$1" "$2"' \
-    observe-cleanup "$observe_result" "$observe_meta" >/dev/null 2>&1 &
+  "$BB" sh "$AGH/scripts/detach.sh" "$BB" "$BB" sh -c 'sleep 600; rm -f "$1" "$2" "$3"' \
+    observe-cleanup "$observe_result" "$observe_meta" "$observe_page" >/dev/null 2>&1 &
 }
 
 recover_observation() {

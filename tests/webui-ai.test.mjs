@@ -11,7 +11,7 @@ function harness() {
     localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) }, window: {},
     exec: command => new Promise(resolve => pending.push({ command, resolve })), setTimeout, clearTimeout, setInterval() {}, requestAnimationFrame() {} });
   vm.runInContext(source, context);
-  return { context, pending, handlers, storage, nodes, ...vm.runInContext('({state,applyPersonalRules,importPersonalLists,monitorJob,personalRulesPage,aiPanelMarkup,aiSettingsMarkup,managePage,observationSelectionTools,startObservation,openAI,normalizeAIEndpoint,requestAIAnalysis,monitorAI,validateAIResult,selectedAIResults,importAIResults,communityIssueUrl,aiPayload,saveAIConfig})', context) };
+  return { context, pending, handlers, storage, nodes, ...vm.runInContext('({state,applyPersonalRules,importPersonalLists,monitorJob,personalRulesPage,aiPanelMarkup,aiSettingsMarkup,managePage,observationSelectionTools,observationRows,startObservation,openAI,normalizeAIEndpoint,requestAIAnalysis,monitorAI,validateAIResult,selectedAIResults,importAIResults,communityIssueUrl,aiPayload,saveAIConfig})', context) };
 }
 const result = { domains: ['ads.example', 'login.example'], results: [{ domain: 'ads.example', verdict: 'ad', reason: '疑似广告' }, { domain: 'login.example', verdict: 'essential', reason: '登录服务' }] };
 function ready(h) {
@@ -42,6 +42,16 @@ test('settings and result surfaces do not repeat configuration or the analysis b
   assert.doesNotMatch(results, /ai-config-form|ai-analyze|接口地址|name="key"/);
   assert.match(h.aiSettingsMarkup(), /ai-config-form/);
   assert.match(h.managePage(), /id="ai-settings-panel"/);
+});
+test('AI settings summarize saved endpoint, model, and hidden key status', () => {
+  const h = harness(); ready(h); h.state.aiSettingsOpen = true;
+  const markup = h.aiSettingsMarkup();
+  assert.match(markup, /当前配置已保存/);
+  assert.match(markup, /https:\/\/api\.deepseek\.com\/chat\/completions/);
+  assert.match(markup, /deepseek-flash/);
+  assert.match(markup, /API 密钥：已保存（不回显）/);
+  assert.match(markup, /留空保留原密钥/);
+  assert.doesNotMatch(markup, /fixture-only-key/);
 });
 test('switching between raw and AI results reuses the result without extra requests', async () => {
   const h = harness(); ready(h); h.state.aiResults = result.results;
@@ -140,11 +150,16 @@ test('both result surfaces select across pages and clear all without sending req
   assert.equal(h.pending.length, 0);
 });
 
-test('bulk observation selection stays within the displayed 50-domain capture limit', async () => {
+test('observation displays and selects every captured domain while AI stays limited to 50', async () => {
   const h = harness(); h.state.observationDomains = Array.from({ length: 70 }, (_, i) => ({ domain: `domain${i}.example` }));
   await h.handlers.click({ target: { closest: s => s.includes('[data-action]') ? { dataset: { action: 'observe-select-all' } } : null } });
-  assert.equal(h.state.selectedObservationDomains.length, 50);
-  assert.ok(!h.state.selectedObservationDomains.includes('domain50.example'));
+  assert.equal(h.state.selectedObservationDomains.length, 70);
+  assert.ok(h.state.selectedObservationDomains.includes('domain69.example'));
+  assert.match(h.observationSelectionTools(), /AI 一次最多 50 个/);
+  assert.match(h.observationSelectionTools(), /data-action="ai-open" disabled/);
+  h.state.observationPage = 6;
+  assert.match(h.observationRows(), /domain69\.example/);
+  assert.match(h.observationRows(), /第 7 \/ 7 页/);
 });
 
 test('failed personal apply startup keeps saved rules and offers retry without a global update', async () => {

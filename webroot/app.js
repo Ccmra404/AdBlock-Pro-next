@@ -6,7 +6,7 @@ const JOB = `sh ${MODULE_DIR}/webui-job.sh`;
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], sourceRenameUrl: '', sourceEditUrl: '', logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', logFilter: 'all' };
+const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], sourceRenameUrl: '', sourceEditUrl: '', logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', observationTruncated: false, logFilter: 'all' };
 Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', sharedUpdatedAt: 0, sharedError: '', sharedLoaded: false, sharedSearch: '', sharedPage: 0, apps: [], appsLoaded: false, appsLoading: false, appsError: '', appQuery: '', selectedApp: null, observeDuration: '10', observationResultsOpen: false, selectedObservationDomains: [] });
 Object.assign(state, { aiOpen: false, aiSettingsOpen: false, aiConfig: null, aiBusy: false, aiError: '', aiResults: [], aiSelected: [], aiPage: 0, personalApplyMessage: '', personalApplyError: false });
 const AI_PENDING_KEY = 'abp-ai-job';
@@ -281,7 +281,9 @@ function observationSelectionTools() {
   const visible = state.observationDomains.slice(start, start + OBSERVATION_PAGE_SIZE).map(item => item.domain).filter(validObservedDomain);
   const allVisibleSelected = visible.length > 0 && visible.every(domain => selected.includes(domain));
   const disabled = selected.length ? '' : 'disabled';
-  return `<div class="observe-selection-tools"><div class="observe-selection-head"><b>${fmt(selected.length)} 个已选</b><button class="btn" data-action="observe-select-all" ${state.observationDomains.length ? '' : 'disabled'}>全选全部</button><button class="btn" data-action="observe-select-visible" ${visible.length ? '' : 'disabled'}>${allVisibleSelected ? '取消本页选择' : '全选本页'}</button><button class="btn" data-action="observe-clear-selection" ${disabled}>取消全选</button></div><div class="btn-row observe-export-actions"><button class="btn" data-action="observe-copy-domains" ${disabled}>复制域名</button><button class="btn" data-action="observe-export" ${disabled}>导出 TXT</button><button class="btn" data-action="ai-open" ${state.aiBusy ? 'disabled' : disabled}>${state.aiBusy ? 'AI 分析中…' : 'AI 分析所选（' + selected.length + '）'}</button>${state.aiResults.length ? '<button class="btn" data-action="ai-view-results">查看 AI 结果</button>' : ''}<button class="btn" data-action="observe-copy-ai" ${disabled}>复制给外部 AI</button><button class="btn" data-action="observe-import-personal" ${disabled}>导入个人拦截规则</button></div><p class="field-help">先勾选候选域名；复制、导出和导入只处理勾选的域名，不含应用名、设备标识或原始 DNS 日志。提交共享候选请前往共享规则库。</p></div>`;
+  const aiDisabled = state.aiBusy || !selected.length || selected.length > 50;
+  const aiLabel = state.aiBusy ? 'AI 分析中…' : selected.length > 50 ? 'AI 一次最多 50 个' : `AI 分析所选（${selected.length}）`;
+  return `<div class="observe-selection-tools"><div class="observe-selection-head"><b>${fmt(selected.length)} 个已选</b><button class="btn" data-action="observe-select-all" ${state.observationDomains.length ? '' : 'disabled'}>全选全部</button><button class="btn" data-action="observe-select-visible" ${visible.length ? '' : 'disabled'}>${allVisibleSelected ? '取消本页选择' : '全选本页'}</button><button class="btn" data-action="observe-clear-selection" ${disabled}>取消全选</button></div><div class="btn-row observe-export-actions"><button class="btn" data-action="observe-copy-domains" ${disabled}>复制域名</button><button class="btn" data-action="observe-export" ${disabled}>导出 TXT</button><button class="btn" data-action="ai-open" ${aiDisabled ? 'disabled' : ''}>${aiLabel}</button>${state.aiResults.length ? '<button class="btn" data-action="ai-view-results">查看 AI 结果</button>' : ''}<button class="btn" data-action="observe-copy-ai" ${disabled}>复制给外部 AI</button><button class="btn" data-action="observe-import-personal" ${disabled}>导入个人拦截规则</button></div><p class="field-help">先勾选候选域名；复制、导出和导入只处理勾选的域名，不含应用名、设备标识或原始 DNS 日志。提交共享候选请前往共享规则库。</p></div>`;
 }
 function observationAIPrompt() {
   return `请分析下面这些在短时 DNS 观察中出现的候选域名。观察期间可能混入后台应用请求，请将每项谨慎分为“疑似广告/跟踪”“疑似正常服务”“无法判断”，说明判断依据，不要声称仅凭域名可以确定。只返回输入中已有的域名，不要编造域名。最后只输出可导入的纯文本，不要代码围栏、解释文字或列表标记：\n[拦截名单]\n<仅放入有较强广告/跟踪证据的域名>\n\n[放行名单]\n<确认属于必要服务且用户希望放行的域名>\n\n候选域名：\n${selectedObservationDomains().join('\n')}`;
@@ -310,8 +312,8 @@ function renderObservationSelection() {
   if (state.aiOpen) renderAI();
 }
 function observationRows() {
-  if (!state.observationDomains.length) return `<div class="empty-state">观察期间没有发现新域名。可重新观察并在目标应用里复现广告。</div>`;
-  const candidateCount = Math.min(state.observationDomains.length, 50);
+  if (!state.observationDomains.length) return `<div class="empty-state">本次没有记录到经过 AdGuard Home 的 DNS 域名。旧域名只要在本次观察中再次查询也会显示；缓存、应用自带 DoH/HTTPDNS 或绕过模块的 VPN 请求可能不可见。</div>`;
+  const candidateCount = state.observationDomains.length;
   const pageCount = Math.ceil(candidateCount / OBSERVATION_PAGE_SIZE);
   state.observationPage = Math.min(state.observationPage, pageCount - 1);
   const start = state.observationPage * OBSERVATION_PAGE_SIZE;
@@ -321,7 +323,7 @@ function observationRows() {
     const action = `<div class="btn-row">${classification.add ? `<button class="btn" data-action="observe-add" data-domain="${esc(item.domain)}">拦截</button>` : ''}${!domainInList(item.domain, state.lists.whitelist) ? `<button class="btn" data-action="observe-allow" data-domain="${esc(item.domain)}">放行</button>` : ''}</div>`;
     const selected = selectedObservationDomains().includes(item.domain);
     return `<div class="observe-row"><label class="observe-select"><input type="checkbox" data-observation-domain="${esc(item.domain)}" aria-label="选择 ${esc(item.domain)}" ${selected ? 'checked' : ''}></label><div class="observe-copy"><strong>${esc(item.domain)}</strong><small>${fmt(item.count)} 次请求${item.filterId ? ` · 规则 ${esc(item.filterId)}` : ''}</small></div>${tag(classification.label, classification.tone)}${action}</div>`;
-  }).join('')}<nav class="observe-pagination logs-pagination" aria-label="观察结果分页"><button class="btn" data-action="observe-page" data-page="${state.observationPage - 1}" ${state.observationPage === 0 ? 'disabled' : ''}>上一页</button><span>第 ${state.observationPage + 1} / ${pageCount} 页 · ${start + 1}–${start + visible.length} 条，共 ${candidateCount} 条</span><button class="btn" data-action="observe-page" data-page="${state.observationPage + 1}" ${state.observationPage >= pageCount - 1 ? 'disabled' : ''}>下一页</button></nav>${state.observationDomains.length > 50 ? `<p class="field-help">按请求次数排序，只显示前 50 个高频候选；共发现 ${fmt(state.observationDomains.length)} 个域名。</p>` : ''}`;
+  }).join('')}<nav class="observe-pagination logs-pagination" aria-label="观察结果分页"><button class="btn" data-action="observe-page" data-page="${state.observationPage - 1}" ${state.observationPage === 0 ? 'disabled' : ''}>上一页</button><span>第 ${state.observationPage + 1} / ${pageCount} 页 · ${start + 1}–${start + visible.length} 条，共 ${candidateCount} 条</span><button class="btn" data-action="observe-page" data-page="${state.observationPage + 1}" ${state.observationPage >= pageCount - 1 ? 'disabled' : ''}>下一页</button></nav>`;
 }
 function observationPanel() {
   const observation = state.observation;
@@ -329,14 +331,16 @@ function observationPanel() {
   const remaining = active ? Math.max(0, Math.ceil((observation.startedAt + observation.duration * 1000 - Date.now()) / 1000)) : 0;
   const status = active ? `<div id="observe-progress" class="notice observe-progress" role="status">${icon('activity')}<span>记录中 · 约 ${remaining} 秒后分析。${esc(observation.appLabel || '目标应用')}已重新打开，请复现广告，然后返回此页。</span></div>` : '';
   const error = state.observationError ? `<div class="notice warn observe-error">${icon('info')}<span>${esc(state.observationError)}${observation?.id ? ` <button class="btn btn-plain" data-action="observe-retry">重试读取</button>` : ''}</span></div>` : '';
-  const results = observation && !active && !state.observationError ? `<details id="observe-results" class="observe-results${state.aiOpen && (state.aiBusy || state.aiResults.length) ? ' hidden' : ''}" ${state.observationResultsOpen ? 'open' : ''}><summary class="observe-results-head"><b>观察结果</b><span class="tag">${fmt(state.observationDomains.length)} 个新域名</span></summary><p class="field-help">${esc(observation.appLabel || '本次观察')} · 新域名只是时间段内的候选，手机后台应用也可能产生请求。筛选并勾选域名后，可复制给 AI、导入个人规则，或前往共享库提交候选。</p><div id="observation-selection-tools">${observationSelectionTools()}</div><div id="observation-list" class="observe-list">${observationRows()}</div></details>` : '';
-  return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">域名观察</h2><p class="section-sub">选择本机应用，自动重新打开并观察开屏请求</p></div><div class="btn-row">${tag('仅本机处理')}<button class="btn" data-action="apps-refresh" ${state.busy || state.appsLoading ? 'disabled' : ''}>${state.appsLoading ? '读取中…' : '刷新应用'}</button></div></div><p class="field-help observe-help">输入应用名称或包名并选择匹配项。开始后会重新打开这个应用，结束后返回本页查看。窗口内也可能包含后台应用的 DNS 请求，结果只是候选；原查询日志设置会恢复，结果不会自动上传；AI 分析需另行确认。</p><div class="observe-controls"><label class="observe-app-label">本机应用<input id="observe-app" class="field" maxlength="255" placeholder="例如：酷安" autocomplete="off" value="${esc(state.appQuery)}"></label><label class="observe-duration-label">观察时长<select id="observe-duration" class="field">${['5','10','15','30'].map(n => `<option value="${n}" ${state.observeDuration === n ? 'selected' : ''}>${n} 秒</option>`).join('')}</select></label><button class="btn btn-primary" data-action="observe-start" ${active || state.appsLoading || !state.selectedApp ? 'disabled' : ''}>${active ? '观察中…' : '开始并打开应用'}</button></div><div id="observe-app-results" class="app-results">${applicationResults()}</div>${status}${error}${results}<div id="ai-panel">${aiPanelMarkup()}</div></section>`;
+  const truncation = state.observationTruncated ? '<div class="notice warn" role="status">请求量较高或后续分页读取失败，本次最多读取 2,000 条 DNS 记录，结果可能不完整。</div>' : '';
+  const results = observation && !active && !state.observationError ? `<details id="observe-results" class="observe-results${state.aiOpen && (state.aiBusy || state.aiResults.length) ? ' hidden' : ''}" ${state.observationResultsOpen ? 'open' : ''}><summary class="observe-results-head"><b>观察结果</b><span class="tag">${fmt(state.observationDomains.length)} 个域名</span></summary><p class="field-help">${esc(observation.appLabel || '本次观察')} · 显示观察窗口内查到的域名，重复请求合并计数；以前出现过的域名再次查询也会显示。观察记录来自整台设备的 DNS，可能混入后台应用请求；缓存、应用自带 DoH/HTTPDNS 或绕过模块的 VPN 请求可能不可见。</p>${truncation}<div id="observation-selection-tools">${observationSelectionTools()}</div><div id="observation-list" class="observe-list">${observationRows()}</div></details>` : '';
+  return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">域名观察</h2><p class="section-sub">选择本机应用，自动重新打开并观察开屏请求</p></div><div class="btn-row">${tag('仅本机处理')}<button class="btn" data-action="apps-refresh" ${state.busy || state.appsLoading ? 'disabled' : ''}>${state.appsLoading ? '读取中…' : '刷新应用'}</button></div></div><p class="field-help observe-help">输入应用名称或包名并选择匹配项。开始后会重新打开这个应用，结束后返回本页查看。这里只能记录经过 AdGuard Home 的 DNS 请求；结果不会自动上传，AI 分析需另行确认。</p><div class="observe-controls"><label class="observe-app-label">本机应用<input id="observe-app" class="field" maxlength="255" placeholder="例如：酷安" autocomplete="off" value="${esc(state.appQuery)}"></label><label class="observe-duration-label">观察时长<select id="observe-duration" class="field">${['5','10','15','30'].map(n => `<option value="${n}" ${state.observeDuration === n ? 'selected' : ''}>${n} 秒</option>`).join('')}</select></label><button class="btn btn-primary" data-action="observe-start" ${active || state.appsLoading || !state.selectedApp ? 'disabled' : ''}>${active ? '观察中…' : '开始并打开应用'}</button></div><div id="observe-app-results" class="app-results">${applicationResults()}</div>${status}${error}${results}<div id="ai-panel">${aiPanelMarkup()}</div></section>`;
 }
 function aiSettingsMarkup() {
   if (!state.aiSettingsOpen) return '';
   const c = state.aiConfig;
+  const saved = c?.configured ? `<div class="notice ai-config-status" role="status"><span><b>当前配置已保存</b><br>接口：${esc(c.endpoint)}<br>模型：${esc(c.model)}<br>API 密钥：已保存（不回显）</span></div>` : '<div class="notice ai-config-status" role="status">尚未配置 AI 接口。</div>';
   const settings = state.aiSettingsOpen ? `<form id="ai-config-form" class="ai-form"><label>接口地址<input class="field" name="endpoint" type="url" required maxlength="2048" value="${esc(c?.endpoint || 'https://api.deepseek.com/chat/completions')}" placeholder="https://…/v1/chat/completions"></label><label>模型名称<input class="field" name="model" required maxlength="120" value="${esc(c?.model || 'deepseek-flash')}" placeholder="服务商提供的模型 ID"></label><label>API 密钥<input class="field" name="key" type="password" maxlength="4096" autocomplete="new-password" placeholder="${c?.configured ? '留空保留原密钥；换接口需重新填写' : '在本机填写，不要发到聊天或 GitHub'}"></label><p class="field-help">支持 OpenAI Chat Completions 兼容接口（需支持 JSON 输出），也可填写 OpenRouter、LiteLLM 或 New API 网关地址。密钥仅保存于本机 Root 私有目录。</p><div class="btn-row"><button class="btn btn-primary" ${state.aiBusy ? 'disabled' : ''}>保存配置</button><button class="btn" type="button" data-action="ai-deepseek" ${state.aiBusy ? 'disabled' : ''}>填入 DeepSeek 预设</button><button class="btn btn-danger" type="button" data-action="ai-clear" ${!c?.configured || state.aiBusy ? 'disabled' : ''}>删除密钥与配置</button></div></form>` : '';
-  return `<section class="panel ai-settings"><div class="panel-head"><div><h2 class="section-title">AI 接口设置</h2><p class="section-sub">配置一次，在名单页分析选中的域名</p></div></div>${settings}<p class="field-help">保存后返回「名单 → 域名观察」操作。不会自动发送域名或调用付费接口。</p></section>`;
+  return `<section class="panel ai-settings"><div class="panel-head"><div><h2 class="section-title">AI 接口设置</h2><p class="section-sub">配置一次，在名单页分析选中的域名</p></div></div>${saved}${settings}<p class="field-help">密钥不会回显；留空保存时保留原密钥。保存后返回「名单 → 域名观察」操作。不会自动发送域名或调用付费接口。</p></section>`;
 }
 function renderAISettings() {
   pageFragments.delete('manage');
@@ -430,7 +434,8 @@ async function monitorAI(id) {
 function requestAIAnalysis() {
   if (state.aiBusy) return;
   const domains = selectedObservationDomains(), c = state.aiConfig;
-  if (!c?.configured || !domains.length || domains.length > 50) { toast('请配置接口并选择 1–50 个域名'); return; }
+  if (domains.length > 50) { toast('AI 一次最多分析 50 个域名，请减少选择'); return; }
+  if (!c?.configured || !domains.length) { toast('请配置接口并选择域名'); return; }
   // Freeze the consent snapshot before confirming an external request.
   const target = { domains, endpoint: c.endpoint, model: c.model };
   confirm('发送域名给 AI？', `将 ${domains.length} 个所选域名发送到 ${c.endpoint}，模型 ${c.model}。服务商会收到这些域名，可能产生 API 费用。不会发送完整日志，也不会自动修改名单。`, '确认并分析', async () => {
@@ -837,7 +842,7 @@ async function monitorJob(id, action) {
       state.job = null; setBusy(false);
       syncStatusView();
       if (action === '--observe' || (action === '--apply-personal' && state.page === 'lists') || (state.page === 'lists' && state.rulesView === 'shared')) render();
-      toast(action === '--apply-personal' ? state.personalApplyMessage : action === '--observe' ? (code === 0 ? `观察完成，发现 ${fmt(state.observationDomains.length)} 个新域名` : '域名观察失败') : (code === 0 ? '操作已完成' : '操作失败，请查看运行日志'));
+      toast(action === '--apply-personal' ? state.personalApplyMessage : action === '--observe' ? (code === 0 ? `观察完成，记录 ${fmt(state.observationDomains.length)} 个域名` : '域名观察失败') : (code === 0 ? '操作已完成' : '操作失败，请查看运行日志'));
       return code;
     }
     if (action === '--update') {
@@ -866,7 +871,7 @@ async function startJob(action, argument = '', metadata = {}) {
   if (Number(result.errno) !== 0) throw new Error(textOf(result) || '无法启动后台任务');
   if (action === '--observe') {
     state.observation = { id, startedAt: Date.now(), duration: Number(argument), appLabel: String(metadata.appLabel || ''), appPackage: String(metadata.appPackage || ''), active: true };
-    state.observationDomains = []; state.selectedObservationDomains = []; state.observationPage = 0; state.observationError = ''; state.observationResultsOpen = false;
+    state.observationDomains = []; state.selectedObservationDomains = []; state.observationPage = 0; state.observationError = ''; state.observationTruncated = false; state.observationResultsOpen = false;
     localStorage.setItem(OBSERVE_SESSION_KEY, JSON.stringify(state.observation));
   }
   state.job = { id, action }; localStorage.setItem('abp-pending-job', `${id}:${action}`);
@@ -882,9 +887,14 @@ async function startDiagnosis() {
 function validObservedDomain(value) {
   return value.length <= 253 && /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/i.test(value);
 }
-function parseObservedDomains(raw, startedAt) {
-  const payload = JSON.parse(raw);
-  const entries = Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
+function parseObservationSnapshot(raw, startedAt) {
+  let snapshot = String(raw || ''), truncated = false;
+  const meta = snapshot.match(/\n__ABP_META__truncated=(0|1)\s*$/);
+  if (meta) { truncated = meta[1] === '1'; snapshot = snapshot.slice(0, meta.index); }
+  const entries = snapshot.split(/\n__ABP_PAGE__\n/).flatMap(page => {
+    const payload = JSON.parse(page);
+    return Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
+  });
   const domains = new Map();
   for (const entry of entries) {
     const time = Date.parse(entry?.time || '');
@@ -899,14 +909,16 @@ function parseObservedDomains(raw, startedAt) {
     if (entry?.filterId) current.filterId = String(entry.filterId);
     domains.set(domain, current);
   }
-  return [...domains.values()].sort((a, b) => b.count - a.count || b.time - a.time);
+  return { domains: [...domains.values()].sort((a, b) => b.count - a.count || b.time - a.time), truncated };
 }
 async function loadObservationResult(id) {
   const result = await exec(`${JOB} observe-result ${id}`);
   if (Number(result.errno)) throw new Error(textOf(result) || '无法读取观察结果');
   const saved = state.observation || JSON.parse(localStorage.getItem(OBSERVE_SESSION_KEY) || '{}');
   if (!Number.isFinite(Number(saved.startedAt))) throw new Error('观察时间信息已丢失，请重新观察。');
-  state.observationDomains = parseObservedDomains(result.stdout || '', Number(saved.startedAt));
+  const snapshot = parseObservationSnapshot(result.stdout || '', Number(saved.startedAt));
+  state.observationDomains = snapshot.domains;
+  state.observationTruncated = snapshot.truncated;
   state.selectedObservationDomains = [];
   state.observationPage = 0;
   state.observationResultsOpen = false;
@@ -1235,11 +1247,11 @@ document.addEventListener('click', async event => {
     case 'observe-start': startObservation().catch(e => toast(e.message)); break;
     case 'observe-retry': {
       if (!state.observation?.id) { toast('没有可读取的观察结果'); break; }
-      try { await loadObservationResult(state.observation.id); render(); toast(`读取完成，发现 ${fmt(state.observationDomains.length)} 个新域名`); }
+      try { await loadObservationResult(state.observation.id); render(); toast(`读取完成，记录 ${fmt(state.observationDomains.length)} 个域名`); }
       catch (e) { state.observationError = `${e.message} 结果会在设备上短暂保留，可重试读取。`; render(); }
       break;
     }
-    case 'observe-select-all': state.selectedObservationDomains = [...new Set(state.observationDomains.slice(0, 50).map(item => item.domain).filter(validObservedDomain))]; renderObservationSelection(); break;
+    case 'observe-select-all': state.selectedObservationDomains = [...new Set(state.observationDomains.map(item => item.domain).filter(validObservedDomain))]; renderObservationSelection(); break;
     case 'observe-select-visible': {
       const start = state.observationPage * OBSERVATION_PAGE_SIZE;
       const visible = state.observationDomains.slice(start, start + OBSERVATION_PAGE_SIZE).map(item => item.domain).filter(validObservedDomain);
