@@ -71,9 +71,9 @@ func TestFreshConfigUsesOnlyTheTwoBundledRemoteRuleSources(t *testing.T) {
  data,err:=os.ReadFile(yaml);if err!=nil {t.Fatal(err)}
  config:=string(data)
  for _, want := range []string{
-  "url: https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward",
-  "url: https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt",
-  "name: AWAvenue Ads and Privacy",
+  "url: https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward",
+  "url: https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt",
+  "name: AWAvenue Ads (Wang Fugui mirror)",
   "url: /data/adb/adblockpro/bin/userfilters/adblock-pro-shared-app-rules.txt",
  } { if !strings.Contains(config,want) {t.Errorf("fresh config is missing %q",want)} }
  for _, unwanted := range []string{"anti-ad.net", "AdGuardSDNSFilter", "filter_29.txt", "Adguard-Only.Ads.txt"} {

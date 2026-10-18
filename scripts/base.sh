@@ -27,7 +27,7 @@ function update_description() {
   case "$(abp_root_family)" in
     KernelSU)
       if [ -x /data/adb/ksud ]; then
-        MODULE_ID="$module_id" /data/adb/ksud module config set override.description "$description" && return 0
+        KSU_MODULE="$module_id" /data/adb/ksud module config set override.description "$description" && return 0
       fi ;;
     APatch)
       if [ -x /data/adb/apd ]; then

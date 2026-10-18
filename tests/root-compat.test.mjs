@@ -6,6 +6,12 @@ import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { shellPath, rootFixture } from './shell-fixture.mjs';
 
+test('KernelSU description updates provide the module context expected by ksud', () => {
+  const base = readFileSync(new URL('../scripts/base.sh', import.meta.url), 'utf8');
+  assert.match(base, /KSU_MODULE="\$module_id" \/data\/adb\/ksud module config set override\.description/);
+  assert.doesNotMatch(base, /MODULE_ID="\$module_id" \/data\/adb\/ksud/);
+});
+
 for (const family of ['KernelSU', 'Magisk', 'APatch']) {
   test(family + ': reads logs, saves personal rules and launches workers with its own tools', async t => {
     const fixture = rootFixture(t);
@@ -32,7 +38,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     assert.match(run('webui-job.sh', ['list']), /1001/);
     assert.match(run('webui-job.sh', ['config', 'list-sources', 'balanced']), /秋风 AdGuard 全规则/);
     assert.equal(existsSync(path.join(jobs, '1001.done')), true);
-    const oldSource = 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward';
+    const oldSource = 'https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward';
     const newSource = 'https://mirror.example/ads.txt';
     run('webui-job.sh', ['config', 'edit-source', oldSource, newSource, '1003']);
     assert.match(run('webui-job.sh', ['config', 'list-sources', 'balanced']), /mirror\.example/);

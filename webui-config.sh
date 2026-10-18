@@ -2,11 +2,15 @@
 DIR=/data/adb/bindhosts_personal
 MODDIR=${0%/*}
 . "$MODDIR/scripts/compat.sh" || exit 1
-REWARD=https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
-AWAVENUE=https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt
+REWARD=https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
+AWAVENUE=https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt
 LEGACY_REWARD=https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
+LEGACY_REWARD_CDN=https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
+LEGACY_REWARD_GCORE=https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
 LEGACY_AWAVENUE=https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt
+LEGACY_AWAVENUE_GCORE=https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt
 LEGACY_AWA_ADS=https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt
+LEGACY_AWA_ADS_GCORE=https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt
 ANTIAD=https://anti-ad.net/easylist.txt
 ADRULES=https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt
 ADGUARD=https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
@@ -96,12 +100,16 @@ mode_sources() {
 migrate_source_url_file() {
   file=$1
   [ -f "$file" ] || return 0
-  if ! "$BB" grep -Fqx "$LEGACY_REWARD" "$file" && ! "$BB" grep -Fqx "$LEGACY_AWAVENUE" "$file" && ! "$BB" grep -Fqx "$LEGACY_AWA_ADS" "$file"; then return 0; fi
+  if ! "$BB" grep -Fqx "$LEGACY_REWARD" "$file" && ! "$BB" grep -Fqx "$LEGACY_REWARD_CDN" "$file" &&
+    ! "$BB" grep -Fqx "$LEGACY_REWARD_GCORE" "$file" && ! "$BB" grep -Fqx "$LEGACY_AWAVENUE" "$file" &&
+    ! "$BB" grep -Fqx "$LEGACY_AWAVENUE_GCORE" "$file" && ! "$BB" grep -Fqx "$LEGACY_AWA_ADS" "$file" &&
+    ! "$BB" grep -Fqx "$LEGACY_AWA_ADS_GCORE" "$file"; then return 0; fi
   tmp="$file.migrate.$$"
   raw="$tmp.raw"
-  "$BB" awk -v old_reward="$LEGACY_REWARD" -v reward="$REWARD" -v old_awa="$LEGACY_AWAVENUE" -v old_ads="$LEGACY_AWA_ADS" -v awa="$AWAVENUE" '
-    $0 == old_reward { print reward; next }
-    $0 == old_awa || $0 == old_ads { print awa; next }
+  "$BB" awk -v old_reward="$LEGACY_REWARD" -v old_reward_cdn="$LEGACY_REWARD_CDN" -v old_reward_gcore="$LEGACY_REWARD_GCORE" -v reward="$REWARD" \
+    -v old_awa="$LEGACY_AWAVENUE" -v old_awa_gcore="$LEGACY_AWAVENUE_GCORE" -v old_ads="$LEGACY_AWA_ADS" -v old_ads_gcore="$LEGACY_AWA_ADS_GCORE" -v awa="$AWAVENUE" '
+    $0 == old_reward || $0 == old_reward_cdn || $0 == old_reward_gcore { print reward; next }
+    $0 == old_awa || $0 == old_awa_gcore || $0 == old_ads || $0 == old_ads_gcore { print awa; next }
     $0 != "" { print }
   ' "$file" > "$raw" || { rm -f "$raw" "$tmp"; return 1; }
   "$BB" sort -u "$raw" -o "$tmp" || { rm -f "$raw" "$tmp"; return 1; }
@@ -110,14 +118,17 @@ migrate_source_url_file() {
 }
 migrate_source_names() {
   [ -f "$SOURCE_NAMES" ] || return 0
-  if ! "$BB" awk -F '\t' -v old_reward="$LEGACY_REWARD" -v old_awa="$LEGACY_AWAVENUE" -v old_ads="$LEGACY_AWA_ADS" '$1 == old_reward || $1 == old_awa || $1 == old_ads { found=1 } END { exit !found }' "$SOURCE_NAMES"; then return 0; fi
+  if ! "$BB" awk -F '\t' -v old_reward="$LEGACY_REWARD" -v old_reward_cdn="$LEGACY_REWARD_CDN" -v old_reward_gcore="$LEGACY_REWARD_GCORE" \
+    -v old_awa="$LEGACY_AWAVENUE" -v old_awa_gcore="$LEGACY_AWAVENUE_GCORE" -v old_ads="$LEGACY_AWA_ADS" -v old_ads_gcore="$LEGACY_AWA_ADS_GCORE" \
+    '$1 == old_reward || $1 == old_reward_cdn || $1 == old_reward_gcore || $1 == old_awa || $1 == old_awa_gcore || $1 == old_ads || $1 == old_ads_gcore { found=1 } END { exit !found }' "$SOURCE_NAMES"; then return 0; fi
   tmp="$SOURCE_NAMES.migrate.$$"
-  "$BB" awk -F '\t' -v old_reward="$LEGACY_REWARD" -v reward="$REWARD" -v old_awa="$LEGACY_AWAVENUE" -v old_ads="$LEGACY_AWA_ADS" -v awa="$AWAVENUE" '
+  "$BB" awk -F '\t' -v old_reward="$LEGACY_REWARD" -v old_reward_cdn="$LEGACY_REWARD_CDN" -v old_reward_gcore="$LEGACY_REWARD_GCORE" -v reward="$REWARD" \
+    -v old_awa="$LEGACY_AWAVENUE" -v old_awa_gcore="$LEGACY_AWAVENUE_GCORE" -v old_ads="$LEGACY_AWA_ADS" -v old_ads_gcore="$LEGACY_AWA_ADS_GCORE" -v awa="$AWAVENUE" '
     BEGIN { OFS="\t" }
     {
       original=$1; url=original; name=substr($0, index($0, "\t") + 1)
-      if (url == old_reward) url=reward
-      else if (url == old_awa || url == old_ads) url=awa
+      if (url == old_reward || url == old_reward_cdn || url == old_reward_gcore) url=reward
+      else if (url == old_awa || url == old_awa_gcore || url == old_ads || url == old_ads_gcore) url=awa
       if (!(url in names) || (original == url && !preferred[url])) { names[url]=name; preferred[url]=(original == url) }
     }
     END { for (url in names) print url, names[url] }

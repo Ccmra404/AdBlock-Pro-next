@@ -447,8 +447,12 @@ source_name() {
   [ ! -f "$STATE/source-names.tsv" ] || custom_name=$($BB awk -F '\t' -v url="$1" '$1==url { print substr($0,index($0,"\t")+1); exit }' "$STATE/source-names.tsv")
   [ -z "$custom_name" ] || { printf '%s' "$custom_name"; return; }
   case "$1" in
-    https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward) printf '10007 应用与广告规则' ;;
-    https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward) printf '10007 应用与广告规则' ;;
+    https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward) printf '10007 保留广告奖励（EdgeOne）' ;;
+    https://lingeringsound.github.io/10007_auto/reward|https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward|https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward|https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward) printf '10007 保留广告奖励' ;;
+    https://lingeringsound.github.io/10007_auto/adb.txt|https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/adb.txt|https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/adb.txt) printf '10007 基础广告规则' ;;
+    https://raw.githubusercontent.com/lingeringsound/10007_auto/master/adb.txt) printf '10007 基础广告规则' ;;
+    https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt) printf '秋风 AdGuard 全规则（王富贵镜像）' ;;
+    https://script.cx.ms/awavenue/AWAvenue-Ads-Rule-Adguard.txt) printf '秋风 AdGuard 全规则（CXPLAY 镜像）' ;;
     https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt) printf '秋风 AdGuard 全规则' ;;
     https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt) printf '秋风广告规则' ;;
     https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt) printf '秋风纯广告' ;;
@@ -461,12 +465,32 @@ source_name() {
 }
 source_mirror_urls() {
   case "$1" in
+    https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward)
+      printf '%s\n' 'https://lingeringsound.github.io/10007_auto/reward' 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
+    https://lingeringsound.github.io/10007_auto/reward)
+      printf '%s\n' 'https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
+    https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward)
+      printf '%s\n' 'https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' 'https://lingeringsound.github.io/10007_auto/reward' 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
+    https://lingeringsound.github.io/10007_auto/adb.txt)
+      printf '%s\n' 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/adb.txt' 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/adb.txt' 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/adb.txt' ;;
+    https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/adb.txt)
+      printf '%s\n' 'https://lingeringsound.github.io/10007_auto/adb.txt' 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/adb.txt' 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/adb.txt' ;;
+    https://raw.githubusercontent.com/lingeringsound/10007_auto/master/adb.txt|https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/adb.txt)
+      printf '%s\n' 'https://lingeringsound.github.io/10007_auto/adb.txt' 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/adb.txt' ;;
     https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward)
       printf '%s\n' 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
     https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward)
       printf '%s\n' 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
-    https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt) printf 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt' ;;
-    https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt|https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt) printf 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt' ;;
+    https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt)
+      printf '%s\n' 'https://script.cx.ms/awavenue/AWAvenue-Ads-Rule-Adguard.txt' 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt' 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt' 'https://ghfast.top/https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt' ;;
+    https://script.cx.ms/awavenue/AWAvenue-Ads-Rule-Adguard.txt)
+      printf '%s\n' 'https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt' 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt' 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt' 'https://ghfast.top/https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt' ;;
+    https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt)
+      printf '%s\n' 'https://script.cx.ms/awavenue/AWAvenue-Ads-Rule-Adguard.txt' 'https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt' 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt' ;;
+    https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt)
+      printf '%s\n' 'https://script.cx.ms/awavenue/AWAvenue-Ads-Rule-Adguard.txt' 'https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt' 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt' ;;
+    https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt)
+      printf 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt' ;;
     https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt) printf 'https://raw.githubusercontent.com/AdguardTeam/AdGuardSDNSFilter/gh-pages/Filters/filter.txt' ;;
     *) return 1 ;;
   esac
@@ -493,8 +517,19 @@ post_remove_source() {
 }
 download_candidate() {
   candidate_url=$1; candidate_output=$2
-  "$CURL" --silent --show-error --fail --location --proto '=https' --proto-redir '=https' \
-    --connect-timeout 5 --max-time 15 --max-filesize 52428800 "$candidate_url" -o "$candidate_output" || { rm -f "$candidate_output"; return 1; }
+  if [ ! -s "$AGH/certs/cacert.pem" ]; then echo '[!] 模块 CA 证书包缺失，无法安全下载 HTTPS 规则。' >&2; return 1; fi
+  if "$CURL" --cacert "$AGH/certs/cacert.pem" --silent --show-error --fail --location --proto '=https' --proto-redir '=https' \
+    --connect-timeout 10 --max-time 20 --max-filesize 52428800 "$candidate_url" -o "$candidate_output"; then
+    :
+  else
+    curl_status=$?
+    rm -f "$candidate_output"
+    if [ "$curl_status" -eq 60 ] && [ "${ABP_TLS_WARNING_SHOWN:-0}" != 1 ]; then
+      echo '[!] HTTPS 证书链验证失败（curl 60）；未关闭证书校验。请确认设备时间、模块 CA 证书包和当前网络是否进行 HTTPS 解密。' >&2
+      ABP_TLS_WARNING_SHOWN=1
+    fi
+    return 1
+  fi
   bytes=$(wc -c < "$candidate_output" 2>/dev/null); case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
   [ "$bytes" -gt 0 ] && [ "$bytes" -le 52428800 ] || { rm -f "$candidate_output"; return 1; }
   first=$(head -c 512 "$candidate_output" | "$BB" tr '[:upper:]' '[:lower:]')
@@ -504,10 +539,13 @@ download_source() {
   url=$1; output=$2; name=$3
   [ -n "${CURL:-}" ] || CURL=$(abp_find_curl) || return 1
   echo "[进度] 下载规则源：$name"
+  candidate_host=${url#https://}; candidate_host=${candidate_host%%/*}
+  echo "[进度] 尝试规则源：$candidate_host"
   if download_candidate "$url" "$output"; then return 0; fi
   for mirror in $(source_mirror_urls "$url" 2>/dev/null); do
     [ -n "$mirror" ] && [ "$mirror" != "$url" ] || continue
-    echo "[提醒] 原地址失败，正在尝试 HTTPS 镜像：$name"
+    candidate_host=${mirror#https://}; candidate_host=${candidate_host%%/*}
+    echo "[提醒] 原地址失败，正在尝试 HTTPS 镜像：$candidate_host"
     if download_candidate "$mirror" "$output"; then echo "[+] 已通过 HTTPS 镜像下载：$name"; return 0; fi
   done
   echo "[!] 下载失败：$name。原地址和可用镜像均未成功；现有规则会保留。" >&2
@@ -735,7 +773,7 @@ apply_personal_filter_change() {
 }
 
 update_rules() {
-  local shared_sync_ok=0 sync_result
+  local sync_result
   LAST_SNAPSHOT=
   echo '[进度] 检查 AdGuard Home 服务状态'
   api GET /status 4 >/dev/null || { echo '[!] DNS 服务没有响应；现有规则未更改。' >&2; return 1; }
@@ -743,13 +781,13 @@ update_rules() {
   echo '[进度] 应用来源与黑白名单配置'
   selected_sources=$("$BB" sh "$MODDIR/webui-config.sh" list-sources) || { update_failed '[!] 无法读取已选规则来源。'; return 1; }
   if printf '%s\n' "$selected_sources" | "$BB" awk -F '\t' '$1=="source" && $4=="shared" && $5=="enabled" { found=1 } END { exit !found }'; then
-    if "$BB" sh "$RULE_STORE" sync; then shared_sync_ok=1; else echo '[提醒] 共享库同步失败，继续使用随包或上次有效快照。'; fi
+    "$BB" sh "$RULE_STORE" sync || echo '[提醒] 共享库同步失败，继续使用随包或上次有效快照。'
   fi
   sync_sources
   sync_result=$?
   if [ "$sync_result" -ne 0 ]; then
-    if [ "$sync_result" -eq 2 ] && [ "$shared_sync_ok" = 0 ]; then
-      echo '[!] 规则源下载失败；现有规则配置未修改，DNS 核心保持运行。' >&2
+    if [ "$sync_result" -eq 2 ]; then
+      echo '[!] 规则源下载失败；订阅配置未更改，DNS 核心保持运行。' >&2
       return 1
     fi
     update_failed '[!] 规则来源配置失败。'
