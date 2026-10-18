@@ -8,4 +8,6 @@ This project includes or redistributes the following upstream components and rul
 - **curl 8.23.0**: ARM64 Android binary at `bin/curl`, built from the upstream source with OpenSSL 3.5.9. curl is licensed under the curl license; OpenSSL is licensed under Apache-2.0. Full license texts are included at `licenses/curl-COPYING.txt` and `licenses/openssl-LICENSE.txt`.
 - **Mozilla CA root certificates (2026-09-25)**: PEM bundle at `certs/cacert.pem`, distributed by https://curl.se/docs/caextract.html under MPL-2.0. Source, checksum and update instructions are in `certs/README.md`; the license is at `licenses/cacert-MPL-2.0.txt`.
 
+- **go-openai v1.43.0**: OpenAI-compatible API client linked into the optional `bin/adblock-ai` helper. Source: https://github.com/sashabaranov/go-openai/tree/v1.43.0. Apache-2.0 license: `licenses/go-openai-Apache-2.0.txt`.
+
 See each upstream repository for its complete license and current source. The original AdBlock Pro code is licensed under GPL-3.0-only. The maintainer-approved public app-domain snapshot is included at `rules/shared-app-domains.txt`; local personal lists, credentials and device query logs are not included.

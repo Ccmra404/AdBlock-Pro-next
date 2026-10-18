@@ -10,7 +10,7 @@ function harness() {
     localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{},
     exec:command=>new Promise(resolve=>pending.push({command,resolve})),setTimeout,clearTimeout,setInterval(){return 1;},requestAnimationFrame(){},cancelAnimationFrame(){} });
   vm.runInContext(source,context);
-  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,observationAIPrompt,communityIssueUrl,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,rulesPage,sourceRows,sharedResultsMarkup,startObservation})',context)};
+  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,observationAIPrompt,communityIssueUrl,parseObservationSnapshot,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,rulesPage,sourceRows,sharedResultsMarkup,startObservation})',context)};
 }
 
 test('TXT export sections, DNS rules and JSON import preserve blacklist and whitelist semantics',()=>{
@@ -263,6 +263,23 @@ test('a new observation clears old selection and loaded results cannot revive it
  assert.deepEqual(Array.from(h.state.observationDomains,domain=>domain.domain),['ads.example']);
 });
 
+test('observation shows previously seen domains again when queried in this window and merges pages',()=>{
+ const h=harness();
+ const page1=JSON.stringify({data:[{time:'1970-01-01T00:00:02Z',question:{name:'ads.example'}},{time:'1970-01-01T00:00:00Z',question:{name:'outside.example'}}]});
+ const page2=JSON.stringify({data:[{time:'1970-01-01T00:00:03Z',question:{name:'ads.example'}},{time:'1970-01-01T00:00:03Z',question:{name:'old.example'}}]});
+ const parsed=h.parseObservationSnapshot(`${page1}\n__ABP_PAGE__\n${page2}\n__ABP_META__truncated=0\n`,1000);
+ assert.deepEqual(Array.from(parsed.domains,entry=>[entry.domain,entry.count]),[['ads.example',2],['old.example',1]]);
+ assert.equal(parsed.truncated,false);
+ h.state.observation={active:false,appLabel:'测试'};h.state.observationDomains=parsed.domains;
+ assert.match(h.observationPanel(),/本次观察域名|个域名/);assert.doesNotMatch(h.observationPanel(),/个新域名/);
+});
+
+test('observation warns when the private DNS snapshot reached its page cap',()=>{
+ const h=harness();h.state.observation={active:false,appLabel:'测试'};h.state.observationTruncated=true;
+ h.state.observationDomains=[{domain:'ads.example',count:1}];
+ assert.match(h.observationPanel(),/最多读取 2,000 条 DNS 记录，结果可能不完整/);
+});
+
 test('community candidate template requires privacy review and maintainer validation',()=>{
  const template=readFileSync(new URL('../.github/ISSUE_TEMPLATE/shared-rule-candidate.md',import.meta.url),'utf8');
  assert.match(template,/name: 共享规则候选/);assert.match(template,/原始 DNS 查询日志/);
@@ -287,7 +304,8 @@ test('selected observed domains are imported only after explicit confirmation an
  h.pending.shift().resolve({errno:0,stdout:'saved'});await new Promise(setImmediate);
  assert.match(h.pending[0].command,/config list-blacklist/);
  h.pending.shift().resolve({errno:0,stdout:'ads.example\n'});await new Promise(setImmediate);
- h.pending.shift().resolve({errno:0,stdout:'allowed.example\n'});await confirmed;
+ h.pending.shift().resolve({errno:0,stdout:'allowed.example\n'});await new Promise(setImmediate);
+ assert.match(h.pending[0].command,/start \d+ --apply-personal$/);h.pending.shift().resolve({errno:0,stdout:'started'});await confirmed;
  assert.deepEqual(Array.from(h.state.selectedObservationDomains),[]);
  assert.match(toast.textContent,/已加入个人拦截名单/);
 });
@@ -301,7 +319,8 @@ test('AI or manual TXT import previews additions and skips existing or overlappi
  const encoded=h.pending[0].command.match(/import-lists '([^']+)'/)[1];assert.equal(Buffer.from(encoded,'base64').toString(),'B\tnew.example\nW\tallow.example\n');
  h.pending.shift().resolve({errno:0,stdout:'saved'});await new Promise(setImmediate);
  h.pending.shift().resolve({errno:0,stdout:'ads.example\nnew.example\n'});await new Promise(setImmediate);
- h.pending.shift().resolve({errno:0,stdout:'login.example\nallow.example\n'});await importing;
+ h.pending.shift().resolve({errno:0,stdout:'login.example\nallow.example\n'});await new Promise(setImmediate);
+ assert.match(h.pending[0].command,/start \d+ --apply-personal$/);h.pending.shift().resolve({errno:0,stdout:'started'});await importing;
  assert.match(toast.textContent,/已导入 2 个个人规则/);
 });
 
@@ -316,6 +335,7 @@ test('allowing an observed domain confirms first, then saves the whitelist and r
  const confirmed=modal.callback();assert.match(h.pending[0].command,/config add-whitelist 'ads.example'/);
  h.pending.shift().resolve({errno:0,stdout:'saved'});await new Promise(setImmediate);
  assert.match(h.pending[0].command,/config list-whitelist/);
- h.pending.shift().resolve({errno:0,stdout:'ads.example\n'});await confirmed;
- assert.deepEqual(Array.from(h.state.lists.whitelist),['ads.example']);assert.match(toast.textContent,/放行名单/);
+ h.pending.shift().resolve({errno:0,stdout:'ads.example\n'});await new Promise(setImmediate);
+ assert.match(h.pending[0].command,/start \d+ --apply-personal$/);h.pending.shift().resolve({errno:0,stdout:'started'});await confirmed;
+ assert.deepEqual(Array.from(h.state.lists.whitelist),['ads.example']);assert.equal(h.state.job.action,'--apply-personal');assert.match(h.state.personalApplyMessage,/正在应用/);
 });

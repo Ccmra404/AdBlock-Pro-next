@@ -32,6 +32,26 @@ prune_jobs() {
 }
 
 case "$1" in
+ ai-status|ai-config|ai-clear|ai-start|ai-poll)
+  ai=/data/adb/adblockpro/bin/adblock-ai
+  [ -x "$ai" ] || { echo 'AI 分析组件不可用，请安装包含此功能的测试包。' >&2; exit 1; }
+  case "$1" in
+   ai-status) exec "$ai" status ;;
+   ai-clear) exec "$ai" clear ;;
+   ai-poll) case "$2" in ''|*[!0-9]*) exit 1;; esac; [ ${#2} -le 20 ] || exit 1; exec "$ai" poll "$2" ;;
+   ai-config) payload=$2; operation=configure ;;
+   ai-start) case "$2" in ''|*[!0-9]*) exit 1;; esac; [ ${#2} -le 20 ] || exit 1; payload=$3; operation=start ;;
+  esac
+  case "$payload" in ''|*[!A-Za-z0-9+/=]*) exit 1;; esac
+  [ ${#payload} -le 24000 ] || exit 1
+  # AI credentials and domain payloads must never enter operation logs.
+  if [ "$operation" = start ]; then
+   printf '%s' "$payload" | "$BB" base64 -d | "$ai" start "$2"
+  else
+   printf '%s' "$payload" | "$BB" base64 -d | "$ai" configure
+  fi
+  exit "$?"
+  ;;
  config)
   case "$2" in
    list-whitelist|list-blacklist|shared-rules) ;;
@@ -162,7 +182,7 @@ case "$1" in
  start)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--sync-shared|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
+  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
   case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
   if [ "$3" = --observe ]; then case "$4" in 5|10|15|30|60|90) ;; *) exit 1;; esac; fi
   if [ "$3" = --rollback-history ]; then echo "$4" | "$BB" grep -Eq '^[0-9]{14}-[0-9]+$' || exit 1; fi
@@ -170,14 +190,14 @@ case "$1" in
   # Atomic exclusive creation rejects a duplicate job ID.
   ( set -C; : > "$DIR/$2.log" ) 2>/dev/null || exit 1
   printf '%s\n%s\n' "$3" "$4" > "$DIR/$2.action.tmp" && mv "$DIR/$2.action.tmp" "$DIR/$2.action" || exit 1
-  case "$3" in --observe) echo "准备临时观察 $4 秒 DNS 域名…" > "$DIR/$2.log" ;; *) echo '任务已提交，正在等待下载或校验结果…' > "$DIR/$2.log" ;; esac
+  case "$3" in --apply-personal) echo "正在应用个人名单，无需下载订阅…" > "$DIR/$2.log" ;; --observe) echo "准备临时观察 $4 秒 DNS 域名…" > "$DIR/$2.log" ;; *) echo '任务已提交，正在等待下载或校验结果…' > "$DIR/$2.log" ;; esac
   "$BB" nohup "$BB" sh "$0" worker "$2" "$3" "$4" "${5:-}" </dev/null >/dev/null 2>&1 &
   echo started
   ;;
  worker)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--sync-shared|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
+  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
   case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
   if [ "$3" = --observe ]; then case "$4" in 5|10|15|30|60|90) ;; *) exit 1;; esac; fi
   # Serialize privileged mutations from multiple WebUI sessions.
@@ -201,7 +221,7 @@ case "$1" in
  execute)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--sync-shared|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1 ;; esac
+  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1 ;; esac
   if [ "$3" = --observe ]; then
     exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$4" "$2" "${5:-}"
   else
@@ -225,7 +245,7 @@ case "$1" in
  observe-clean)
   case "$2" in ''|*[!0-9]*) exit 1 ;; esac
   [ ${#2} -le 20 ] || exit 1
-  rm -f "/data/adb/bindhosts_personal/observations/$2.result" "/data/adb/bindhosts_personal/observations/$2.meta"
+  rm -f "/data/adb/bindhosts_personal/observations/$2.result" "/data/adb/bindhosts_personal/observations/$2.result.tmp" "/data/adb/bindhosts_personal/observations/$2.page.tmp" "/data/adb/bindhosts_personal/observations/$2.meta"
   ;;
  *) exit 1;;
 esac

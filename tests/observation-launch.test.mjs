@@ -18,7 +18,35 @@ api() {
  case "$2" in
  /querylog_info) printf '{"interval":24,"enabled":false,"anonymize_client_ip":false}' ;;
  /querylog_config) return 0 ;;
- /querylog*) printf '{"data":[]}' ;;
+ /querylog*)
+  case "$QUERYLOG_MODE:$2" in
+   paginate:*offset=0|fail-later:*offset=0)
+    printf '{"data":['
+    i=0
+    while [ "$i" -lt 200 ]; do
+     [ "$i" -eq 0 ] || printf ','
+     printf '{"time":"2026-10-18T11:00:00Z","question":{"name":"d%s.example"}}' "$i"
+     i=$((i + 1))
+    done
+    printf '],"oldest":"cursor-1"}'
+    ;;
+   paginate:*older_than=cursor-1) printf '{"data":[{"time":"2026-10-18T11:00:00Z","question":{"name":"older.example"}}]}' ;;
+   fail-later:*older_than=cursor-1) return 1 ;;
+   cap:*querylog*)
+    if echo "$2" | grep -q 'older_than='; then cursor=$(echo "$2" | sed 's/.*older_than=//'); n=$(echo "$cursor" | sed 's/^cursor-//'); else n=0; fi
+    next=$((n + 1))
+    printf '{"data":['
+    i=0
+    while [ "$i" -lt 200 ]; do
+     [ "$i" -eq 0 ] || printf ','
+     printf '{"time":"2026-10-18T11:00:00Z","question":{"name":"d%s.example"}}' "$i"
+     i=$((i + 1))
+    done
+    printf '],"oldest":"cursor-%s"}' "$next"
+    ;;
+   *) printf '{"data":[]}' ;;
+  esac
+  ;;
  esac
 }
 cmd() { [ "$NO_ACTIVITY" != 1 ] && echo com.coolapk.market/.MainActivity; }
@@ -57,4 +85,22 @@ test('activity commands use pipes when Android refuses regular-file stdout',t=>{
  const f=fixture(t),r=f.run('10','com.coolapk.market',{STRICT_BINDER_FDS:'1'});
  assert.equal(r.status,0,r.stderr);assert.match(readFileSync(f.trace,'utf8'),/am force-stop[\s\S]*am start/);
  assert.equal(existsSync(path.join(f.state,'observations/active')),false);
+});
+
+test('observation snapshots every query-log page and marks the configured upper bound',t=>{
+ const f=fixture(t),r=f.run('10','com.coolapk.market',{QUERYLOG_MODE:'paginate'});assert.equal(r.status,0,r.stderr);
+ const snapshot=readFileSync(path.join(f.state,'observations/123.result'),'utf8');
+ assert.match(readFileSync(f.trace,'utf8'),/\/querylog\?limit=200&offset=0[\s\S]*\/querylog\?limit=200&older_than=cursor-1/);
+ assert.equal((snapshot.match(/__ABP_PAGE__/g)||[]).length,1);
+ assert.match(snapshot,/older\.example/);assert.match(snapshot,/__ABP_META__truncated=0/);
+ const capped=fixture(t),c=capped.run('10','com.coolapk.market',{QUERYLOG_MODE:'cap'});assert.equal(c.status,0,c.stderr);
+ const cappedSnapshot=readFileSync(path.join(capped.state,'observations/123.result'),'utf8');
+ assert.equal((cappedSnapshot.match(/__ABP_PAGE__/g)||[]).length,9);
+ assert.match(cappedSnapshot,/__ABP_META__truncated=1/);
+});
+
+test('later query-log page failure preserves captured domains and marks incomplete results',t=>{
+ const f=fixture(t),r=f.run('10','com.coolapk.market',{QUERYLOG_MODE:'fail-later'});assert.equal(r.status,0,r.stderr);
+ const snapshot=readFileSync(path.join(f.state,'observations/123.result'),'utf8');
+ assert.match(snapshot,/d0\.example/);assert.match(snapshot,/__ABP_META__truncated=1/);
 });

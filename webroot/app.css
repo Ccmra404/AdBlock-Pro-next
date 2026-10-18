@@ -85,3 +85,17 @@ input,textarea,select,.field{-webkit-user-select:text;user-select:text}
 .app-match small{color:var(--muted);overflow-wrap:anywhere}.app-match.selected{border-color:var(--green);background:var(--soft)}
 @media(max-width:430px){.shared-entry{flex-wrap:wrap}.app-match strong{flex-basis:100%}.heading>.btn-row{flex-wrap:wrap}}
 @media(max-width:360px){.personal-counts{gap:7px}.personal-counts>div{padding:10px}.personal-counts strong{font-size:17px}}
+.ai-panel { margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+.ai-panel h3 { margin: 0; font-size: 15px; }
+.ai-form { display: grid; gap: 12px; margin-block: 16px; }
+.ai-form label { display: grid; gap: 6px; font-size: 12px; color: var(--ink); }
+.ai-target, .ai-results small { overflow-wrap: anywhere; }
+.ai-results { margin-block: 14px; }
+.ai-results .observe-copy { min-width: 0; }
+.ai-results .observe-copy small { white-space: normal; line-height: 1.6; }
+.ai-results input { flex-shrink: 0; width: 18px; height: 18px; accent-color: var(--green); }
+@media (max-width: 500px) {
+  .ai-results .observe-copy { flex: 1; flex-basis: calc(100% - 40px); }
+  .ai-results .tag { margin-left: 27px; }
+  .ai-form .btn-row > .btn { flex: 1 1 140px; }
+}
