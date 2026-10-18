@@ -101,7 +101,37 @@ case "$1" in
   sync)
     case "$SOURCE" in https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/*/rules/shared-app-domains.txt) ;; *) echo '[!] Invalid shared repository URL.' >&2; exit 1 ;; esac
     CURL=${CURL:-$(abp_find_curl)}
-    "$CURL" --silent --show-error --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 3 --max-time 12 --max-filesize 65536 "$SOURCE" -o "$work/download" || exit 1
+    [ -s "$AGH/certs/cacert.pem" ] || { echo '[!] 模块 CA 证书包缺失，无法安全同步共享规则。' >&2; exit 1; }
+    candidate_urls=$SOURCE
+    if [ "$SOURCE" = 'https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/shared-app-domains.txt' ]; then
+      candidate_urls="$candidate_urls https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt https://cdn.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt"
+    fi
+    downloaded=0
+    dns_failure=0
+    tls_failure=0
+    for candidate_url in $candidate_urls; do
+      candidate_host=${candidate_url#https://}
+      candidate_host=${candidate_host%%/*}
+      echo "[进度] 尝试共享规则源：$candidate_host"
+      if "$CURL" --cacert "$AGH/certs/cacert.pem" --silent --show-error --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 10 --max-time 20 --max-filesize 65536 "$candidate_url" -o "$work/download"; then
+        [ "$candidate_url" = "$SOURCE" ] || echo '[+] 共享规则已从 HTTPS 镜像获取。'
+        downloaded=1
+        break
+      else
+        curl_status=$?
+        case "$curl_status" in
+          6|28) dns_failure=1 ;;
+          60) tls_failure=1 ;;
+        esac
+      fi
+      rm -f "$work/download"
+    done
+    if [ "$downloaded" != 1 ]; then
+      [ "$dns_failure" != 1 ] || echo '[!] 共享规则镜像的域名无法解析或解析超时；请检查设备 DNS、VPN 或网络，旧快照已保留。' >&2
+      [ "$tls_failure" != 1 ] || echo '[!] 共享规则镜像的 TLS 证书校验失败；请检查系统时间、CA 证书或网络代理，未关闭证书校验，旧快照已保留。' >&2
+      echo '[!] 共享规则同步失败；现有共享规则快照和个人名单均已保留。' >&2
+      exit 1
+    fi
     normalize_shared "$work/download" "$work/next" || { echo '[!] Invalid shared rules; previous snapshot retained.' >&2; exit 1; }
     if [ -f "$SHARED" ]; then
       normalize_shared "$SHARED" "$work/current" || exit 1

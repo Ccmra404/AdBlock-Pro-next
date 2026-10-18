@@ -222,7 +222,7 @@ case "$1" in
     result=1
   fi
   if [ "$result" != 0 ]; then
-    echo "[!] Task failed or another DNS operation is already running (exit $result)." >> "$DIR/$2.log"
+    echo "[!] 任务执行失败（退出码 $result）；请查看上方具体错误。" >> "$DIR/$2.log"
   fi
   printf '%s\n' "$result" > "$DIR/$2.tmp" && mv "$DIR/$2.tmp" "$DIR/$2.done"
   bytes=$(wc -c < "$DIR/$2.log" 2>/dev/null)
