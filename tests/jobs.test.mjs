@@ -68,7 +68,7 @@ test('failed worker reports the action failure without falsely claiming a lock c
   const script = path.join(mod, 'webui-job.sh');
   const modified = source
     .replace('DIR=/data/adb/bindhosts_personal/webui-jobs', 'DIR=' + JSON.stringify(shellPath(dir)))
-    .replace('exec /system/bin/sh "$MODDIR/bindhosts.sh"', 'exec /bin/sh "$MODDIR/bindhosts.sh"');
+    .replaceAll('/system/bin/sh', '/bin/sh');
   writeFileSync(script, modified);
   const result = spawnSync('bash', [shellPath(script), 'worker', '1791000000002', '--update'], { encoding: 'utf8', env: fixture.env('Magisk'), timeout: 10000 });
   assert.equal(result.status, 0, result.stderr);
