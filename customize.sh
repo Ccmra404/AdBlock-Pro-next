@@ -76,7 +76,7 @@ mkdir -p "$MODPATH/scripts" || fail "Cannot prepare shared root helpers."
 cp "$compat_file" "$MODPATH/scripts/compat.sh" || fail "Cannot install the root compatibility helper."
 unzip -oq "$ZIPFILE" "scripts/adb-debug.sh" -d "$MODPATH" || fail "Cannot install the ADB diagnostics helper."
 chmod 755 "$MODPATH/scripts/adb-debug.sh" || fail "Cannot prepare the ADB diagnostics helper."
-if unzip -Z1 "$ZIPFILE" | grep -Fxq 'debug-build'; then
+if unzip -l "$ZIPFILE" | grep -Eq '^[[:space:]]*[0-9]+[[:space:]].*[[:space:]]debug-build$'; then
   unzip -oq "$ZIPFILE" "debug-build" -d "$MODPATH" || fail "Cannot enable the Debug build marker."
 fi
 : > "$MODPATH/skip_mount"

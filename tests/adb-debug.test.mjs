@@ -87,7 +87,8 @@ test('debug storage is opt-in, validates a bounded TSV, and uses private atomic 
   assert.match(debugScript, /dns_listener\|dns_listener_udp\|dns_listener_tcp\|dns_api/);
   assert.match(debugScript, /86400/);
   assert.match(installer, /scripts\/adb-debug\.sh" -d "\$MODPATH/);
-  assert.match(installer, /if unzip -Z1 "\$ZIPFILE" \| grep -Fxq 'debug-build'; then/);
+  assert.match(installer, /unzip -l "\$ZIPFILE" \| grep -Eq/);
+  assert.doesNotMatch(installer, /unzip -Z1/);
   assert.doesNotMatch(debugScript, /debug\.log|AdGuardHome\.yaml|admin\.auth|ip addr|iptables -t nat -L/);
 });
 
