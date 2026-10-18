@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
@@ -49,6 +49,9 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     const f = installFixture(t, family);
     const installed = f.install(); assert.equal(installed.status, 0, installed.stderr + installed.stdout);
     assert.equal(readFileSync(path.join(f.runtime, 'certs/cacert.pem'), 'utf8'), readFileSync(new URL('../certs/cacert.pem', import.meta.url), 'utf8'));
+    assert.match(readFileSync(path.join(f.runtime, 'defaults/settings.conf'), 'utf8'), /enable_ipv6_dns=false/);
+    assert.equal(existsSync(path.join(f.runtime, 'defaults/filters/10007.txt')), true);
+    assert.equal(existsSync(path.join(f.runtime, 'bin/adblock-bootstrap')), true);
     assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'on\n');
     assert.match(installed.stdout, /DNS takeover: on \(initialized\)/);
     assert.match(readFileSync(path.join(f.runtime, 'bin/adblock-ai'), 'utf8'), /AI-fixture/);

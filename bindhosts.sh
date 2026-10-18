@@ -858,6 +858,9 @@ case "$1" in
     "$AGH/scripts/tool.sh" stop || exit 1
     "$AGH/scripts/tool.sh" start
     ;;
+  --factory-reset)
+    exec "$BB" sh "$AGH/scripts/factory-reset.sh" "${2:-}"
+    ;;
   --check-domain)
     domain=$(printf '%s' "$2" | $BB tr '[:upper:]' '[:lower:]')
     valid_domain "$domain" || { echo '[!] Invalid domain.' >&2; exit 1; }
