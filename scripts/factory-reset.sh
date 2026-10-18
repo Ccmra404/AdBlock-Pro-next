@@ -22,7 +22,7 @@ restore_state() {
       [ -e "$item" ] || [ -L "$item" ] || continue
       name=${item##*/}
       case "$name" in
-        webui-jobs|update.lock|root-family) continue ;;
+      webui-jobs|update.lock|root-family|backups) continue ;;
         ai)
           for ai_item in "$STATE/ai"/* "$STATE/ai"/.[!.]* "$STATE/ai"/..?*; do
             [ -e "$ai_item" ] || [ -L "$ai_item" ] || continue
@@ -64,7 +64,7 @@ restore_runtime() {
 }
 
 rollback() {
-  echo '[恢复] 默认设置未能完整应用，正在恢复原有设置。' >&2
+    echo '[恢复] 默认设置未能完整应用，正在恢复原有设置。' >&2
   "$BB" sh "$TOOL" stop >/dev/null 2>&1 || {
     echo '[!] DNS 接管无法安全清理；保留原配置备份和恢复暂存目录。' >&2
     return 1
@@ -216,7 +216,7 @@ reset_defaults() {
       done
       continue
     fi
-      case "$name" in webui-jobs|update.lock|root-family) continue ;; esac
+      case "$name" in webui-jobs|update.lock|root-family|backups) continue ;; esac
     mv "$item" "$old_state/" || fail_after_stop "Cannot stage existing module state."
   done
   state_moved=1

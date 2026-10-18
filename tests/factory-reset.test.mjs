@@ -72,7 +72,7 @@ function fixture(t, options = {}) {
 test('factory reset backs up private state, restores package defaults and preserves runtime code', t => {
   const f = fixture(t); const result = f.run(['2000']);
   assert.equal(result.status, 0, result.stderr + result.stdout);
-  assert.match(result.stdout, /本机受限备份/);
+  assert.match(result.stdout, /下载目录创建模块备份/);
   assert.match(result.stdout, /IPv6 DNS 接管仍关闭/);
   assert.match(readFileSync(path.join(f.agh, 'settings.conf'), 'utf8'), /enable_ipv6_dns=false/);
   assert.equal(readFileSync(path.join(f.agh, 'admin.auth'), 'utf8'), 'admin:password\n');
