@@ -64,7 +64,7 @@ restore_runtime() {
 }
 
 rollback() {
-  echo '[恢复] 出厂重置未完成，正在恢复原有设置。' >&2
+  echo '[恢复] 默认设置未能完整应用，正在恢复原有设置。' >&2
   "$BB" sh "$TOOL" stop >/dev/null 2>&1 || {
     echo '[!] DNS 接管无法安全清理；保留原配置备份和恢复暂存目录。' >&2
     return 1
@@ -114,22 +114,24 @@ reset_defaults() {
     echo '[!] A required reset helper is missing; nothing was changed.' >&2; return 1;
   }
 
-  backup_dir="$AGH/backups"
-  mkdir -p "$backup_dir" || { echo '[!] Cannot create a private backup directory.' >&2; return 1; }
-  chmod 700 "$backup_dir" || { echo '[!] Cannot protect the backup directory.' >&2; return 1; }
+  backup_dir=${ABP_EXPORT_DIR:-/sdcard/Download/AdBlock Pro}
+  mkdir -p "$backup_dir" || { echo '[!] Cannot create the AdBlock Pro download directory.' >&2; return 1; }
+  chmod 755 "$backup_dir" || { echo '[!] Cannot make the AdBlock Pro download directory accessible.' >&2; return 1; }
   stamp=$(date '+%Y%m%d-%H%M%S')
-  backup="$backup_dir/factory-reset-$stamp.tar.gz"
-  [ ! -e "$backup" ] || backup="$backup_dir/factory-reset-$stamp-$$.tar.gz"
+  backup="$backup_dir/AdBlock-Pro-default-settings-$stamp.tar.gz"
+  [ ! -e "$backup" ] || backup="$backup_dir/AdBlock-Pro-default-settings-$stamp-$$.tar.gz"
   backup_tmp="$backup.tmp"
   stage="$AGH/.factory-reset-stage.$$"
   old_state="$stage/old-state"
   old_runtime="$stage/old-runtime"
   new_state="$stage/new-state"
   new_runtime="$stage/new-runtime"
+  backup_state="$stage/backup-snapshot/module-state"
+  backup_runtime="$stage/backup-snapshot/adguard-home"
   stopped=0
   state_moved=0
   runtime_moved=0
-  mkdir -p "$old_state" "$old_runtime/bin" "$new_state" "$new_runtime/bin/data/filters" "$new_runtime/bin/userfilters" || {
+  mkdir -p "$old_state" "$old_runtime/bin" "$new_state" "$new_runtime/bin/data/filters" "$new_runtime/bin/userfilters" "$backup_state" "$backup_runtime/bin" || {
     rm -rf "$stage"; echo '[!] Cannot prepare a safe reset workspace.' >&2; return 1;
   }
 
@@ -169,9 +171,27 @@ reset_defaults() {
   : > "$new_state/v3-installed"
   chmod 600 "$new_state"/* || { rm -rf "$stage"; echo '[!] Cannot protect fresh-install preferences.' >&2; return 1; }
 
-  echo '[进度] 创建本机受限备份…'
-  if ! "$TARBIN" -czf "$backup_tmp" -C "$STATE" . -C "$AGH" settings.conf admin.auth bin/AdGuardHome.yaml bin/data bin/userfilters ||
-     [ ! -s "$backup_tmp" ] || ! "$TARBIN" -tzf "$backup_tmp" >/dev/null 2>&1; then
+  echo "[进度] 在下载目录创建模块备份：$backup_dir"
+  for item in "$STATE"/* "$STATE"/.[!.]* "$STATE"/..?*; do
+    [ -e "$item" ] || [ -L "$item" ] || continue
+    name=${item##*/}
+    case "$name" in backups|.factory-reset-stage.*) continue ;; esac
+    cp -R "$item" "$backup_state/" || {
+      rm -rf "$stage"; echo '[!] Cannot stage private module data for backup; original settings were not changed.' >&2; return 1;
+    }
+  done
+  for item in settings.conf admin.auth bin/AdGuardHome.yaml bin/data bin/userfilters; do
+    mkdir -p "$backup_runtime/$(dirname "$item")" || {
+      rm -rf "$stage"; echo '[!] Cannot prepare AdGuard Home backup files; original settings were not changed.' >&2; return 1;
+    }
+    cp -R "$AGH/$item" "$backup_runtime/$item" || {
+      rm -rf "$stage"; echo '[!] Cannot copy AdGuard Home backup files; original settings were not changed.' >&2; return 1;
+    }
+  done
+  if ! "$TARBIN" -czf "$backup_tmp" -C "$stage/backup-snapshot" module-state adguard-home ||
+     [ ! -s "$backup_tmp" ] || ! "$TARBIN" -tzf "$backup_tmp" > "$stage/backup-list" 2>/dev/null ||
+     ! "$BB" grep -Fxq 'adguard-home/admin.auth' "$stage/backup-list" ||
+     ! "$BB" grep -Fxq 'adguard-home/bin/AdGuardHome.yaml' "$stage/backup-list"; then
     rm -f "$backup_tmp"; rm -rf "$stage"
     echo '[!] 备份创建或校验失败；原配置未更改。' >&2
     return 1
@@ -241,10 +261,10 @@ reset_defaults() {
 
 case "${1:-}" in
   __locked) shift; reset_defaults "$@" ;;
-  '') echo '[!] Factory-reset task id is required.' >&2; exit 1 ;;
+  '') echo '[!] 缺少默认设置恢复任务编号。' >&2; exit 1 ;;
   *)
-    case "$1" in *[!0-9]*) echo '[!] Invalid reset task id.' >&2; exit 1 ;; esac
-    [ ${#1} -le 20 ] || { echo '[!] Invalid reset task id.' >&2; exit 1; }
+    case "$1" in *[!0-9]*) echo '[!] 默认设置恢复任务编号无效。' >&2; exit 1 ;; esac
+    [ ${#1} -le 20 ] || { echo '[!] 默认设置恢复任务编号无效。' >&2; exit 1; }
     [ -d "$AGH" ] && [ -d "$STATE" ] || { echo '[!] Module data paths are incomplete; nothing was changed.' >&2; exit 1; }
     mkdir -p "$STATE/ai" || { echo '[!] Cannot prepare the AI task lock.' >&2; exit 1; }
     reset_guard="$AGH/factory-reset.active"
@@ -253,13 +273,13 @@ case "${1:-}" in
       case "$old_pid" in ''|*[!0-9]*) old_pid='' ;; esac
       if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
         if [ ! -r "/proc/$old_pid/cmdline" ] || "$BB" tr '\000' ' ' < "/proc/$old_pid/cmdline" | "$BB" grep -Fq "$AGH/scripts/factory-reset.sh"; then
-          echo '[!] A factory reset is already running.' >&2
+          echo '[!] 默认设置恢复正在执行，请等待完成后重试。' >&2
           exit 1
         fi
       fi
       rm -f "$reset_guard" || { echo '[!] Cannot clear an expired reset marker.' >&2; exit 1; }
     fi
-    ( set -C; printf '%s\n' "$$" > "$reset_guard" ) 2>/dev/null || { echo '[!] A factory reset is already running.' >&2; exit 1; }
+    ( set -C; printf '%s\n' "$$" > "$reset_guard" ) 2>/dev/null || { echo '[!] 默认设置恢复正在执行，请等待完成后重试。' >&2; exit 1; }
     chmod 600 "$reset_guard" || { rm -f "$reset_guard"; exit 1; }
     "$BB" flock -n "$STATE/update.lock" "$BB" flock -n "$STATE/ai/worker.lock" "$BB" sh "$0" __locked "$1"
     result=$?

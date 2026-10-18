@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
@@ -8,7 +8,7 @@ import { rootFixture, shellPath } from './shell-fixture.mjs';
 function fixture(t, options = {}) {
   const root = rootFixture(t); root.addBusybox('Magisk');
   const agh = path.join(root.dir, 'agh'), state = path.join(root.dir, 'state'), module = path.join(root.dir, 'module');
-  const defaults = path.join(agh, 'defaults'), jobs = path.join(state, 'webui-jobs');
+  const defaults = path.join(agh, 'defaults'), jobs = path.join(state, 'webui-jobs'), exports = path.join(root.dir, 'exports');
   for (const dir of [path.join(defaults, 'filters'), path.join(agh, 'bin/data/filters'), path.join(agh, 'bin/userfilters'), jobs, module, path.join(state, 'ai')]) mkdirSync(dir, { recursive: true });
   const put = (file, text) => { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, text); };
   put(path.join(defaults, 'settings.conf'), 'enable_ipv6_dns=false\nblock_ipv6_dns=false\nredir_port=5591\n');
@@ -61,12 +61,12 @@ function fixture(t, options = {}) {
   const env = {
     ...root.env('Magisk'), ABP_AGH_DIR: shellPath(agh), ABP_STATE_DIR: shellPath(state), ABP_MODULE_DIR: shellPath(module),
     ABP_JOBS_DIR: shellPath(jobs), ABP_TOOL: shellPath(tool), ABP_BOOTSTRAP: shellPath(bootstrap), ABP_CONFIG_SCRIPT: shellPath(config),
-    ABP_RENDER_SCRIPT: shellPath(render), ABP_RULE_STORE: shellPath(rules), ABP_COMPAT: shellPath(root.compatFile),
+    ABP_RENDER_SCRIPT: shellPath(render), ABP_RULE_STORE: shellPath(rules), ABP_COMPAT: shellPath(root.compatFile), ABP_EXPORT_DIR: shellPath(exports),
     ABP_TRACE: shellPath(trace), ABP_FIRST_START: shellPath(path.join(root.dir, 'first-start')), ABP_TAR: options.tarFailure ? shellPath(path.join(root.dir, 'tar-fail.sh')) : 'tar',
   };
   if (options.tarFailure) { put(path.join(root.dir, 'tar-fail.sh'), '#!/bin/sh\nexit 1\n'); chmodSync(path.join(root.dir, 'tar-fail.sh'), 0o755); }
   const run = args => spawnSync('bash', [shellPath(script), ...args], { encoding: 'utf8', timeout: 15000, env });
-  return { root, agh, state, module, jobs, trace, run };
+  return { root, agh, state, module, jobs, exports, env, trace, run };
 }
 
 test('factory reset backs up private state, restores package defaults and preserves runtime code', t => {
@@ -95,12 +95,16 @@ test('factory reset backs up private state, restores package defaults and preser
   assert.equal(existsSync(path.join(f.module, 'bindhosts.sh')), true);
   assert.equal(existsSync(path.join(f.jobs, '2000.log')), true);
   assert.equal(existsSync(path.join(f.jobs, '1000.log')), false);
-  const backup = readdirSync(path.join(f.agh, 'backups')).find(name => name.endsWith('.tar.gz'));
+  const backup = readdirSync(f.exports).find(name => name.endsWith('.tar.gz'));
   assert.ok(backup);
-  const backupContents = spawnSync('tar', ['-tzf', shellPath(path.join(f.agh, 'backups', backup))], { encoding: 'utf8' });
+  assert.match(backup, /^AdBlock-Pro-default-settings-/);
+  assert.equal(statSync(path.join(f.exports, backup)).mode & 0o777, 0o600, 'the archive includes credentials and stays private');
+  const backupContents = spawnSync('tar', ['-tzf', shellPath(path.join(f.exports, backup))], { encoding: 'utf8' });
   assert.equal(backupContents.status, 0, backupContents.stderr);
-  assert.match(backupContents.stdout, /ai\/config\.json/);
-  assert.match(backupContents.stdout, /admin\.auth/);
+  assert.match(backupContents.stdout, /module-state\/ai\/config\.json/);
+  assert.match(backupContents.stdout, /adguard-home\/admin\.auth/);
+  assert.doesNotMatch(backupContents.stdout, /\.tmp|backups\//, 'the backup must not contain itself or prior backup archives');
+  assert.doesNotMatch(result.stderr, /file is the archive; skipping/);
   assert.deepEqual(readFileSync(f.trace, 'utf8').trim().split('\n'), ['stop', 'start']);
 });
 
@@ -110,6 +114,20 @@ test('backup failure aborts before DNS stop or any state mutation', t => {
   assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), 'private-block.example\n');
   assert.equal(readFileSync(path.join(f.agh, 'admin.auth'), 'utf8'), 'private:old-password-hash\n');
   assert.equal(existsSync(f.trace), false);
+});
+
+test('backup staging excludes its destination when the download folder is nested under module state', t => {
+  const f = fixture(t);
+  const exportDir = path.join(f.state, 'backups');
+  f.env.ABP_EXPORT_DIR = shellPath(exportDir);
+  const result = f.run(['2000']);
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  const backup = readdirSync(exportDir).find(name => name.endsWith('.tar.gz'));
+  assert.ok(backup);
+  const listing = spawnSync('tar', ['-tzf', shellPath(path.join(exportDir, backup))], { encoding: 'utf8' });
+  assert.equal(listing.status, 0, listing.stderr);
+  assert.doesNotMatch(listing.stdout, /backups\/|\.tmp/);
+  assert.doesNotMatch(result.stderr, /file is the archive; skipping/);
 });
 
 test('DNS stop failure preserves settings and never starts a reset', t => {
@@ -129,7 +147,7 @@ test('queued or running AI jobs block reset before backup or DNS changes', t => 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /AI analysis is still running/);
   assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), 'private-block.example\n');
-  assert.equal(existsSync(path.join(f.agh, 'backups')), false);
+  assert.equal(existsSync(f.exports), false);
   assert.equal(existsSync(f.trace), false);
   assert.equal(existsSync(path.join(f.agh, 'factory-reset.active')), false);
 });

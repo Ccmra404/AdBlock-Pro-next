@@ -20,6 +20,8 @@ const LOG_CACHE_MS = 15000;
 const OBSERVE_SESSION_KEY = 'abp-observation-session';
 let lastJobId = 0;
 function nextJobId() { lastJobId = Math.max(Date.now(), lastJobId + 1); return String(lastJobId); }
+let lastExportId = 0;
+function nextExportId() { lastExportId = Math.max(Date.now(), lastExportId + 1); return String(lastExportId); }
 const sourceCache = new Map();
 const sourceCacheTime = new Map();
 const SOURCE_CACHE_MS = 30000;
@@ -196,7 +198,7 @@ function personalRulesPage() {
   if (state.rulesView === 'shared') return sharedRulesPage();
   const blocked = state.lists.blacklist || [];
   const allowed = state.lists.whitelist || [];
-  return `${heading('个人规则', '本机名单独立保存；共享抓包规则供各设备同步', '<div class="btn-row"><button class="btn" data-action="personal-rules-apply">应用个人名单</button><button class="btn" data-action="personal-rules-import">导入</button><button class="btn" data-action="personal-rules-export">导出</button></div>')}<input id="personal-rules-file" type="file" accept=".txt,.json,text/plain,application/json" hidden>
+  return `${heading('个人规则', '本机名单独立保存；共享抓包规则供各设备同步 · 导出到 Download/AdBlock Pro', '<div class="btn-row"><button class="btn" data-action="personal-rules-apply">应用个人名单</button><button class="btn" data-action="personal-rules-import">导入</button><button class="btn" data-action="personal-rules-export">导出</button></div>')}<input id="personal-rules-file" type="file" accept=".txt,.json,text/plain,application/json" hidden>
     <div class="stack">${observationPanel()}<section class="panel personal-summary"><div class="panel-head"><div><h2 class="section-title">名单概览</h2><p class="section-sub">仅统计本机个人规则，不含订阅规则和 DNS 查询记录</p></div>${tag(`${blocked.length + allowed.length} 条`)}</div><p id="personal-apply-status" class="field-help${state.personalApplyError ? ' notice warn' : ''}" role="status">${esc(state.personalApplyMessage || '修改名单后自动单独应用；失败可点“应用个人名单”重试。')}</p><div class="personal-counts"><div><strong>${fmt(blocked.length)}</strong><span>拦截域名</span></div><div><strong>${fmt(allowed.length)}</strong><span>放行域名</span></div></div></section><div class="twocol">${ruleList('blacklist')}${ruleList('whitelist')}</div><button type="button" class="panel shared-entry" data-action="shared-open"><span>${icon('globe')}<strong>共享抓包规则库</strong></span><span>查看与同步 ${icon('external')}</span></button></div>`;
 }
 function sharedResultsMarkup() {
@@ -221,10 +223,10 @@ function managePage() {
   return `${heading('系统设置', '管理 DNS 接管、自动运行与维护')}
     <div class="stack"><section class="panel"><div class="panel-head"><div><h2 class="section-title">运行设置</h2><p class="section-sub">过滤暂停不会关闭 DNS 核心；DNS 接管可单独撤销</p></div></div><div class="rows">${row('globe','DNS 接管','控制本模块的 DNS 重定向规则',toggle('takeover',s?.dns_takeover === 'on','DNS 接管'))}${row('power','开机自动运行','关闭后下次开机不自动启动核心',toggle('autostart',s?.autostart !== 'off','开机自动运行'))}${row('refresh','每日自动更新','由 AdGuard Home 按每日周期更新规则',toggle('auto-update',s?.auto_update !== 'off','每日自动更新'))}</div><div class="notice warn" style="margin-top:14px">${icon('info')}<span>此模块只接管 IPv4 明文 DNS。私人 DNS、VPN、应用内 DoH/DoT 可能绕过过滤；IPv6 DNS 不接管。</span></div></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">运行维护</h2><p class="section-sub">诊断结果统一保存在运行日志中</p></div></div><div class="btn-row"><button class="btn" data-action="diagnose">${icon('activity')} 运行诊断</button><button class="btn" data-action="restart">${icon('refresh')} 重启 DNS 核心</button><button class="btn btn-danger" data-action="disable-takeover">${icon('power')} 紧急解除接管</button><button class="btn" data-nav="logs">查看运行日志</button></div></section>
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">恢复出厂配置</h2><p class="section-sub">按当前安装包的默认状态重新初始化模块</p></div></div><p class="field-help">会重置订阅源及名称、个人黑白名单、AI 接口密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享快照、日志和历史。DNS 接管恢复为 IPv4 默认开启，IPv6 接管仍关闭。操作前会在设备本地创建受限备份。</p><button class="btn btn-danger" data-action="factory-reset">${icon('refresh')} 恢复出厂配置</button></section>
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">恢复默认设置</h2><p class="section-sub">按当前安装包的默认状态重新初始化模块</p></div></div><p class="field-help">会重置订阅源及名称、个人黑白名单、AI 接口密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享快照、日志和历史。DNS 接管恢复为 IPv4 默认开启，IPv6 接管仍关闭。操作前会在 Download/AdBlock Pro 创建本机备份。</p><button class="btn btn-danger" data-action="restore-defaults">${icon('refresh')} 恢复默认设置</button></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">管理入口</h2><p class="section-sub">规则高级配置由 AdGuard Home 原生后台提供</p></div></div><div class="action-grid"><a class="action-card" href="http://127.0.0.1:3000/" target="_blank" rel="noopener">${icon('external')}<span class="action-text"><strong>AdGuard Home 后台</strong><small>订阅、上游 DNS 与查询日志</small></span></a><button type="button" class="action-card" data-action="copy-gkd-link">${icon('activity')}<span class="action-text"><strong>GKD 项目</strong><small>复制项目链接，在浏览器中查看</small></span></button><button type="button" class="action-card" data-action="ai-settings">${icon('settings')}<span class="action-text"><strong>AI 域名分析</strong><small>DeepSeek 或自定义兼容接口</small></span></button></div><p class="field-help">WebUI 不保存或展示 AdGuard Home 管理密码；首次登录凭据由安装包单独提供。</p></section><div id="ai-settings-panel">${aiSettingsMarkup()}</div></div>`;
 }
-const actionNames = { '--apply-personal': '应用个人名单', '--sync-shared': '同步共享规则', 'import-lists': '导入个人名单', 'export-rules': '导出规则', '--update': '规则更新', '--pause': '暂停过滤核心', '--resume': '启动过滤核心', '--rollback': '恢复规则', '--rollback-history': '恢复历史规则', '--filtering': '过滤开关', '--takeover': 'DNS 接管', '--restart': '重启 DNS 核心', '--factory-reset': '恢复出厂配置', '--diagnose': '环境诊断', '--observe': '域名观察', diagnose: '环境诊断', 'set-mode': '切换过滤模式', 'set-source': '切换规则来源', 'add-source': '导入规则来源', 'remove-source': '删除规则来源', 'add-whitelist': '添加白名单', 'remove-whitelist': '删除白名单', 'add-blacklist': '添加黑名单', 'remove-blacklist': '删除黑名单', 'auto-update': '自动更新设置', autostart: '开机运行设置' };
+const actionNames = { '--apply-personal': '应用个人名单', '--sync-shared': '同步共享规则', 'import-lists': '导入个人名单', 'export-rules': '导出规则', '--update': '规则更新', '--pause': '暂停过滤核心', '--resume': '启动过滤核心', '--rollback': '恢复规则', '--rollback-history': '恢复历史规则', '--filtering': '过滤开关', '--takeover': 'DNS 接管', '--restart': '重启 DNS 核心', '--factory-reset': '恢复默认设置', '--diagnose': '环境诊断', '--observe': '域名观察', diagnose: '环境诊断', 'set-mode': '切换过滤模式', 'set-source': '切换规则来源', 'add-source': '导入规则来源', 'remove-source': '删除规则来源', 'add-whitelist': '添加白名单', 'remove-whitelist': '删除白名单', 'add-blacklist': '添加黑名单', 'remove-blacklist': '删除黑名单', 'auto-update': '自动更新设置', autostart: '开机运行设置' };
 function logRow(line) {
   const [id, status, action, argument, summary] = line.split('\t');
   if (!/^\d{1,20}$/.test(id || '')) return '';
@@ -463,7 +465,7 @@ async function importAIResults() {
 function logsPage() {
   const filters = [['all', '全部'], ['running', '进行中'], ['failure', '提醒'], ['success', '成功']];
   return `${heading('运行日志', '统一查看模块操作与环境诊断')}
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">操作记录</h2><p class="section-sub">最近最多 120 条 · 每页 10 条 · 不保存 DNS 请求详情</p></div><div class="btn-row log-head-actions"><button class="btn" data-action="logs-refresh">刷新</button><button class="btn" data-action="logs-copy">复制日志</button><button class="btn" data-action="logs-export">导出</button></div></div><div class="log-tools"><input id="log-search" class="field" type="search" placeholder="搜索操作日志" value="${esc(state.logSearch)}"><div class="log-filters">${filters.map(([key, label]) => `<button class="log-filter ${state.logFilter === key ? 'selected' : ''}" data-filter="${key}">${label}</button>`).join('')}</div><button class="btn btn-danger" data-action="logs-clear">清空</button></div><div id="log-list" class="log-list">${logListMarkup()}</div></section>`;
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">操作记录</h2><p class="section-sub">最近最多 120 条 · 每页 10 条 · 不保存 DNS 请求详情 · 导出到 Download/AdBlock Pro</p></div><div class="btn-row log-head-actions"><button class="btn" data-action="logs-refresh">刷新</button><button class="btn" data-action="logs-copy">复制日志</button><button class="btn" data-action="logs-export">导出</button></div></div><div class="log-tools"><input id="log-search" class="field" type="search" placeholder="搜索操作日志" value="${esc(state.logSearch)}"><div class="log-filters">${filters.map(([key, label]) => `<button class="log-filter ${state.logFilter === key ? 'selected' : ''}" data-filter="${key}">${label}</button>`).join('')}</div><button class="btn btn-danger" data-action="logs-clear">清空</button></div><div id="log-list" class="log-list">${logListMarkup()}</div></section>`;
 }
 function render(preservePageCache = false) {
   // Full state changes invalidate detached pages; ordinary navigation retains them.
@@ -856,7 +858,7 @@ async function monitorJob(id, action) {
       state.job = null; setBusy(false);
       syncStatusView();
       if (action === '--observe' || action === '--factory-reset' || (action === '--apply-personal' && state.page === 'lists') || (state.page === 'lists' && state.rulesView === 'shared')) render();
-      toast(action === '--apply-personal' ? state.personalApplyMessage : action === '--observe' ? (code === 0 ? `观察完成，记录 ${fmt(state.observationDomains.length)} 个域名` : '域名观察失败') : action === '--factory-reset' ? (code === 0 ? '已恢复出厂配置；本机备份位置见运行日志' : '恢复出厂配置失败；请查看运行日志') : (code === 0 ? '操作已完成' : '操作失败，请查看运行日志'));
+      toast(action === '--apply-personal' ? state.personalApplyMessage : action === '--observe' ? (code === 0 ? `观察完成，记录 ${fmt(state.observationDomains.length)} 个域名` : '域名观察失败') : action === '--factory-reset' ? (code === 0 ? '已恢复默认设置；备份位置见运行日志' : '恢复默认设置失败；请查看运行日志') : (code === 0 ? '操作已完成' : '操作失败，请查看运行日志'));
       return code;
     }
     if (action === '--update') {
@@ -993,15 +995,16 @@ function confirm(title, message, yesLabel, onYes) {
 async function perform(action, argument = '') {
   try {
     if (state.busy) return;
-    if (action === '--factory-reset' && state.aiBusy) throw new Error('请先等待 AI 分析结束，再恢复出厂配置');
+    if (action === '--factory-reset' && state.aiBusy) throw new Error('请先等待 AI 分析结束，再恢复默认设置');
     if (action === '--update' && state.page !== 'rules') { state.page = 'rules'; render(); }
     await startJob(action, argument);
   } catch (error) { setBusy(false); syncStatusView(); toast(error.message || String(error)); }
 }
 async function exportLogs() {
   const rows = state.logs.map(line => { const [id, status, action, argument, summary] = line.split('\t'); return { time: new Date(Number(id)).toISOString(), status, action: actionNames[action] || action, argument, summary }; });
-  const blob = new Blob([JSON.stringify(rows, null, 2)], { type: 'application/json;charset=utf-8' });
-  const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'adblock-pro-operation-logs.json'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const content = JSON.stringify(rows, null, 2);
+  const path = await saveExportFile('operation-logs', content, 'AdBlock-Pro-operation-logs.json', 'application/json;charset=utf-8');
+  if (path) toast(`日志已导出到：${path}`);
 }
 async function copyRecentLogs() {
   const result = await exec(`${JOB} recent-full`);
@@ -1009,26 +1012,39 @@ async function copyRecentLogs() {
   await copyText(result.stdout || '');
   toast('最近任务日志已复制（含命令输出）');
 }
-function exportObservedDomains() {
+async function exportObservedDomains() {
   const text = observationExportText();
   if (!text) throw new Error('请先选择要导出的域名');
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.href = url; link.download = 'adblock-pro-observed-domains.txt'; link.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  const path = await saveExportFile('observed-domains', text, 'AdBlock-Pro-observed-domains.txt', 'text/plain;charset=utf-8');
+  return path;
 }
 async function exportPersonalRules() {
   if (window.ksu) {
     const result = await runConfig('export-rules', 'local');
     const path = String(result.stdout || '').match(/exported_path=([^\r\n]+)/)?.[1];
     if (!path) throw new Error('未能确认导出文件，请检查下载目录权限');
-    toast(`已导出到下载目录：${path.split('/').at(-1)}`);
+    toast(`已导出到：${path}`);
     return;
   }
   const lines = ['# AdBlock Pro 个人规则', `# 导出日期：${new Date().toISOString().slice(0, 10)}`, '', '[拦截名单]', ...(state.lists.blacklist || []), '', '[放行名单]', ...(state.lists.whitelist || [])];
-  const blob = new Blob([lines.join('\n') + '\n'], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = 'adblock-pro-personal-rules.txt'; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+  downloadBlob(lines.join('\n') + '\n', 'AdBlock-Pro-personal-rules.txt', 'text/plain;charset=utf-8');
+}
+function downloadBlob(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+async function saveExportFile(kind, content, fallbackName, mime) {
+  if (!window.ksu) { downloadBlob(content, fallbackName, mime); return ''; }
+  const bytes = new TextEncoder().encode(content);
+  if (bytes.length > 65536) throw new Error('导出文件不能超过 64 KB');
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  const payload = btoa(binary);
+  const result = await exec(`${JOB} config export-file ${kind} ${nextExportId()} ${shellArg(payload)}`);
+  if (Number(result.errno)) throw new Error(textOf(result) || '无法写入下载目录');
+  const path = String(result.stdout || '').match(/exported_path=([^\r\n]+)/)?.[1];
+  if (!path) throw new Error('未能确认导出文件，请检查下载目录权限');
+  return path;
 }
 
 let sharedPending = null;
@@ -1314,7 +1330,7 @@ document.addEventListener('click', async event => {
       try { await copyText(selectedObservationDomains().join('\n')); toast('已复制所选域名'); } catch (e) { toast(e.message); }
       break;
     case 'observe-export':
-      try { exportObservedDomains(); toast('已导出所选域名 TXT'); } catch (e) { toast(e.message); }
+      try { const path = await exportObservedDomains(); toast(path ? `已导出到：${path}` : '已导出所选域名 TXT'); } catch (e) { toast(e.message); }
       break;
     case 'observe-copy-ai':
       try { await copyText(observationAIPrompt()); toast('已复制 AI 分析模板和所选域名'); } catch (e) { toast(e.message); }
@@ -1344,7 +1360,7 @@ document.addEventListener('click', async event => {
     }
     case 'update': perform('--update'); break;
     case 'restart': confirm('重启 DNS 核心', '会重启本模块的 AdGuard Home 服务，可能短暂中断 DNS 解析。', '重启', () => perform('--restart')); break;
-    case 'factory-reset': confirm('恢复出厂配置？', '这相当于在当前版本上全新安装：会清除自定义订阅和名称、个人黑白名单、AI 密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享同步状态、观察结果、日志和历史；过滤及自动运行恢复默认开启，DNS 接管恢复为 IPv4 默认开启，IPv6 仍关闭。执行前会先创建仅保存在本机的受限备份，并在完成后重启 DNS 核心。', '备份并重置', () => perform('--factory-reset')); break;
+    case 'restore-defaults': confirm('恢复默认设置？', '这会按当前安装包恢复模块默认状态：清除自定义订阅和名称、个人黑白名单、AI 密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享同步状态、观察结果、日志和历史；过滤及自动运行恢复默认开启，DNS 接管恢复为 IPv4 默认开启，IPv6 仍关闭。执行前会在 Download/AdBlock Pro 创建本机备份，并在完成后重启 DNS 核心。', '备份并恢复', () => perform('--factory-reset')); break;
     case 'disable-takeover': confirm('紧急解除 DNS 接管', '只会移除本模块创建的 DNS 重定向规则，AdGuard Home 服务会继续运行。', '解除接管', () => perform('--takeover', 'off')); break;
     case 'rollback': { const key = $('#history-select')?.value; if (!key) { toast('请先选择一个历史版本'); break; } confirm('恢复历史规则', '将替换当前规则来源和缓存。恢复后会重启 DNS 核心。', '恢复', () => perform('--rollback-history', key)); break; }
     case 'source-toggle': {
@@ -1365,7 +1381,7 @@ document.addEventListener('click', async event => {
     case 'logs-refresh': loadLogs(true).then(() => toast('日志已刷新')).catch(e => toast(e.message)); break;
     case 'logs-copy': try { await copyRecentLogs(); } catch (e) { toast(e.message || '复制日志失败'); } break;
     case 'logs-clear': confirm('清空操作日志？', '只删除本模块的操作记录，不会影响规则历史或当前过滤配置。', '清空日志', async () => { try { const r = await exec(`${JOB} clear`); if (Number(r.errno)) throw new Error(textOf(r)); await loadLogs(true); toast('操作日志已清空'); } catch (e) { toast(e.message); } }); break;
-    case 'logs-export': exportLogs(); break;
+    case 'logs-export': exportLogs().catch(e => toast(e.message || '日志导出失败')); break;
     case 'logs-page': state.logPage = Number(button.dataset.page); renderLogList(); break;
     case 'list-page': { const kind = button.dataset.kind; state.listPage[kind] = Math.max(0, Number(button.dataset.page) || 0); renderListResults(kind); break; }
     case 'observe-page': state.observationPage = Number(button.dataset.page); $('#observation-list').innerHTML = observationRows(); break;

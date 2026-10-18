@@ -39,7 +39,7 @@ case "$1" in
    case "$reset_pid" in ''|*[!0-9]*) reset_pid='' ;; esac
    if [ -n "$reset_pid" ] && kill -0 "$reset_pid" 2>/dev/null; then
     if [ ! -r "/proc/$reset_pid/cmdline" ] || "$BB" tr '\000' ' ' < "/proc/$reset_pid/cmdline" | "$BB" grep -Fq "$AGH/scripts/factory-reset.sh"; then
-     echo '[!] Factory reset is in progress; retry after it finishes.' >&2; exit 1
+     echo '[!] 默认设置恢复正在执行，请等待完成后重试。' >&2; exit 1
     fi
    fi
    rm -f "$AGH/factory-reset.active"
@@ -68,6 +68,7 @@ case "$1" in
    list-whitelist|list-blacklist|shared-rules) ;;
    import-lists) case "$3" in ''|*[!A-Za-z0-9+/=]*) exit 1 ;; esac; [ ${#3} -le 98304 ] || exit 1 ;;
    export-rules) case "$3" in local|shared) ;; *) exit 1 ;; esac ;;
+   export-file) case "$3" in operation-logs|observed-domains) ;; *) exit 1 ;; esac; case "$4" in ''|*[!0-9]*) exit 1 ;; esac; [ ${#4} -le 20 ] || exit 1; case "$5" in ''|*[!A-Za-z0-9+/=]*) exit 1 ;; esac; [ ${#5} -le 90000 ] || exit 1 ;;
    list-sources) case "$3" in ''|light|balanced|strict) ;; *) exit 1;; esac ;;
    add-whitelist|add-blacklist|remove-whitelist|remove-blacklist) echo "$3" | "$BB" grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' || exit 1 ;;
    auto-update|autostart) case "$3" in on|off) ;; *) exit 1;; esac ;;
@@ -82,7 +83,7 @@ case "$1" in
   # Serialize configuration writes with DNS worker operations across WebUI
   # sessions. Reads intentionally remain non-blocking.
   case "$2" in
-   list-whitelist|list-blacklist|list-sources|shared-rules) ;;
+   list-whitelist|list-blacklist|list-sources|shared-rules|export-file) ;;
    *)
     if [ "${ABP_JOB_CONFIG_LOCKED:-0}" != 1 ]; then
      mkdir -p "$DIR" || exit 1
@@ -101,6 +102,7 @@ case "$1" in
    list-sources) result=$(sh "$CONFIG" "$2" "$3" 2>&1); event_id='' ;;
    shared-rules) result=$(sh "$CONFIG" "$2" 2>&1); event_id='' ;;
    export-rules) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$4 ;;
+   export-file) result=$(sh "$CONFIG" "$2" "$3" "$4" "$5" 2>&1); event_id='' ;;
    *) result=$(sh "$CONFIG" "$2" "$3" 2>&1); event_id=$4 ;;
   esac
   code=$?

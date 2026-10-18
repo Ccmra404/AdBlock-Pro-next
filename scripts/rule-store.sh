@@ -115,9 +115,11 @@ case "$1" in
     case "$2" in local|shared) ;; *) exit 1 ;; esac
     case "$3" in ''|*[!0-9]*) exit 1 ;; esac
     [ ${#3} -le 20 ] || exit 1
-    folder=${ABP_EXPORT_DIR:-/sdcard/Download}
+    folder=${ABP_EXPORT_DIR:-/sdcard/Download/AdBlock Pro}
     mkdir -p "$folder" || exit 1
-    file="$folder/adblock-pro-$2-rules-$3.txt"
+    chmod 755 "$folder" || exit 1
+    case "$2" in local) export_name=personal-rules ;; shared) export_name=shared-rules ;; esac
+    file="$folder/AdBlock-Pro-$export_name-$3.txt"
     if [ "$2" = local ]; then
       {
         printf '# AdBlock Pro personal lists\n[拦截名单]\n'
@@ -131,6 +133,23 @@ case "$1" in
     fi
     # Refuse an existing destination, including a symlink, in shared storage.
     ( set -C; cat "$work/export" > "$file" ) || { echo '[!] Export destination already exists or is unavailable.' >&2; exit 1; }
+    chmod 644 "$file" || { rm -f "$file"; exit 1; }
+    printf 'exported_path=%s\n' "$file"
+    ;;
+  write)
+    case "$2" in operation-logs) extension=json ;; observed-domains) extension=txt ;; *) exit 1 ;; esac
+    case "$3" in ''|*[!0-9]*) exit 1 ;; esac
+    [ ${#3} -le 20 ] || exit 1
+    case "$4" in ''|*[!A-Za-z0-9+/=]*) exit 1 ;; esac
+    [ ${#4} -le 90000 ] || exit 1
+    folder=${ABP_EXPORT_DIR:-/sdcard/Download/AdBlock Pro}
+    mkdir -p "$folder" || exit 1
+    chmod 755 "$folder" || exit 1
+    printf '%s' "$4" | "$BB" base64 -d > "$work/export" || exit 1
+    [ -s "$work/export" ] && [ "$(wc -c < "$work/export" | tr -d '[:space:]')" -le 65536 ] || exit 1
+    file="$folder/AdBlock-Pro-$2-$3.$extension"
+    ( set -C; cat "$work/export" > "$file" ) || { echo '[!] Export destination already exists or is unavailable.' >&2; exit 1; }
+    chmod 644 "$file" || { rm -f "$file"; exit 1; }
     printf 'exported_path=%s\n' "$file"
     ;;
   *) exit 1 ;;
