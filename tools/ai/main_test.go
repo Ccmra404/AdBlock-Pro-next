@@ -237,3 +237,20 @@ func TestDestinationAndBoundedResponse(t *testing.T) {
 		t.Fatal("oversized response accepted")
 	}
 }
+
+func TestSpecialUseAPIDestinations(t *testing.T) {
+	for _, value := range []string{
+		"100.64.0.1", "100.100.100.200", "100.127.255.254", "198.18.0.1", "198.19.255.254",
+		"192.0.2.1", "198.51.100.1", "203.0.113.1", "240.0.0.1", "fec0::1", "2001:db8::1",
+		"2001:2::1", "64:ff9b:1::1", "::ffff:100.100.100.200", "64:ff9b::6464:64c8", "64:ff9b::a00:1",
+	} {
+		if publicIP(net.ParseIP(value)) {
+			t.Errorf("special-use API destination accepted: %s", value)
+		}
+	}
+	for _, value := range []string{"8.8.8.8", "1.1.1.1", "2606:4700:4700::1111", "64:ff9b::808:808"} {
+		if !publicIP(net.ParseIP(value)) {
+			t.Errorf("public API destination rejected: %s", value)
+		}
+	}
+}

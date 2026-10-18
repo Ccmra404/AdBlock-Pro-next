@@ -12,6 +12,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -310,8 +311,38 @@ func apiHTTPClient() (*http.Client, error) {
 	}
 	return &http.Client{Transport: boundedTransport{tr}, Timeout: 75 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, nil
 }
+
+// IsGlobalUnicast includes shared, documentation and reserved address ranges.
+var nonPublicAPIRanges = []netip.Prefix{
+	netip.MustParsePrefix("100.64.0.0/10"), netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("192.0.2.0/24"), netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("198.51.100.0/24"), netip.MustParsePrefix("203.0.113.0/24"),
+	netip.MustParsePrefix("240.0.0.0/4"), netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2001:2::/48"), netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("fec0::/10"),
+}
+var wellKnownNAT64 = netip.MustParsePrefix("64:ff9b::/96")
+
 func publicIP(ip net.IP) bool {
-	return ip.IsGlobalUnicast() && !ip.IsPrivate() && !ip.IsLoopback() && !ip.IsLinkLocalUnicast()
+	if !ip.IsGlobalUnicast() || ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+		return false
+	}
+	addr, ok := netip.AddrFromSlice(ip)
+	if !ok {
+		return false
+	}
+	addr = addr.Unmap()
+	if wellKnownNAT64.Contains(addr) {
+		// Preserve public DNS64/NAT64 access, but validate its embedded IPv4 too.
+		v := addr.As16()
+		return publicIP(net.IP(v[12:]))
+	}
+	for _, prefix := range nonPublicAPIRanges {
+		if prefix.Contains(addr) {
+			return false
+		}
+	}
+	return true
 }
 
 type boundedTransport struct{ next http.RoundTripper }
