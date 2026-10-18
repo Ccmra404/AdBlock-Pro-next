@@ -106,7 +106,7 @@ reset_defaults() {
       echo '[!] Fresh-install defaults are unavailable. Reinstall the current module package before resetting.' >&2
       return 1
     }
-  for item settings.conf admin.auth bin/AdGuardHome.yaml bin/data bin/userfilters; do
+  for item in settings.conf admin.auth bin/AdGuardHome.yaml bin/data bin/userfilters; do
     [ -e "$AGH/$item" ] || { echo "[!] Required AdGuard Home data is missing: $item; nothing was changed." >&2; return 1; }
   done
   [ -x "$BOOTSTRAP" ] || { echo '[!] The setup helper is missing; reinstall the current module package before resetting.' >&2; return 1; }
