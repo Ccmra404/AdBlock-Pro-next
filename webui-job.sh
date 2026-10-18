@@ -1,6 +1,7 @@
 #!/system/bin/sh
 MODDIR=${0%/*}
 DIR=/data/adb/bindhosts_personal/webui-jobs
+AGH=/data/adb/adblockpro
 CONFIG=$MODDIR/webui-config.sh
 umask 077
 . "$MODDIR/scripts/compat.sh" || exit 1
@@ -33,6 +34,16 @@ prune_jobs() {
 
 case "$1" in
  ai-status|ai-config|ai-clear|ai-start|ai-poll)
+  if [ -e "$AGH/factory-reset.active" ]; then
+   reset_pid=$(cat "$AGH/factory-reset.active" 2>/dev/null)
+   case "$reset_pid" in ''|*[!0-9]*) reset_pid='' ;; esac
+   if [ -n "$reset_pid" ] && kill -0 "$reset_pid" 2>/dev/null; then
+    if [ ! -r "/proc/$reset_pid/cmdline" ] || "$BB" tr '\000' ' ' < "/proc/$reset_pid/cmdline" | "$BB" grep -Fq "$AGH/scripts/factory-reset.sh"; then
+     echo '[!] Factory reset is in progress; retry after it finishes.' >&2; exit 1
+    fi
+   fi
+   rm -f "$AGH/factory-reset.active"
+  fi
   ai=/data/adb/adblockpro/bin/adblock-ai
   [ -x "$ai" ] || { echo 'AI 分析组件不可用，请安装包含此功能的测试包。' >&2; exit 1; }
   case "$1" in
@@ -182,7 +193,7 @@ case "$1" in
  start)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
+  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--factory-reset|--diagnose|--observe) ;; *) exit 1;; esac
   case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
   if [ "$3" = --observe ]; then case "$4" in 5|10|15|30|60|90) ;; *) exit 1;; esac; fi
   if [ "$3" = --rollback-history ]; then echo "$4" | "$BB" grep -Eq '^[0-9]{14}-[0-9]+$' || exit 1; fi
@@ -197,7 +208,7 @@ case "$1" in
  worker)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
+  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--factory-reset|--diagnose|--observe) ;; *) exit 1;; esac
   case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
   if [ "$3" = --observe ]; then case "$4" in 5|10|15|30|60|90) ;; *) exit 1;; esac; fi
   # Serialize privileged mutations from multiple WebUI sessions.
@@ -221,9 +232,11 @@ case "$1" in
  execute)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1 ;; esac
+  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--factory-reset|--diagnose|--observe) ;; *) exit 1 ;; esac
   if [ "$3" = --observe ]; then
     exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$4" "$2" "${5:-}"
+  elif [ "$3" = --factory-reset ]; then
+    exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$2"
   else
     exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$4"
   fi
