@@ -74,6 +74,11 @@ done
 unzip -oq "$ZIPFILE" "scripts/*" -d "$DATA_DIR" || fail "Cannot extract runtime scripts."
 mkdir -p "$MODPATH/scripts" || fail "Cannot prepare shared root helpers."
 cp "$compat_file" "$MODPATH/scripts/compat.sh" || fail "Cannot install the root compatibility helper."
+unzip -oq "$ZIPFILE" "scripts/adb-debug.sh" -d "$MODPATH" || fail "Cannot install the ADB diagnostics helper."
+chmod 755 "$MODPATH/scripts/adb-debug.sh" || fail "Cannot prepare the ADB diagnostics helper."
+if unzip -l "$ZIPFILE" | grep -Eq '^[[:space:]]*[0-9]+[[:space:]].*[[:space:]]debug-build$'; then
+  unzip -oq "$ZIPFILE" "debug-build" -d "$MODPATH" || fail "Cannot enable the Debug build marker."
+fi
 : > "$MODPATH/skip_mount"
 mkdir -p "$DATA_DIR/.install/bin" "$DATA_DIR/bin" || fail "Cannot prepare the AdGuard Home upgrade directory."
 cp "$CURL" "$DATA_DIR/bin/curl" || fail "Cannot install the bundled curl binary."

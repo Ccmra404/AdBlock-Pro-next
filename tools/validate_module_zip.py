@@ -13,7 +13,7 @@ REQUIRED = {
     'bindhosts.sh', 'webui-config.sh', 'webui-job.sh', 'settings.conf',
     'config-blacklist.txt', 'config-whitelist.txt', 'webroot/index.html',
     'webroot/app.js', 'webroot/kernelsu.js', 'scripts/compat.sh',
-    'scripts/tool.sh', 'scripts/base.sh', 'scripts/iptables.sh',
+    'scripts/tool.sh', 'scripts/base.sh', 'scripts/iptables.sh', 'scripts/adb-debug.sh',
     'scripts/rule-store.sh', 'rules/shared-app-domains.txt',
     'scripts/footprint.sh', 'scripts/memory.sh', 'scripts/detach.sh', 'META-INF/com/google/android/update-binary',
     'bin/AdGuardHome', 'bin/adblock-bootstrap',

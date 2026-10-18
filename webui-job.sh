@@ -247,5 +247,33 @@ case "$1" in
   [ ${#2} -le 20 ] || exit 1
   rm -f "/data/adb/bindhosts_personal/observations/$2.result" "/data/adb/bindhosts_personal/observations/$2.result.tmp" "/data/adb/bindhosts_personal/observations/$2.page.tmp" "/data/adb/bindhosts_personal/observations/$2.meta"
   ;;
+ debug-save)
+  # Debug packages retain only the already-aggregated domain summary, never raw query logs.
+  [ -f "$MODDIR/debug-build" ] || exit 0
+  encoded=$2
+  [ -n "$encoded" ] && [ ${#encoded} -le 100000 ] || exit 1
+  case "$encoded" in *[!A-Za-z0-9+/=]*) exit 1 ;; esac
+  debug_dir=/data/adb/bindhosts_personal/debug
+  mkdir -p "$debug_dir" || exit 1
+  chmod 700 "$debug_dir" || exit 1
+  tmp="$debug_dir/observation.tmp.$$"
+  printf '%s' "$encoded" | "$BB" base64 -d > "$tmp" || { rm -f "$tmp"; exit 1; }
+  "$BB" awk -F '\t' '
+    function numeric(value) { return value ~ /^[0-9]+$/ }
+    NR == 1 { if ($1 != "captured_at" || NF != 2 || !numeric($2) || length($2) < 9 || length($2) > 11) bad=1; next }
+    NR == 2 { if ($1 != "started_at" || NF != 2 || !numeric($2) || length($2) < 9 || length($2) > 11) bad=1; next }
+    NR == 3 { if ($1 != "domain_count" || NF != 2 || !numeric($2) || $2 > 2000) bad=1; total=$2; next }
+    NR == 4 { if ($1 != "included_count" || NF != 2 || !numeric($2) || $2 > 200) bad=1; expected=$2; if (expected != (total > 200 ? 200 : total)) bad=1; next }
+    NR == 5 { if ($1 != "source_truncated" || NF != 2 || ($2 != "0" && $2 != "1")) bad=1; next }
+    NR == 6 { if ($0 != "domain\trequests\tlast_seen\treason\tfilter_id") bad=1; next }
+    NR > 206 { bad=1; exit }
+    NR > 6 {
+      rows++
+      if (NF != 5 || $1 !~ /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$/ || length($1) > 253 || !numeric($2) || !numeric($3) || $4 !~ /^[A-Za-z0-9_-]*$/ || ($5 != "" && !numeric($5)) || seen[$1]++) bad=1
+    }
+    END { if (NR < 6 || rows != expected || bad) exit 1 }
+  ' "$tmp" || { rm -f "$tmp"; echo '[!] Invalid debug observation summary.' >&2; exit 1; }
+  chmod 600 "$tmp" && mv -f "$tmp" "$debug_dir/latest-observation.tsv" || { rm -f "$tmp"; exit 1; }
+  ;;
  *) exit 1;;
 esac

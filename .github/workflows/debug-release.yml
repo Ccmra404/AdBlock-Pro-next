@@ -1,0 +1,113 @@
+name: Attach AdBlock Pro Debug ZIP
+
+on:
+  pull_request:
+    paths:
+      - "webroot/app.js"
+      - "webroot/index.html"
+      - "webui-job.sh"
+      - "scripts/adb-debug.sh"
+      - "docs/adb-debug.md"
+      - "tests/adb-debug.test.mjs"
+      - ".github/workflows/debug-release.yml"
+  workflow_run:
+    workflows: ["Build AdBlock Pro ARM64 root module ZIP"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag whose tested package should receive a Debug asset
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check scripts and focused regression tests
+        run: |
+          bash -n webui-job.sh scripts/adb-debug.sh
+          node --input-type=module --check < webroot/app.js
+          node --test tests/adb-debug.test.mjs
+
+  attach-debug:
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'workflow_dispatch' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.repository.full_name == github.repository) ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REQUESTED_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+      - name: Validate the existing release and package Debug variant
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="$(sed -n 's/^version=//p' module.prop | head -n 1)"
+          VERSION_CODE="$(sed -n 's/^versionCode=//p' module.prop | head -n 1)"
+          if [ -n "$REQUESTED_TAG" ] && [ "$REQUESTED_TAG" != "$TAG" ]; then
+            echo "Requested tag does not match the checked-out module version." >&2
+            exit 1
+          fi
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-rc\.[0-9]+)?$ ]]
+          [[ "$VERSION_CODE" =~ ^[0-9]+$ ]]
+          DEBUG_ZIP="AdBlock-Pro-${TAG}-debug-arm64.zip"
+          DEBUG_SUM="${DEBUG_ZIP}.sha256"
+          if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq "$DEBUG_ZIP"; then
+            echo "Debug asset already exists for $TAG; release assets are immutable." >&2
+            exit 1
+          fi
+          if gh release view "$TAG" --json assets --jq '.assets[].name' | grep -Fxq "$DEBUG_SUM"; then
+            echo "Debug checksum already exists for $TAG; release assets are immutable." >&2
+            exit 1
+          fi
+          mkdir -p dist
+          gh release download "$TAG" --pattern "AdBlock-Pro-${TAG}-arm64.zip" --dir dist
+          BASE_ZIP="dist/AdBlock-Pro-${TAG}-arm64.zip"
+          unzip -t "$BASE_ZIP" >/dev/null
+          if unzip -Z1 "$BASE_ZIP" | grep -qx 'debug-build'; then
+            echo "The formal package must not contain the Debug marker." >&2
+            exit 1
+          fi
+          python3 tools/validate_module_zip.py "$BASE_ZIP" --version "$TAG" --version-code "$VERSION_CODE"
+          stage="$(mktemp -d)"
+          trap 'rm -rf "$stage"' EXIT
+          unzip -q "$BASE_ZIP" -d "$stage"
+          grep -q 'debug-save)' "$stage/webui-job.sh"
+          test -f "$stage/scripts/adb-debug.sh"
+          printf 'debug\n' > "$stage/debug-build"
+          printf 'window.ABP_DEBUG_BUILD = true;\n' > "$stage/webroot/debug-build.js"
+          python3 - "$stage/webroot/index.html" <<'PY'
+          from pathlib import Path
+          import sys
+          path = Path(sys.argv[1])
+          html = path.read_text(encoding="utf-8")
+          target = '<script type="module" src="./app.js"></script>'
+          replacement = '<script src="./debug-build.js"></script>\n  ' + target
+          if html.count(target) != 1:
+              raise SystemExit("Could not find the unique WebUI app entry point")
+          path.write_text(html.replace(target, replacement), encoding="utf-8")
+          PY
+          sed -i "s/^version=.*/version=${TAG}-debug/" "$stage/module.prop"
+          (cd "$stage" && zip -q -r -9 "$GITHUB_WORKSPACE/dist/$DEBUG_ZIP" .)
+          unzip -t "dist/$DEBUG_ZIP" >/dev/null
+          unzip -Z1 "dist/$DEBUG_ZIP" | grep -qx 'debug-build'
+          unzip -Z1 "dist/$DEBUG_ZIP" | grep -qx 'webroot/debug-build.js'
+          python3 tools/validate_module_zip.py "dist/$DEBUG_ZIP" --version "${TAG}-debug" --version-code "$VERSION_CODE"
+          (cd dist && sha256sum "$DEBUG_ZIP" > "$DEBUG_SUM")
+          sha256sum -c "dist/$DEBUG_SUM"
+          gh release upload "$TAG" "dist/$DEBUG_ZIP" "dist/$DEBUG_SUM"

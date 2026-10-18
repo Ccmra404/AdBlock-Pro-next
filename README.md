@@ -8,7 +8,7 @@
 
 ![Root](https://img.shields.io/badge/Root-KernelSU%20%7C%20Magisk%20%7C%20APatch-168765?style=flat-square) ![架构](https://img.shields.io/badge/Android-ARM64-168765?style=flat-square) ![引擎](https://img.shields.io/badge/DNS-AdGuard_Home-168765?style=flat-square) ![状态](https://img.shields.io/badge/状态-测试版-c38b28?style=flat-square)
 
-[**新仓库 Releases**](https://github.com/Ccmra404/AdBlock-Pro-next/releases) · [**使用指南**](docs/guide.md) · [**反馈问题**](https://github.com/Ccmra404/AdBlock-Pro-next/issues)
+[**新仓库 Releases**](https://github.com/Ccmra404/AdBlock-Pro-next/releases) · [**使用指南**](docs/guide.md) · [**Debug 版 ADB 诊断**](docs/adb-debug.md) · [**反馈问题**](https://github.com/Ccmra404/AdBlock-Pro-next/issues)
 
 </div>
 
