@@ -33,6 +33,14 @@ test('bundled curl trusts the installed PEM bundle instead of Android old-hash C
   assert.match(workflow, /cp -a META-INF scripts webroot rules certs/);
 });
 
+test('rule and shared-list HTTPS downloads explicitly use the bundled CA without disabling verification', () => {
+  const sourceSync = readFileSync(new URL('../bindhosts.sh', import.meta.url), 'utf8');
+  const sharedSync = readFileSync(new URL('../scripts/rule-store.sh', import.meta.url), 'utf8');
+  assert.match(sourceSync, /--cacert "\$AGH\/certs\/cacert\.pem"/);
+  assert.match(sharedSync, /--cacert "\$AGH\/certs\/cacert\.pem"/);
+  assert.doesNotMatch(sourceSync + sharedSync, /--insecure|\s-k(?:\s|$)/);
+});
+
 test('changes to every installable file family trigger ARM64 package validation', () => {
   for (const pattern of [
     'tools/bootstrap/**', 'customize.sh', 'module.prop', 'action.sh',

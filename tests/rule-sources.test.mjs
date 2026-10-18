@@ -6,11 +6,15 @@ import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
 
 const original = readFileSync(new URL('../webui-config.sh', import.meta.url), 'utf8');
-const base = 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward';
-const awaFull = 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt';
+const base = 'https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward';
+const awaFull = 'https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt';
 const oldBase = 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward';
+const oldBaseCdn = 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward';
+const oldBaseGcore = 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward';
 const oldAwaFull = 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt';
+const oldAwaFullGcore = 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt';
 const oldAwaAds = 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt';
+const oldAwaAdsGcore = 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt';
 const antiAd = 'https://anti-ad.net/easylist.txt';
 const custom = 'https://example.org/filter.txt';
 const shared = 'shared';
@@ -58,7 +62,7 @@ test('legacy selected profile migrates once to the new base sources without dele
 
 test('existing source URLs migrate in place, preserve custom names and selections, and keep old optional sources', t => {
   const f = fixture(t, {
-    sourcesV2: [oldBase, oldAwaFull, oldAwaAds, antiAd, custom, shared].join('\n') + '\n',
+    sourcesV2: [oldBase, oldBaseCdn, oldBaseGcore, oldAwaFull, oldAwaFullGcore, oldAwaAds, oldAwaAdsGcore, antiAd, custom, shared].join('\n') + '\n',
     sourceNames: oldAwaAds + '\tMy AWA list\n' + custom + '\tCustom list\n',
     customSources: custom + '\n',
   });
@@ -68,10 +72,10 @@ test('existing source URLs migrate in place, preserve custom names and selection
   assert.equal(sources.find(x => x.url === awaFull).label, 'My AWA list');
   assert.equal(sources.find(x => x.url === antiAd).enabled, 'enabled');
   assert.equal(sources.find(x => x.url === custom).enabled, 'enabled');
-  assert.equal(sources.some(x => [oldBase, oldAwaFull, oldAwaAds].includes(x.url)), false);
+  assert.equal(sources.some(x => [oldBase, oldBaseCdn, oldBaseGcore, oldAwaFull, oldAwaFullGcore, oldAwaAds, oldAwaAdsGcore].includes(x.url)), false);
   assert.equal(sources.filter(x => [base, awaFull, shared].includes(x.url)).length, 3);
   const migrated = readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8');
-  assert.doesNotMatch(migrated, /raw\.githubusercontent\.com\/lingeringsound\/10007_auto/);
+  assert.equal(sources.some(x => [oldBase, oldBaseCdn, oldBaseGcore].includes(x.url)), false);
   assert.doesNotMatch(migrated, /AWAvenue-Ads-Rule-Adguard-Only/);
   assert.match(migrated, /anti-ad\.net/);
   assert.match(readFileSync(path.join(f.dir, 'source-names.tsv'), 'utf8'), /My AWA list/);

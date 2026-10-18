@@ -104,8 +104,8 @@ WebUI 管理订阅来源、个人名单、接管开关和任务日志。上游 D
 | --- | --- |
 | [AdGuard Home](https://github.com/AdguardTeam/AdGuardHome) | 本地 DNS 过滤引擎 |
 | [KernelSU](https://github.com/tiann/KernelSU) | Android Root 与模块平台 |
-| [10007](https://github.com/lingeringsound/10007_auto) | 内置“保留广告奖励”规则；使用上游提供的 jsDelivr 加速地址 |
-| [AWAvenue Ads Rule](https://github.com/TG-Twilight/AWAvenue-Ads-Rule) | 内置 AdGuard 全规则，启用广告、隐私与不受欢迎内容过滤；使用 [对应订阅选项](https://awavenue.top/Sub.html?tool=adguard&privacy=block&unwelcome=block) 和 jsDelivr GCore 加速地址 |
+| [10007](https://github.com/lingeringsound/10007_auto) | 内置“保留广告奖励”规则；默认使用上游提供的 Git-EdgeOne 链接，并保留 GitHub Pages、Raw 与 CDN 回退 |
+| [AWAvenue Ads Rule](https://github.com/TG-Twilight/AWAvenue-Ads-Rule) | 内置 AdGuard 全规则，启用广告、隐私与不受欢迎内容过滤；使用[对应订阅选项](https://awavenue.top/Sub.html?tool=adguard&privacy=block&unwelcome=block)，默认使用王富贵镜像，另有 CXPLAY、GCore 与 Raw 回退 |
 
 第三方引擎和规则遵循各自的上游许可证。秋风规则的许可证副本见 [GPL-3.0](licenses/AWAvenue-GPL-3.0.txt)。
 
