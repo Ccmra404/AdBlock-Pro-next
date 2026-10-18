@@ -34,6 +34,14 @@ jobs:
           bash -n webui-job.sh scripts/adb-debug.sh
           node --input-type=module --check < webroot/app.js
           node --test tests/adb-debug.test.mjs
+          checksum_dir="$(mktemp -d)"
+          trap 'rm -rf "$checksum_dir"' EXIT
+          (
+            cd "$checksum_dir"
+            printf 'debug asset test\n' > debug.zip
+            sha256sum debug.zip > debug.zip.sha256
+            sha256sum -c debug.zip.sha256
+          )
 
   attach-debug:
     if: >-
@@ -108,6 +116,5 @@ jobs:
           unzip -Z1 "dist/$DEBUG_ZIP" | grep -qx 'debug-build'
           unzip -Z1 "dist/$DEBUG_ZIP" | grep -qx 'webroot/debug-build.js'
           python3 tools/validate_module_zip.py "dist/$DEBUG_ZIP" --version "${TAG}-debug" --version-code "$VERSION_CODE"
-          (cd dist && sha256sum "$DEBUG_ZIP" > "$DEBUG_SUM")
-          sha256sum -c "dist/$DEBUG_SUM"
+          (cd dist && sha256sum "$DEBUG_ZIP" > "$DEBUG_SUM" && sha256sum -c "$DEBUG_SUM")
           gh release upload "$TAG" "dist/$DEBUG_ZIP" "dist/$DEBUG_SUM"
