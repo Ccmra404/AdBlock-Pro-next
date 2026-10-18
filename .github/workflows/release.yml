@@ -86,7 +86,7 @@ jobs:
           path: bin
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.27.2'
       - name: Test per-device credential generator
         working-directory: tools/bootstrap
         run: |
@@ -122,6 +122,20 @@ jobs:
           git diff --exit-code -- go.mod go.sum
           go test ./...
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -ldflags="-s -w" -o ../../bin/adblock-ai .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -trimpath -o /tmp/adblock-ai-native .
+      - name: Scan module-owned Go helpers for known vulnerabilities
+        run: |
+          set -euo pipefail
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          checker="$(go env GOPATH)/bin/govulncheck"
+          for module_dir in tools/bootstrap tools/ai; do
+            (cd "$module_dir" && "$checker" ./...)
+          done
+          # Stripped binaries can fall back to module-only false positives.
+          # These ARM64 siblings use the same source/toolchain without -s -w.
+          for helper in /tmp/adblock-bootstrap-native /tmp/adblock-ai-native; do
+            "$checker" -mode=binary "$helper"
+          done
       - name: Verify personal filters on first boot and refresh with native ARM64 core
         run: python3 tools/test_personal_filter.py --engine ./bin/AdGuardHome --bootstrap /tmp/adblock-bootstrap-native
       - name: Run project checks
