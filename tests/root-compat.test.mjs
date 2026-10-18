@@ -75,30 +75,86 @@ test('missing locking tools fail before configuration writes', t => {
   assert.equal(existsSync(path.join(fixture.dir, 'modified')), false);
 });
 
-test('installation stops at preflight when curl is missing', t => {
+test('installer uses bundled ARM64 curl when the device has no system curl', t => {
   const fixture = rootFixture(t);
   fixture.addBusybox('Magisk');
-  let compat = readFileSync(fixture.compatFile, 'utf8');
-  const missing = shellPath(path.join(fixture.dir, 'missing-curl'));
-  compat = compat.replace('/system/bin/curl', missing)
-    .replace('/data/adb/adblockpro/bin/curl', missing)
-    .replace('$(command -v curl 2>/dev/null)', missing);
-  writeFileSync(fixture.compatFile, compat);
+  const curl = path.join(fixture.dir, 'curl');
+  writeFileSync(curl, '#!/bin/sh\necho "curl fixture"\n');
+  chmodSync(curl, 0o755);
   const source = readFileSync(new URL('../customize.sh', import.meta.url), 'utf8');
   const prefix = source.slice(0, source.indexOf('ui_print "[AdBlock Pro] Preparing'));
   assert(prefix.includes('abp_find_curl'));
-  const script = `ui_print() { :; }
+  const script = `ui_print() { printf '%s\\n' "$*"; }
 abort() { echo "$1" >&2; exit 1; }
-unzip() { cat "$COMPAT_FIXTURE"; }
+command() { [ "$1" = -v ] && [ "$2" = iptables ] && return 0; builtin command "$@"; }
+unzip() {
+  case "$3" in
+    scripts/compat.sh) cat "$COMPAT_FIXTURE" ;;
+    bin/curl) cat "$BUNDLED_CURL" ;;
+    certs/cacert.pem) printf '%s\\n' 'fixture-only-public-certificates' ;;
+    *) return 1 ;;
+  esac
+}
 ${prefix}
+printf '%s\\n' "$(abp_find_curl)" > "$TMPDIR/selected-curl"
 touch "$TMPDIR/modified"
 `;
   const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: {
     ...fixture.env('Magisk'), TMPDIR: shellPath(fixture.dir),
     COMPAT_FIXTURE: shellPath(fixture.compatFile), ZIPFILE: 'fixture.zip',
+    BUNDLED_CURL: shellPath(curl),
+  } });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(readFileSync(path.join(fixture.dir, 'selected-curl'), 'utf8').trim(), shellPath(path.join(fixture.dir, 'adblock-pro-curl')));
+  assert.equal(existsSync(path.join(fixture.dir, 'modified')), true);
+});
+
+for (const ca of ['missing', 'empty']) {
+  test('installer rejects ' + ca + ' CA certificates before changing user data', t => {
+    const fixture = rootFixture(t);
+    fixture.addBusybox('Magisk');
+    const source = readFileSync(new URL('../customize.sh', import.meta.url), 'utf8');
+    const prefix = source.slice(0, source.indexOf('ui_print "[AdBlock Pro] Preparing'));
+    const script = `ui_print() { printf '%s\\n' "$*"; }
+abort() { echo "$1" >&2; exit 1; }
+command() { [ "$1" = -v ] && [ "$2" = iptables ] && return 0; builtin command "$@"; }
+unzip() {
+  case "$3" in
+    scripts/compat.sh) cat "$COMPAT_FIXTURE" ;;
+    bin/curl) printf '#!/bin/sh\\nexit 0\\n' ;;
+    certs/cacert.pem) ${ca === 'missing' ? 'return 1' : 'return 0'} ;;
+    *) return 1 ;;
+  esac
+}
+${prefix}
+touch "$TMPDIR/modified"
+`;
+    const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: {
+      ...fixture.env('Magisk'), TMPDIR: shellPath(fixture.dir),
+      COMPAT_FIXTURE: shellPath(fixture.compatFile), ZIPFILE: 'fixture.zip',
+    } });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stdout, /CA certificate bundle/);
+    assert.equal(existsSync(path.join(fixture.dir, 'modified')), false);
+  });
+}
+
+test('installer rejects a package that omits its bundled curl binary', t => {
+  const fixture = rootFixture(t);
+  fixture.addBusybox('Magisk');
+  const source = readFileSync(new URL('../customize.sh', import.meta.url), 'utf8');
+  const prefix = source.slice(0, source.indexOf('ui_print "[AdBlock Pro] Preparing'));
+  const script = `ui_print() { printf '%s\\n' "$*"; }
+abort() { echo "$1" >&2; exit 1; }
+unzip() { [ "$3" = scripts/compat.sh ] && cat "$COMPAT_FIXTURE" || return 1; }
+${prefix}
+touch "$TMPDIR/modified"
+`;
+  const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: {
+    ...fixture.env('Magisk'), TMPDIR: shellPath(fixture.dir), COMPAT_FIXTURE: shellPath(fixture.compatFile), ZIPFILE: 'fixture.zip',
   } });
   assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /curl is missing/);
+  assert.match(result.stdout, /missing its ARM64 curl binary/);
   assert.equal(existsSync(path.join(fixture.dir, 'modified')), false);
 });
 

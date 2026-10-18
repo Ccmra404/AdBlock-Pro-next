@@ -7,6 +7,8 @@ or downloads subscription lists. Intended for the native ARM64 package job.
 import argparse
 import base64
 import json
+import os
+import shutil
 from pathlib import Path
 import socket
 import struct
@@ -37,7 +39,7 @@ def exercise(engine, bootstrap):
         shared = personal.with_name('adblock-pro-shared-app-rules.txt')
         bundled = Path(__file__).resolve().parents[1] / 'rules/shared-app-domains.txt'
         shared_domains = [row for row in bundled.read_text().splitlines() if row and not row.startswith('#')]
-        assert len(shared_domains) == 29
+        assert shared_domains and len(shared_domains) == len(set(shared_domains))
         shared.write_text('\n'.join('||' + domain + '^' for domain in shared_domains) + '\n')
         text = config.read_text()
         assert 'url: /data/adb/adblockpro/bin/userfilters/adblock-pro-user-rules.txt' in text
@@ -61,6 +63,30 @@ def exercise(engine, bootstrap):
             with urllib.request.urlopen(request, timeout=5) as response:
                 data = response.read()
                 return json.loads(data) if data else None
+
+        # Run the shipped command against this isolated core, without Android
+        # paths, real credentials, network subscriptions or a DNS service restart.
+        module_source = Path(__file__).resolve().parents[1] / 'bindhosts.sh'
+        bb = root / 'busybox-fixture'
+        bb.write_text('#!/bin/sh\nexec "$@"\n')
+        bb.chmod(0o700)
+        entry = root / 'bindhosts.sh'
+        script = module_source.read_text(encoding='utf-8')
+        script = script.replace('AGH=/data/adb/adblockpro', 'AGH=' + str(root))
+        script = script.replace('STATE=/data/adb/bindhosts_personal', 'STATE=' + str(root / 'state'))
+        script = script.replace('API=http://127.0.0.1:3000/control', f'API=http://127.0.0.1:{http_port}/control')
+        script = script.replace('. "$MODDIR/scripts/compat.sh" || exit 1', 'BB=' + str(bb) + '\nCURL=' + shutil.which('curl'))
+        entry.write_text(script, encoding='utf-8')
+        state = root / 'state'
+        state.mkdir()
+
+        def apply_personal(blocklist, allowlist):
+            (state / 'blacklist.txt').write_text('\n'.join(blocklist) + '\n')
+            (state / 'whitelist.txt').write_text('\n'.join(allowlist) + '\n')
+            applied = subprocess.run(['bash', str(entry), '--apply-personal'],
+                env={**os.environ, 'ABP_UPDATE_LOCKED': '1'}, capture_output=True, text=True)
+            assert applied.returncode == 0, 'Personal apply command failed: ' + applied.stderr
+            assert process.poll() is None, 'Personal apply stopped the DNS core'
 
         def blocked(domain):
             result = api('/filtering/check_host?name=' + urllib.parse.quote(domain))
@@ -123,8 +149,8 @@ const source = fs.readFileSync(process.argv[1], 'utf8');
 const begin = source.indexOf('function validObservedDomain(');
 const end = source.indexOf('async function loadObservationResult(');
 if (begin < 0 || end <= begin) throw new Error('Observation parser functions missing');
-const parse = vm.runInNewContext(source.slice(begin, end) + ';parseObservedDomains');
-const result = parse(fs.readFileSync(0, 'utf8'), Number(process.argv[3]));
+const parse = vm.runInNewContext(source.slice(begin, end) + ';parseObservationSnapshot');
+const result = parse(fs.readFileSync(0, 'utf8'), Number(process.argv[3])).domains;
 if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live core snapshot lost the probe domain in WebUI parsing');
 """
                     subprocess.run(['node', '-e', parser_test,
@@ -137,10 +163,14 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                 for key in ('enabled', 'interval', 'anonymize_client_ip'):
                     assert restored[key] == previous[key], 'temporary query-log preference not restored: ' + key
                 assert not list(root.rglob('querylog.json*')), 'memory-only observation wrote a disk query log'
-                # A later personal-file change must be applied on refresh,
-                # without replacing native user_rules or doubling sources.
-                personal.write_text('||custom-regression.example^\n||allowed-regression.example^\n@@||allowed-regression.example^\n@@||' + shared_domains[0] + '^\n')
-                api('/filtering/refresh', {'whitelist': False, 'force': True})
+                # Repeated edits reread only the personal file, preserving ID,
+                # global pause preference, shared sources and native user_rules.
+                original_id = next(f['id'] for f in api('/filtering/status')['filters'] if f['url'] == str(personal))
+                filtering = api('/filtering/status')
+                api('/filtering/config', {'enabled': False, 'interval': filtering['interval']})
+                apply_personal(['custom-regression.example', 'allowed-regression.example'], ['allowed-regression.example', shared_domains[0]])
+                assert api('/filtering/status')['enabled'] is False, 'personal apply enabled paused filtering'
+                api('/filtering/config', {'enabled': True, 'interval': filtering['interval']})
                 wait_until(lambda: blocked('custom-regression.example') and not blocked(domains[0]))
                 assert blocked('custom-regression.example')
                 assert not blocked('allowed-regression.example')
@@ -149,6 +179,11 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                 assert not blocked(shared_domains[0]), 'personal whitelist cannot override shared filter'
                 filters = api('/filtering/status')['filters']
                 assert sum(item['url'] == str(personal) for item in filters) == 1
+                assert next(f['id'] for f in filters if f['url'] == str(personal)) == original_id
+                apply_personal(['second-edit.example'], [])
+                wait_until(lambda: blocked('second-edit.example') and not blocked('custom-regression.example'))
+                apply_personal(['custom-regression.example'], [])
+                wait_until(lambda: blocked('custom-regression.example') and not blocked('second-edit.example'))
                 assert sum(item['url'] == str(shared) for item in filters) == 1
                 shared.write_text('||shared-refresh-regression.example^\n')
                 api('/filtering/refresh', {'whitelist': False, 'force': True})
@@ -156,6 +191,12 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                 assert blocked('custom-regression.example'), 'shared refresh removed a personal rule'
                 assert blocked('native-regression.example'), 'shared refresh removed a native rule'
                 assert api('/querylog_info')['enabled'] is False, 'filter refresh altered query-log preference'
+                apply_personal([], [])
+                wait_until(lambda: not blocked('custom-regression.example'))
+                assert not any(f['url'] == str(personal) for f in api('/filtering/status')['filters'])
+                assert blocked('native-regression.example') and blocked('shared-refresh-regression.example')
+                apply_personal(['readded-personal.example'], [])
+                wait_until(lambda: blocked('readded-personal.example'))
             finally:
                 process.terminate()
                 try:
@@ -163,7 +204,7 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-    print('Native ARM64: personal rules, refresh, whitelist, native user_rules and memory-only observation parsing passed.')
+    print('Native ARM64: personal-only apply, repeat edits, empty/re-add, whitelist, native user_rules and memory-only observation parsing passed.')
 
 
 if __name__ == '__main__':

@@ -5,6 +5,10 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
 
+const bundle = readFileSync(new URL('../rules/shared-app-domains.txt', import.meta.url), 'utf8');
+const bundledDomains = bundle.split(/\r?\n/).filter(row => row && !row.startsWith('#')).sort();
+const nextRevision = Number(bundle.match(/^# revision: (\d+)$/m)[1]) + 1;
+
 function fixture(t) {
   const f = rootFixture(t); f.addBusybox('Magisk');
   const state = path.join(f.dir, 'state'), agh = path.join(f.dir, 'agh'), module = path.join(f.dir, 'module');
@@ -30,23 +34,23 @@ test('offline shared bank is installed independently and idempotently on existin
   const f=fixture(t), before=f.privateSnapshot();
   assert.equal(f.run('init').status,0);
   const snapshot=readFileSync(f.file,'utf8');
-  assert.equal(readFileSync(f.filter,'utf8').trim().split('\n').length,29);
+  assert.deepEqual(readFileSync(f.filter,'utf8').trim().split('\n'), bundledDomains.map(domain => '||' + domain + '^'));
   assert.equal(f.run('init').status,0);
   assert.equal(readFileSync(f.file,'utf8'),snapshot);
   assert.deepEqual(f.privateSnapshot(),before);
-  assert.equal(f.run('show').stdout.split('\n').filter(x=>x.startsWith('domain\t')).length,29);
+  assert.deepEqual(f.run('show').stdout.split('\n').filter(x=>x.startsWith('domain\t')).map(row => row.slice(7)), bundledDomains);
 });
 
 test('shared sync validates downloaded data and retains newer cached versions across reinstall', t=>{
   const f=fixture(t); assert.equal(f.run('init').status,0);
   const before=readFileSync(f.file,'utf8'), original=readFileSync(f.filter,'utf8');
-  for(const content of ['<html>proxy failure</html>', '# revision: 2026101301\nold.example\n', '# revision: 2026101402\nhttps://bad.example\n', '# revision: 2026101402\n# revision: 2026101403\na.example\n', '# revision: 2026101402\n'+'a'.repeat(64)+'.example\n']) {
+  for(const content of ['<html>proxy failure</html>', '# revision: 2026101301\nold.example\n', `# revision: ${nextRevision}\nhttps://bad.example\n`, `# revision: ${nextRevision}\n# revision: ${nextRevision+1}\na.example\n`, `# revision: ${nextRevision}\n`+'a'.repeat(64)+'.example\n']) {
     writeFileSync(f.remote,content);
     assert.notEqual(f.run('sync').status,0);
     assert.equal(readFileSync(f.file,'utf8'),before); assert.equal(readFileSync(f.filter,'utf8'),original);
   }
   f.env.FAIL_DOWNLOAD='1'; assert.notEqual(f.run('sync').status,0); delete f.env.FAIL_DOWNLOAD;
-  writeFileSync(f.remote,'# revision: 2026101402\nNew.Example\nnew.example\n');
+  writeFileSync(f.remote,`# revision: ${nextRevision}\nNew.Example\nnew.example\n`);
   assert.equal(f.run('sync').status,0); assert.equal(readFileSync(f.filter,'utf8'),'||new.example^\n');
   assert.equal(f.run('init').status,0); assert.equal(readFileSync(f.filter,'utf8'),'||new.example^\n');
 });

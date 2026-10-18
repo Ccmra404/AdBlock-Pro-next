@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { readFileSync, mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -26,12 +26,19 @@ test('PR ARM64 ZIP is always labelled a test build', () => {
   assert.match(workflow, /actions\/upload-artifact@v4/);
 });
 
+test('bundled curl trusts the installed PEM bundle instead of Android old-hash CA paths', () => {
+  const build = readFileSync(new URL('../tools/build_android_curl.sh', import.meta.url), 'utf8');
+  assert.match(build, /--with-ca-bundle=\/data\/adb\/adblockpro\/certs\/cacert\.pem/);
+  assert.match(build, /--without-ca-path/);
+  assert.match(workflow, /cp -a META-INF scripts webroot rules certs/);
+});
+
 test('changes to every installable file family trigger ARM64 package validation', () => {
   for (const pattern of [
     'tools/bootstrap/**', 'customize.sh', 'module.prop', 'action.sh',
     'service.sh', 'uninstall.sh', 'bindhosts.sh', 'webui-config.sh',
     'webui-job.sh', 'scripts/**', 'rules/**', 'settings.conf', 'webroot/**',
-    'META-INF/**', 'bin/AdGuardHome', 'bin/data/filters/**',
+    'META-INF/**', 'bin/AdGuardHome', 'bin/data/filters/**', 'certs/**',
   ]) {
     assert(triggers.includes('"' + pattern + '"'), pattern + ' must trigger packaging');
   }
@@ -62,13 +69,24 @@ const releaseScript = releaseStep.slice(releaseStep.indexOf('        run: |\n') 
 function publication(t, channel, tag = 'v0.13.0') {
   const dir = mkdtempSync(path.join(tmpdir(), 'abp-release-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
+  mkdirSync(path.join(dir, 'docs'), { recursive: true });
+  mkdirSync(path.join(dir, 'tools'));
+  mkdirSync(path.join(dir, 'dist'));
+  writeFileSync(path.join(dir, 'docs', `release-${tag}.md`), '中文更新日志。\n');
+  writeFileSync(path.join(dir, 'tools/module_update.py'), readFileSync(new URL('../tools/module_update.py', import.meta.url)));
+  writeFileSync(path.join(dir, 'module.prop'), `id=bindhosts_personal\nversion=${tag}\nversionCode=48\nupdateJson=https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest/download/update.json\n`);
+  writeFileSync(path.join(dir, 'dist', `AdBlock-Pro-${tag}-arm64.zip`), 'fixture');
   const args = path.join(dir, 'args');
   const result = spawnSync('bash', ['-c', `gh() { printf '%s\\n' "$@" > "$RELEASE_ARGS"; }
+${process.platform === 'win32' ? 'python3() { python "$@"; }' : ''}
 ${releaseScript.replaceAll('/tmp/release-notes.md', shellPath(path.join(dir, 'notes.md')))}`], {
     encoding: 'utf8', cwd: dir,
     env: { ...process.env, CHANNEL: channel, TAG: tag, GITHUB_SHA: 'a'.repeat(40), RELEASE_ARGS: shellPath(args) },
   });
-  return { ...result, args: existsSync(args) ? readFileSync(args, 'utf8') : null };
+  const manifest = path.join(dir, 'dist/update.json'), notes = path.join(dir, 'dist/changelog.md');
+  return { ...result, args: existsSync(args) ? readFileSync(args, 'utf8') : null,
+    manifest: existsSync(manifest) ? JSON.parse(readFileSync(manifest, 'utf8')) : null,
+    notes: existsSync(notes) ? readFileSync(notes, 'utf8') : null };
 }
 
 test('manual publication defaults to the safer prerelease channel', () => {
@@ -83,6 +101,20 @@ for (const channel of ['prerelease', 'stable']) {
     assert.match(result.args, new RegExp('--prerelease=' + (channel === 'prerelease') + '\\n'));
     assert.match(result.args, new RegExp('--latest=' + (channel === 'stable') + '\\n'));
     assert.match(result.args, /--target\na{40}\n/);
+    if (channel === 'stable') {
+      assert.deepEqual(result.manifest, {
+        version: 'v0.13.0', versionCode: 48,
+        zipUrl: 'https://github.com/Ccmra404/AdBlock-Pro-next/releases/download/v0.13.0/AdBlock-Pro-v0.13.0-arm64.zip',
+        changelog: 'https://github.com/Ccmra404/AdBlock-Pro-next/releases/download/v0.13.0/changelog.md',
+      });
+      assert.equal(result.notes, '中文更新日志。\n');
+      assert.match(result.args, /dist\/update.json/);
+      assert.match(result.args, /dist\/changelog.md/);
+    } else {
+      assert.equal(result.manifest, null);
+      assert.equal(result.notes, null);
+      assert.doesNotMatch(result.args, /update.json|changelog.md/);
+    }
   });
 }
 

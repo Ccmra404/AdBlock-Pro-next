@@ -51,7 +51,7 @@ $applet
 
 abp_find_curl() {
   local candidate
-  for candidate in /system/bin/curl /data/adb/adblockpro/bin/curl "$(command -v curl 2>/dev/null)"; do
+  for candidate in "${CURL:-}" /data/adb/adblockpro/bin/curl /system/bin/curl "$(command -v curl 2>/dev/null)"; do
     [ -n "$candidate" ] && [ -x "$candidate" ] || continue
     printf '%s\n' "$candidate"
     return 0

@@ -42,7 +42,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     }
     const files = ['action.sh', 'module.prop', 'service.sh', 'uninstall.sh', 'bindhosts.sh',
       'webui-config.sh', 'webui-job.sh', 'settings.conf', 'config-blacklist.txt', 'config-whitelist.txt',
-      'rules/shared-app-domains.txt',
+      'rules/shared-app-domains.txt', 'certs/cacert.pem',
       ...readdirSync(new URL('../scripts/', import.meta.url)).map(name => 'scripts/' + name),
       ...readdirSync(new URL('../webroot/', import.meta.url)).map(name => 'webroot/' + name)];
     for (const file of files) {
@@ -53,6 +53,8 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     }
     mkdirSync(path.join(stage, 'bin/data/filters'), { recursive: true });
     writeFileSync(path.join(stage, 'bin/AdGuardHome'), 'fixture-only-replacement-binary');
+    writeFileSync(path.join(stage, 'bin/curl'), '#!/bin/sh\necho "curl fixture"\n');
+    writeFileSync(path.join(stage, 'bin/adblock-ai'), '#!/bin/sh\necho "AI fixture"\n');
     for (const file of ['10007.txt', '1791638912.txt']) writeFileSync(path.join(stage, 'bin/data/filters', file), 'new-default-cache');
     const zip = path.join(root.dir, 'candidate.zip');
     const python = process.platform === 'win32' ? 'python' : 'python3';
@@ -67,6 +69,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
       env: { ...root.env(family), MODPATH: shellPath(module), TMPDIR: shellPath(root.dir), ZIPFILE: shellPath(zip) },
     });
     assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.equal(readFileSync(path.join(runtime, 'certs/cacert.pem'), 'utf8'), readFileSync(new URL('../certs/cacert.pem', import.meta.url), 'utf8'));
     for (const [file, content] of privateFiles) assert.equal(readFileSync(file, 'utf8'), content, file + ' changed during upgrade');
     assert.equal(readFileSync(path.join(state, 'root-family'), 'utf8').trim(), family);
     assert.equal(readFileSync(path.join(runtime, 'bin/AdGuardHome'), 'utf8'), 'fixture-only-replacement-binary');
