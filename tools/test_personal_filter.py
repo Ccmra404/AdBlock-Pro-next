@@ -149,8 +149,8 @@ const source = fs.readFileSync(process.argv[1], 'utf8');
 const begin = source.indexOf('function validObservedDomain(');
 const end = source.indexOf('async function loadObservationResult(');
 if (begin < 0 || end <= begin) throw new Error('Observation parser functions missing');
-const parse = vm.runInNewContext(source.slice(begin, end) + ';parseObservedDomains');
-const result = parse(fs.readFileSync(0, 'utf8'), Number(process.argv[3]));
+const parse = vm.runInNewContext(source.slice(begin, end) + ';parseObservationSnapshot');
+const result = parse(fs.readFileSync(0, 'utf8'), Number(process.argv[3])).domains;
 if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live core snapshot lost the probe domain in WebUI parsing');
 """
                     subprocess.run(['node', '-e', parser_test,
