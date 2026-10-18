@@ -459,10 +459,12 @@ source_name() {
     *) host=${1#https://}; host=${host%%/*}; printf '%s' "$host" ;;
   esac
 }
-source_mirror_url() {
+source_mirror_urls() {
   case "$1" in
-    https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward) printf 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' ;;
-    https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward) printf 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
+    https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward)
+      printf '%s\n' 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
+    https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward)
+      printf '%s\n' 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
     https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt) printf 'https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt' ;;
     https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt|https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt) printf 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt' ;;
     https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt) printf 'https://raw.githubusercontent.com/AdguardTeam/AdGuardSDNSFilter/gh-pages/Filters/filter.txt' ;;
@@ -503,11 +505,11 @@ download_source() {
   [ -n "${CURL:-}" ] || CURL=$(abp_find_curl) || return 1
   echo "[进度] 下载规则源：$name"
   if download_candidate "$url" "$output"; then return 0; fi
-  mirror=$(source_mirror_url "$url" 2>/dev/null) || mirror=''
-  if [ -n "$mirror" ] && [ "$mirror" != "$url" ]; then
+  for mirror in $(source_mirror_urls "$url" 2>/dev/null); do
+    [ -n "$mirror" ] && [ "$mirror" != "$url" ] || continue
     echo "[提醒] 原地址失败，正在尝试 HTTPS 镜像：$name"
     if download_candidate "$mirror" "$output"; then echo "[+] 已通过 HTTPS 镜像下载：$name"; return 0; fi
-  fi
+  done
   echo "[!] 下载失败：$name。原地址和可用镜像均未成功；现有规则会保留。" >&2
   rm -f "$output"
   return 1
@@ -533,7 +535,7 @@ sync_sources() {
     if [ "$url" != shared ]; then
       key=$(source_cache_key "$url")
       temp="$work/$key.txt"
-      download_source "$url" "$temp" "$name" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+      download_source "$url" "$temp" "$name" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 2; }
     elif [ ! -s "$filter" ]; then
       echo '[!] 随包或本地共享规则文件缺失；现有规则保留。' >&2
       rm -rf "$work"; rm -f "$desired" "$entries"; return 1
@@ -733,6 +735,7 @@ apply_personal_filter_change() {
 }
 
 update_rules() {
+  local shared_sync_ok=0 sync_result
   LAST_SNAPSHOT=
   echo '[进度] 检查 AdGuard Home 服务状态'
   api GET /status 4 >/dev/null || { echo '[!] DNS 服务没有响应；现有规则未更改。' >&2; return 1; }
@@ -740,9 +743,18 @@ update_rules() {
   echo '[进度] 应用来源与黑白名单配置'
   selected_sources=$("$BB" sh "$MODDIR/webui-config.sh" list-sources) || { update_failed '[!] 无法读取已选规则来源。'; return 1; }
   if printf '%s\n' "$selected_sources" | "$BB" awk -F '\t' '$1=="source" && $4=="shared" && $5=="enabled" { found=1 } END { exit !found }'; then
-    "$BB" sh "$RULE_STORE" sync || echo '[提醒] 共享库同步失败，继续使用随包或上次有效快照。'
+    if "$BB" sh "$RULE_STORE" sync; then shared_sync_ok=1; else echo '[提醒] 共享库同步失败，继续使用随包或上次有效快照。'; fi
   fi
-  sync_sources || { update_failed '[!] 规则来源配置失败。'; return 1; }
+  sync_sources
+  sync_result=$?
+  if [ "$sync_result" -ne 0 ]; then
+    if [ "$sync_result" -eq 2 ] && [ "$shared_sync_ok" = 0 ]; then
+      echo '[!] 规则源下载失败；现有规则配置未修改，DNS 核心保持运行。' >&2
+      return 1
+    fi
+    update_failed '[!] 规则来源配置失败。'
+    return 1
+  fi
   sync_personal_filter || { update_failed '[!] 个人黑白名单同步失败。'; return 1; }
   echo '[进度] 下载并校验规则源'
   api POST /filtering/refresh '{"whitelist":false}' 180 || { update_failed '[!] 规则下载或校验失败。'; return 1; }

@@ -33,7 +33,7 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
     'output= url=',
     'while [ "$#" -gt 0 ]; do case "$1" in -o) output=$2; shift 2;; https://*) url=$1; shift;; *) shift;; esac; done',
     'printf "%s\\n" "$url" >> "$CURL_CALLS"',
-    '[ "$url" != "$FAIL_URL" ] || { echo "simulated download failure" >&2; exit 28; }',
+    'printf "%s\\n" "$FAIL_URL" | grep -Fxq "$url" && { echo "simulated download failure" >&2; exit 28; }',
     'printf "||ads.example^\\n" > "$output"',
   ].join('\n'));
   chmodSync(curl, 0o755);
@@ -89,10 +89,44 @@ test('a failed subscription download keeps the previous applied source record an
   const oldRecord = 'https://old.example/list.txt\n';
   const f = fixture(t, { oldApplied: oldRecord, failDownload: true });
   const result = f.run();
-  assert.notEqual(result.status, 0);
+  assert.equal(result.status, 2, result.stderr + result.stdout);
   assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), oldRecord);
   assert.equal(existsSync(f.calls) ? readFileSync(f.calls, 'utf8') : '', '');
   assert.equal(readFileSync(f.oldCache, 'utf8'), '||preserved.example^\n');
+});
+
+test('failed source download after failed shared sync skips rollback and keeps DNS running', t => {
+  const root = rootFixture(t); root.addBusybox('Magisk');
+  const mod = path.join(root.dir, 'module'), state = path.join(root.dir, 'state');
+  mkdirSync(path.join(mod, 'scripts'), { recursive: true }); mkdirSync(state, { recursive: true });
+  writeFileSync(path.join(mod, 'scripts', 'compat.sh'), readFileSync(root.compatFile, 'utf8'));
+  const config = path.join(mod, 'webui-config.sh');
+  writeFileSync(config, '#!/bin/sh\nprintf "mode\\tbalanced\\nsource\\tshared\\tShared Rules\\tshared\\tenabled\\tbundled\\tremovable\\n"\n');
+  const ruleStore = path.join(mod, 'rule-store.sh');
+  writeFileSync(ruleStore, '#!/bin/sh\necho "simulated shared download failure" >&2\nexit 1\n');
+  const script = path.join(root.dir, 'update-flow.sh');
+  const update = bindhosts.slice(bindhosts.indexOf('update_rules() {'), bindhosts.indexOf('\ndiagnose() {'));
+  writeFileSync(script, [
+    '#!/bin/sh',
+    'BB=' + shellPath(root.paths.Magisk),
+    'MODDIR=' + shellPath(mod),
+    'STATE=' + shellPath(state),
+    'RULE_STORE=' + shellPath(ruleStore),
+    'API=http://unused',
+    'api() { [ "$1 $2" = "GET /status" ]; }',
+    'save_snapshot() { LAST_SNAPSHOT=fixture; return 0; }',
+    'sync_sources() { echo "curl: (35) Recv failure: Connection reset by peer" >&2; return 2; }',
+    'sync_personal_filter() { echo "must not run" >&2; return 1; }',
+    'update_failed() { echo "rollback must not run" >&2; return 1; }',
+    update,
+    'update_rules',
+  ].join('\n'));
+  const result = spawnSync('bash', [shellPath(script)], { encoding: 'utf8', timeout: 10000, env: root.env('Magisk') });
+  assert.equal(result.status, 1, result.stderr + result.stdout);
+  assert.match(result.stderr, /Connection reset by peer/);
+  assert.match(result.stderr, /现有规则配置未修改，DNS 核心保持运行/);
+  assert.doesNotMatch(result.stderr, /rollback must not run/);
+  assert.doesNotMatch(result.stderr, /must not run/);
 });
 
 test('built-in sources retry their verified HTTPS mirrors when original URLs fail', t => {
@@ -110,6 +144,17 @@ test('built-in sources retry their verified HTTPS mirrors when original URLs fai
     assert.deepEqual(readFileSync(f.curlCalls, 'utf8').trim().split('\n'), [original, mirror]);
     assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), original + '\n');
   }
+});
+
+test('10007 source falls through to the GCore CDN when jsDelivr and GitHub Raw fail', t => {
+  const original = 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward';
+  const raw = 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward';
+  const gcore = 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward';
+  const sources = 'mode\tbalanced\nsource\tcustom\tExample Feed\t' + original + '\tenabled\tconfigured\tremovable\n';
+  const f = fixture(t, { sources, failDownloadUrl: original + '\n' + raw });
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(readFileSync(f.curlCalls, 'utf8').trim().split('\n'), [original, raw, gcore]);
 });
 
 test('legacy migration updates an already registered shared filter instead of adding it twice', t => {
