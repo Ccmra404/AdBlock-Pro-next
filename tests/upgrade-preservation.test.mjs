@@ -55,6 +55,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     writeFileSync(path.join(stage, 'bin/AdGuardHome'), 'fixture-only-replacement-binary');
     writeFileSync(path.join(stage, 'bin/curl'), '#!/bin/sh\necho "curl fixture"\n');
     writeFileSync(path.join(stage, 'bin/adblock-ai'), '#!/bin/sh\necho "AI fixture"\n');
+    writeFileSync(path.join(stage, 'bin/adblock-bootstrap'), '#!/bin/sh\nexit 0\n');
     for (const file of ['10007.txt', '1791638912.txt']) writeFileSync(path.join(stage, 'bin/data/filters', file), 'new-default-cache');
     const zip = path.join(root.dir, 'candidate.zip');
     const python = process.platform === 'win32' ? 'python' : 'python3';

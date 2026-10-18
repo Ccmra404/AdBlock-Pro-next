@@ -69,7 +69,9 @@ mv -f "$defaults_tmp/settings.conf" "$DATA_DIR/defaults/settings.conf" &&
   }
 rm -rf "$defaults_tmp"
 chmod 700 "$DATA_DIR/defaults" "$DATA_DIR/defaults/filters"
-chmod 600 "$DATA_DIR/defaults"/* "$DATA_DIR/defaults/filters"/*
+chmod 600 "$DATA_DIR/defaults/settings.conf" "$DATA_DIR/defaults/config-blacklist.txt" \
+  "$DATA_DIR/defaults/config-whitelist.txt" "$DATA_DIR/defaults/filters/10007.txt" \
+  "$DATA_DIR/defaults/filters/1791638912.txt"
 
 initialize_switch() {
   file="$STATE_DIR/$1"
