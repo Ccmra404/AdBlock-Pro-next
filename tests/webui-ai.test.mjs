@@ -11,7 +11,7 @@ function harness() {
     localStorage: { getItem: k => storage.get(k) ?? null, setItem: (k, v) => storage.set(k, v), removeItem: k => storage.delete(k) }, window: {},
     exec: command => new Promise(resolve => pending.push({ command, resolve })), setTimeout, clearTimeout, setInterval() {}, requestAnimationFrame() {} });
   vm.runInContext(source, context);
-  return { context, pending, handlers, storage, nodes, ...vm.runInContext('({state,aiPanelMarkup,aiSettingsMarkup,managePage,observationSelectionTools,startObservation,openAI,normalizeAIEndpoint,requestAIAnalysis,monitorAI,validateAIResult,selectedAIResults,importAIResults,communityIssueUrl,aiPayload,saveAIConfig})', context) };
+  return { context, pending, handlers, storage, nodes, ...vm.runInContext('({state,applyPersonalRules,importPersonalLists,monitorJob,personalRulesPage,aiPanelMarkup,aiSettingsMarkup,managePage,observationSelectionTools,startObservation,openAI,normalizeAIEndpoint,requestAIAnalysis,monitorAI,validateAIResult,selectedAIResults,importAIResults,communityIssueUrl,aiPayload,saveAIConfig})', context) };
 }
 const result = { domains: ['ads.example', 'login.example'], results: [{ domain: 'ads.example', verdict: 'ad', reason: '疑似广告' }, { domain: 'login.example', verdict: 'essential', reason: '登录服务' }] };
 function ready(h) {
@@ -121,4 +121,55 @@ test('keys are transported separately from logs and never persisted in browser s
   const command = h.pending.shift(); assert.match(command.command, /ai-config/); assert.doesNotMatch(command.command, / config |fixture-only-key/);
   command.resolve({ errno: 0, stdout: JSON.stringify(h.state.aiConfig) }); await saving;
   assert.equal(input.value, ''); assert.equal(h.storage.size, 0); assert.doesNotMatch(h.aiPanelMarkup(), /fixture-only-key/);
+});
+
+test('both result surfaces select across pages and clear all without sending requests', async () => {
+  const h = harness(); ready(h);
+  h.state.observationDomains = Array.from({ length: 25 }, (_, i) => ({ domain: `domain${i}.example` }));
+  h.state.observationPage = 2;
+  h.state.aiResults = h.state.observationDomains.map((r, i) => ({ ...r, verdict: i === 1 ? 'essential' : 'ad', reason: '' }));
+  h.state.aiPage = 2;
+  const click = action => h.handlers.click({ target: { closest: s => s.includes('[data-action]') ? { dataset: { action } } : null } });
+  await click('observe-select-all'); assert.equal(h.state.selectedObservationDomains.length, 25);
+  assert.match(h.observationSelectionTools(), /25 个已选/);
+  await click('observe-clear-selection'); assert.equal(h.state.selectedObservationDomains.length, 0);
+  await click('ai-select-all'); assert.equal(h.selectedAIResults().length, 24);
+  assert.ok(!h.selectedAIResults().includes('domain1.example'));
+  assert.match(h.aiPanelMarkup(), /24 个已选/);
+  await click('ai-clear-selection'); assert.equal(h.selectedAIResults().length, 0);
+  assert.equal(h.pending.length, 0);
+});
+
+test('bulk observation selection stays within the displayed 50-domain capture limit', async () => {
+  const h = harness(); h.state.observationDomains = Array.from({ length: 70 }, (_, i) => ({ domain: `domain${i}.example` }));
+  await h.handlers.click({ target: { closest: s => s.includes('[data-action]') ? { dataset: { action: 'observe-select-all' } } : null } });
+  assert.equal(h.state.selectedObservationDomains.length, 50);
+  assert.ok(!h.state.selectedObservationDomains.includes('domain50.example'));
+});
+
+test('failed personal apply startup keeps saved rules and offers retry without a global update', async () => {
+  const h = harness(); h.state.page = 'lists';
+  vm.runInContext('render=()=>{}', h.context);
+  h.state.lists.blacklist = ['saved.example'];
+  const applying = h.applyPersonalRules();
+  assert.match(h.pending[0].command, /start \d+ --apply-personal$/);
+  h.pending.shift().resolve({ errno: 1, stderr: 'worker unavailable' });
+  await assert.rejects(applying, /名单已保存.*尚未应用/);
+  assert.equal(h.state.personalApplyError, true); assert.equal(h.state.busy, false);
+  assert.deepEqual(Array.from(h.state.lists.blacklist), ['saved.example']);
+  assert.match(h.personalRulesPage(), /应用个人名单.*重试/);
+  assert.equal(h.pending.length, 0);
+});
+
+for (const code of [0, 1]) test(`personal apply completion (${code}) reports actual application status and preserves paused filtering`, async () => {
+  const h = harness(); h.state.page = 'lists'; h.state.status = { filtering_enabled: 'false' };
+  h.context.setTimeout = cb => { cb(); return 1; };
+  vm.runInContext('refreshStatus=async()=>{}; loadLogs=async()=>{}; syncStatusView=()=>{}; render=()=>{};', h.context);
+  const monitoring = h.monitorJob('123', '--apply-personal'); await new Promise(setImmediate);
+  assert.match(h.pending[0].command, /poll 123$/);
+  h.pending.shift().resolve({ errno: 0, stdout: `local apply\nJOB_DONE=${code}` });
+  assert.equal(await monitoring, code);
+  assert.equal(h.state.personalApplyError, code !== 0); assert.equal(h.state.status.filtering_enabled, 'false');
+  assert.match(h.state.personalApplyMessage, code ? /名单已保存.*应用失败.*重试/ : /名单已应用.*过滤当前关闭/);
+  assert.equal(h.state.busy, false); assert.equal(h.pending.length, 0);
 });

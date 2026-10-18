@@ -611,6 +611,73 @@ sync_personal_filter() {
   printf '%s\n' "$USER_FILTER" > "$marker.tmp" && chmod 600 "$marker.tmp" && mv "$marker.tmp" "$marker"
 }
 
+set_personal_filter_enabled() {
+  body=$(printf '{"url":"%s","whitelist":false,"data":{"name":"AdBlock Pro 个人黑白名单","url":"%s","enabled":%s}}' "$USER_FILTER" "$USER_FILTER" "$1")
+  api POST /filtering/set_url "$body" 20 >/dev/null
+}
+
+apply_personal_rules() {
+  local personal_json personal_present personal_backup personal_had_file personal_added personal_removed
+  personal_json=$(api GET /filtering/status 4) || {
+    echo '[!] DNS 服务未响应；名单已保存，启动服务后可重试应用。' >&2; return 1;
+  }
+  personal_present=0
+  if printf '%s' "$personal_json" | "$BB" grep -Eo '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | "$BB" cut -d '"' -f4 | "$BB" grep -Fxq "$USER_FILTER"; then personal_present=1; fi
+  personal_backup="$USER_FILTER.previous.$$"
+  personal_had_file=0; personal_added=0; personal_removed=0
+  if [ -f "$USER_FILTER" ]; then
+    cp -p "$USER_FILTER" "$personal_backup" || return 1
+    personal_had_file=1
+  elif [ "$personal_present" = 1 ]; then
+    echo '[!] 现有个人规则文件缺失，未更改正在使用的过滤器。' >&2; return 1
+  fi
+  if apply_personal_filter_change; then
+    rm -f "$personal_backup"
+    echo '[成功] 个人名单已应用；未下载或更新其他订阅，未更改过滤开关。'
+    return 0
+  fi
+  echo '[!] 个人名单应用失败；保留已保存的名单供重试，正在恢复原过滤器。' >&2
+  if [ "$personal_had_file" = 1 ]; then
+    mv "$personal_backup" "$USER_FILTER" || { echo '[!] 原规则文件恢复失败，请查看日志后重试。' >&2; return 1; }
+  else
+    rm -f "$USER_FILTER"
+  fi
+  rm -f "$STATE/user-filter-applied.tmp"
+  if [ "$personal_present" = 1 ]; then
+    if [ "$personal_removed" = 1 ]; then
+      api POST /filtering/add_url "{\"name\":\"AdBlock Pro 个人黑白名单\",\"url\":\"$USER_FILTER\",\"whitelist\":false}" 20 >/dev/null || return 1
+    fi
+    set_personal_filter_enabled false && set_personal_filter_enabled true || {
+      echo '[!] 原个人过滤器未能重新加载；DNS 核心仍保留，请重试应用。' >&2; return 1;
+    }
+  elif [ "$personal_added" = 1 ]; then
+    post_remove_source "$USER_FILTER" || return 1
+  fi
+  return 1
+}
+
+apply_personal_filter_change() {
+  write_personal_filter || return 1
+  if [ "$USER_RULE_COUNT" -eq 0 ]; then
+    if [ "$personal_present" = 1 ]; then
+      post_remove_source "$USER_FILTER" || return 1
+      personal_removed=1
+    fi
+    rm -f "$STATE/user-filter-applied"
+    return $?
+  fi
+  if [ "$personal_present" = 1 ]; then
+    # AGH only rereads this local file when its enabled state changes.
+    set_personal_filter_enabled false || return 1
+  else
+    api POST /filtering/add_url "{\"name\":\"AdBlock Pro 个人黑白名单\",\"url\":\"$USER_FILTER\",\"whitelist\":false}" 20 >/dev/null || return 1
+    personal_added=1
+  fi
+  set_personal_filter_enabled true || return 1
+  printf '%s\n' "$USER_FILTER" > "$STATE/user-filter-applied.tmp" &&
+    chmod 600 "$STATE/user-filter-applied.tmp" && mv "$STATE/user-filter-applied.tmp" "$STATE/user-filter-applied"
+}
+
 update_rules() {
   LAST_SNAPSHOT=
   echo '[进度] 检查 AdGuard Home 服务状态'
@@ -665,6 +732,13 @@ case "$1" in
     printf '[+] Rendered %s personal rules.\n' "$USER_RULE_COUNT"
     ;;
   --ensure-shared) ensure_shared_filter ;;
+  --apply-personal)
+    if [ "${ABP_UPDATE_LOCKED:-0}" != 1 ]; then
+      export ABP_UPDATE_LOCKED=1
+      exec "$BB" flock -n "$STATE/update.lock" /system/bin/sh "$0" --apply-personal
+    fi
+    apply_personal_rules
+    ;;
   --sync-shared)
     if [ "${ABP_UPDATE_LOCKED:-0}" != 1 ]; then
       export ABP_UPDATE_LOCKED=1

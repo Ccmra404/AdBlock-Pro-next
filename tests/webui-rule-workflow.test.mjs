@@ -287,7 +287,8 @@ test('selected observed domains are imported only after explicit confirmation an
  h.pending.shift().resolve({errno:0,stdout:'saved'});await new Promise(setImmediate);
  assert.match(h.pending[0].command,/config list-blacklist/);
  h.pending.shift().resolve({errno:0,stdout:'ads.example\n'});await new Promise(setImmediate);
- h.pending.shift().resolve({errno:0,stdout:'allowed.example\n'});await confirmed;
+ h.pending.shift().resolve({errno:0,stdout:'allowed.example\n'});await new Promise(setImmediate);
+ assert.match(h.pending[0].command,/start \d+ --apply-personal$/);h.pending.shift().resolve({errno:0,stdout:'started'});await confirmed;
  assert.deepEqual(Array.from(h.state.selectedObservationDomains),[]);
  assert.match(toast.textContent,/已加入个人拦截名单/);
 });
@@ -301,7 +302,8 @@ test('AI or manual TXT import previews additions and skips existing or overlappi
  const encoded=h.pending[0].command.match(/import-lists '([^']+)'/)[1];assert.equal(Buffer.from(encoded,'base64').toString(),'B\tnew.example\nW\tallow.example\n');
  h.pending.shift().resolve({errno:0,stdout:'saved'});await new Promise(setImmediate);
  h.pending.shift().resolve({errno:0,stdout:'ads.example\nnew.example\n'});await new Promise(setImmediate);
- h.pending.shift().resolve({errno:0,stdout:'login.example\nallow.example\n'});await importing;
+ h.pending.shift().resolve({errno:0,stdout:'login.example\nallow.example\n'});await new Promise(setImmediate);
+ assert.match(h.pending[0].command,/start \d+ --apply-personal$/);h.pending.shift().resolve({errno:0,stdout:'started'});await importing;
  assert.match(toast.textContent,/已导入 2 个个人规则/);
 });
 
@@ -316,6 +318,7 @@ test('allowing an observed domain confirms first, then saves the whitelist and r
  const confirmed=modal.callback();assert.match(h.pending[0].command,/config add-whitelist 'ads.example'/);
  h.pending.shift().resolve({errno:0,stdout:'saved'});await new Promise(setImmediate);
  assert.match(h.pending[0].command,/config list-whitelist/);
- h.pending.shift().resolve({errno:0,stdout:'ads.example\n'});await confirmed;
- assert.deepEqual(Array.from(h.state.lists.whitelist),['ads.example']);assert.match(toast.textContent,/放行名单/);
+ h.pending.shift().resolve({errno:0,stdout:'ads.example\n'});await new Promise(setImmediate);
+ assert.match(h.pending[0].command,/start \d+ --apply-personal$/);h.pending.shift().resolve({errno:0,stdout:'started'});await confirmed;
+ assert.deepEqual(Array.from(h.state.lists.whitelist),['ads.example']);assert.equal(h.state.job.action,'--apply-personal');assert.match(h.state.personalApplyMessage,/正在应用/);
 });

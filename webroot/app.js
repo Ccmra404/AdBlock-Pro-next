@@ -8,7 +8,7 @@ const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], sourceRenameUrl: '', sourceEditUrl: '', logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', logFilter: 'all' };
 Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', sharedUpdatedAt: 0, sharedError: '', sharedLoaded: false, sharedSearch: '', sharedPage: 0, apps: [], appsLoaded: false, appsLoading: false, appsError: '', appQuery: '', selectedApp: null, observeDuration: '10', observationResultsOpen: false, selectedObservationDomains: [] });
-Object.assign(state, { aiOpen: false, aiSettingsOpen: false, aiConfig: null, aiBusy: false, aiError: '', aiResults: [], aiSelected: [], aiPage: 0 });
+Object.assign(state, { aiOpen: false, aiSettingsOpen: false, aiConfig: null, aiBusy: false, aiError: '', aiResults: [], aiSelected: [], aiPage: 0, personalApplyMessage: '', personalApplyError: false });
 const AI_PENDING_KEY = 'abp-ai-job';
 const pages = { home: '总览', rules: '规则管理', lists: '名单', manage: '设置', logs: '运行日志' };
 const LOG_PAGE_SIZE = 10;
@@ -159,7 +159,7 @@ function ruleList(kind) {
   const items = state.lists[kind] || [];
   const title = kind === 'whitelist' ? '放行名单' : '拦截名单';
   const placeholder = kind === 'whitelist' ? 'login.example.com' : 'ads.example.com';
-  return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">${title}</h2><p class="section-sub">${kind === 'whitelist' ? '允许指定域名通过过滤' : '拦截指定域名'}</p></div><span class="tag" data-list-total="${kind}">${fmt(items.length)} 条</span></div><form class="btn-row domain-form" data-kind="${kind}"><input class="field" name="domain" placeholder="${placeholder}" autocapitalize="none" spellcheck="false" required><button class="btn" type="submit">添加</button></form><p class="field-help">保存后执行规则更新才会应用到 DNS。</p><input class="field list-search" type="search" data-search-list="${kind}" value="${esc(state.listSearch[kind])}" placeholder="搜索${title}" style="margin-top:10px"><p class="field-help list-help">20 条以内全部显示；更多时每页显示 10 条。搜索范围为完整名单。</p><div class="list-results" data-list-results="${kind}" aria-live="polite">${listResultsMarkup(kind)}</div></section>`;
+  return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">${title}</h2><p class="section-sub">${kind === 'whitelist' ? '允许指定域名通过过滤' : '拦截指定域名'}</p></div><span class="tag" data-list-total="${kind}">${fmt(items.length)} 条</span></div><form class="btn-row domain-form" data-kind="${kind}"><input class="field" name="domain" placeholder="${placeholder}" autocapitalize="none" spellcheck="false" required><button class="btn" type="submit">添加</button></form><p class="field-help">修改后自动应用个人名单，无需更新订阅。</p><input class="field list-search" type="search" data-search-list="${kind}" value="${esc(state.listSearch[kind])}" placeholder="搜索${title}" style="margin-top:10px"><p class="field-help list-help">20 条以内全部显示；更多时每页显示 10 条。搜索范围为完整名单。</p><div class="list-results" data-list-results="${kind}" aria-live="polite">${listResultsMarkup(kind)}</div></section>`;
 }
 function listResultsMarkup(kind) {
   const items = state.lists[kind] || [];
@@ -195,8 +195,8 @@ function personalRulesPage() {
   if (state.rulesView === 'shared') return sharedRulesPage();
   const blocked = state.lists.blacklist || [];
   const allowed = state.lists.whitelist || [];
-  return `${heading('个人规则', '本机名单独立保存；共享抓包规则供各设备同步', '<div class="btn-row"><button class="btn" data-action="personal-rules-import">导入</button><button class="btn" data-action="personal-rules-export">导出</button></div>')}<input id="personal-rules-file" type="file" accept=".txt,.json,text/plain,application/json" hidden>
-    <div class="stack">${observationPanel()}<section class="panel personal-summary"><div class="panel-head"><div><h2 class="section-title">名单概览</h2><p class="section-sub">仅统计本机个人规则，不含订阅规则和 DNS 查询记录</p></div>${tag(`${blocked.length + allowed.length} 条`)}</div><div class="personal-counts"><div><strong>${fmt(blocked.length)}</strong><span>拦截域名</span></div><div><strong>${fmt(allowed.length)}</strong><span>放行域名</span></div></div></section><div class="twocol">${ruleList('blacklist')}${ruleList('whitelist')}</div><button type="button" class="panel shared-entry" data-action="shared-open"><span>${icon('globe')}<strong>共享抓包规则库</strong></span><span>查看与同步 ${icon('external')}</span></button></div>`;
+  return `${heading('个人规则', '本机名单独立保存；共享抓包规则供各设备同步', '<div class="btn-row"><button class="btn" data-action="personal-rules-apply">应用个人名单</button><button class="btn" data-action="personal-rules-import">导入</button><button class="btn" data-action="personal-rules-export">导出</button></div>')}<input id="personal-rules-file" type="file" accept=".txt,.json,text/plain,application/json" hidden>
+    <div class="stack">${observationPanel()}<section class="panel personal-summary"><div class="panel-head"><div><h2 class="section-title">名单概览</h2><p class="section-sub">仅统计本机个人规则，不含订阅规则和 DNS 查询记录</p></div>${tag(`${blocked.length + allowed.length} 条`)}</div><p id="personal-apply-status" class="field-help${state.personalApplyError ? ' notice warn' : ''}" role="status">${esc(state.personalApplyMessage || '修改名单后自动单独应用；失败可点“应用个人名单”重试。')}</p><div class="personal-counts"><div><strong>${fmt(blocked.length)}</strong><span>拦截域名</span></div><div><strong>${fmt(allowed.length)}</strong><span>放行域名</span></div></div></section><div class="twocol">${ruleList('blacklist')}${ruleList('whitelist')}</div><button type="button" class="panel shared-entry" data-action="shared-open"><span>${icon('globe')}<strong>共享抓包规则库</strong></span><span>查看与同步 ${icon('external')}</span></button></div>`;
 }
 function sharedResultsMarkup() {
   const query = state.sharedSearch.trim().toLowerCase();
@@ -222,7 +222,7 @@ function managePage() {
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">运行维护</h2><p class="section-sub">诊断结果统一保存在运行日志中</p></div></div><div class="btn-row"><button class="btn" data-action="diagnose">${icon('activity')} 运行诊断</button><button class="btn" data-action="restart">${icon('refresh')} 重启 DNS 核心</button><button class="btn btn-danger" data-action="disable-takeover">${icon('power')} 紧急解除接管</button><button class="btn" data-nav="logs">查看运行日志</button></div></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">管理入口</h2><p class="section-sub">规则高级配置由 AdGuard Home 原生后台提供</p></div></div><div class="action-grid"><a class="action-card" href="http://127.0.0.1:3000/" target="_blank" rel="noopener">${icon('external')}<span class="action-text"><strong>AdGuard Home 后台</strong><small>订阅、上游 DNS 与查询日志</small></span></a><button type="button" class="action-card" data-action="copy-gkd-link">${icon('activity')}<span class="action-text"><strong>GKD 项目</strong><small>复制项目链接，在浏览器中查看</small></span></button><button type="button" class="action-card" data-action="ai-settings">${icon('settings')}<span class="action-text"><strong>AI 域名分析</strong><small>DeepSeek 或自定义兼容接口</small></span></button></div><p class="field-help">WebUI 不保存或展示 AdGuard Home 管理密码；首次登录凭据由安装包单独提供。</p></section><div id="ai-settings-panel">${aiSettingsMarkup()}</div></div>`;
 }
-const actionNames = { '--sync-shared': '同步共享规则', 'import-lists': '导入个人名单', 'export-rules': '导出规则', '--update': '规则更新', '--pause': '暂停过滤核心', '--resume': '启动过滤核心', '--rollback': '恢复规则', '--rollback-history': '恢复历史规则', '--filtering': '过滤开关', '--takeover': 'DNS 接管', '--restart': '重启 DNS 核心', '--diagnose': '环境诊断', '--observe': '域名观察', diagnose: '环境诊断', 'set-mode': '切换过滤模式', 'set-source': '切换规则来源', 'add-source': '导入规则来源', 'remove-source': '删除规则来源', 'add-whitelist': '添加白名单', 'remove-whitelist': '删除白名单', 'add-blacklist': '添加黑名单', 'remove-blacklist': '删除黑名单', 'auto-update': '自动更新设置', autostart: '开机运行设置' };
+const actionNames = { '--apply-personal': '应用个人名单', '--sync-shared': '同步共享规则', 'import-lists': '导入个人名单', 'export-rules': '导出规则', '--update': '规则更新', '--pause': '暂停过滤核心', '--resume': '启动过滤核心', '--rollback': '恢复规则', '--rollback-history': '恢复历史规则', '--filtering': '过滤开关', '--takeover': 'DNS 接管', '--restart': '重启 DNS 核心', '--diagnose': '环境诊断', '--observe': '域名观察', diagnose: '环境诊断', 'set-mode': '切换过滤模式', 'set-source': '切换规则来源', 'add-source': '导入规则来源', 'remove-source': '删除规则来源', 'add-whitelist': '添加白名单', 'remove-whitelist': '删除白名单', 'add-blacklist': '添加黑名单', 'remove-blacklist': '删除黑名单', 'auto-update': '自动更新设置', autostart: '开机运行设置' };
 function logRow(line) {
   const [id, status, action, argument, summary] = line.split('\t');
   if (!/^\d{1,20}$/.test(id || '')) return '';
@@ -281,7 +281,7 @@ function observationSelectionTools() {
   const visible = state.observationDomains.slice(start, start + OBSERVATION_PAGE_SIZE).map(item => item.domain).filter(validObservedDomain);
   const allVisibleSelected = visible.length > 0 && visible.every(domain => selected.includes(domain));
   const disabled = selected.length ? '' : 'disabled';
-  return `<div class="observe-selection-tools"><div class="observe-selection-head"><b>${fmt(selected.length)} 个已选</b><button class="btn" data-action="observe-select-visible" ${visible.length ? '' : 'disabled'}>${allVisibleSelected ? '取消本页选择' : '全选本页'}</button><button class="btn" data-action="observe-clear-selection" ${disabled}>清空选择</button></div><div class="btn-row observe-export-actions"><button class="btn" data-action="observe-copy-domains" ${disabled}>复制域名</button><button class="btn" data-action="observe-export" ${disabled}>导出 TXT</button><button class="btn" data-action="ai-open" ${state.aiBusy ? 'disabled' : disabled}>${state.aiBusy ? 'AI 分析中…' : 'AI 分析所选（' + selected.length + '）'}</button>${state.aiResults.length ? '<button class="btn" data-action="ai-view-results">查看 AI 结果</button>' : ''}<button class="btn" data-action="observe-copy-ai" ${disabled}>复制给外部 AI</button><button class="btn" data-action="observe-import-personal" ${disabled}>导入个人拦截规则</button></div><p class="field-help">先勾选候选域名；复制、导出和导入只处理勾选的域名，不含应用名、设备标识或原始 DNS 日志。提交共享候选请前往共享规则库。</p></div>`;
+  return `<div class="observe-selection-tools"><div class="observe-selection-head"><b>${fmt(selected.length)} 个已选</b><button class="btn" data-action="observe-select-all" ${state.observationDomains.length ? '' : 'disabled'}>全选全部</button><button class="btn" data-action="observe-select-visible" ${visible.length ? '' : 'disabled'}>${allVisibleSelected ? '取消本页选择' : '全选本页'}</button><button class="btn" data-action="observe-clear-selection" ${disabled}>取消全选</button></div><div class="btn-row observe-export-actions"><button class="btn" data-action="observe-copy-domains" ${disabled}>复制域名</button><button class="btn" data-action="observe-export" ${disabled}>导出 TXT</button><button class="btn" data-action="ai-open" ${state.aiBusy ? 'disabled' : disabled}>${state.aiBusy ? 'AI 分析中…' : 'AI 分析所选（' + selected.length + '）'}</button>${state.aiResults.length ? '<button class="btn" data-action="ai-view-results">查看 AI 结果</button>' : ''}<button class="btn" data-action="observe-copy-ai" ${disabled}>复制给外部 AI</button><button class="btn" data-action="observe-import-personal" ${disabled}>导入个人拦截规则</button></div><p class="field-help">先勾选候选域名；复制、导出和导入只处理勾选的域名，不含应用名、设备标识或原始 DNS 日志。提交共享候选请前往共享规则库。</p></div>`;
 }
 function observationAIPrompt() {
   return `请分析下面这些在短时 DNS 观察中出现的候选域名。观察期间可能混入后台应用请求，请将每项谨慎分为“疑似广告/跟踪”“疑似正常服务”“无法判断”，说明判断依据，不要声称仅凭域名可以确定。只返回输入中已有的域名，不要编造域名。最后只输出可导入的纯文本，不要代码围栏、解释文字或列表标记：\n[拦截名单]\n<仅放入有较强广告/跟踪证据的域名>\n\n[放行名单]\n<确认属于必要服务且用户希望放行的域名>\n\n候选域名：\n${selectedObservationDomains().join('\n')}`;
@@ -353,8 +353,8 @@ function aiPanelMarkup() {
   const total = state.aiResults.length, pages = Math.max(1, Math.ceil(total / 10));
   state.aiPage = Math.max(0, Math.min(state.aiPage, pages - 1));
   const labels = { ad: '疑似广告/跟踪', essential: '疑似正常服务', unknown: '无法判断' };
-  const results = total ? `<p class="field-help">仅凭域名无法确定广告来源，默认不勾选。正常服务不提供批量拦截。</p><div class="ai-results">${state.aiResults.slice(state.aiPage * 10, state.aiPage * 10 + 10).map(r => `<label class="observe-row"><input type="checkbox" data-ai-domain="${esc(r.domain)}" aria-label="选择 ${esc(r.domain)}" ${r.verdict === 'essential' ? 'disabled' : ''} ${selected.includes(r.domain) ? 'checked' : ''}><span class="observe-copy"><strong>${esc(r.domain)}</strong><small>${esc(r.reason)}${domainInList(r.domain, state.lists.blacklist) ? ' · 已保存到个人名单' : ''}</small></span>${tag(labels[r.verdict], r.verdict === 'ad' ? 'yellow' : '')}</label>`).join('')}</div><nav class="logs-pagination" aria-label="AI 结果分页"><button class="btn" data-action="ai-page" data-page="${state.aiPage - 1}" ${state.aiPage === 0 ? 'disabled' : ''}>上一页</button><span>第 ${state.aiPage + 1} / ${pages} 页 · 共 ${total} 条</span><button class="btn" data-action="ai-page" data-page="${state.aiPage + 1}" ${state.aiPage >= pages - 1 ? 'disabled' : ''}>下一页</button></nav><div class="btn-row"><button class="btn" data-action="ai-import" ${selected.length ? '' : 'disabled'}>加入个人拦截（${selected.length}）</button><button class="btn" data-action="ai-submit" ${selected.length ? '' : 'disabled'}>提交共享候选</button></div>` : '';
-  return `<div class="ai-panel" aria-live="polite"><div class="panel-head"><div><h3>AI 分析结果</h3><p class="section-sub">${state.aiBusy ? '正在分析所选域名…' : `本轮 ${total} 个域名 · 结果仅供核对`}</p></div><div class="btn-row"><button class="btn" data-action="ai-back-observation" ${state.aiBusy ? 'disabled' : ''}>返回观察结果</button><button class="btn" data-action="ai-settings" ${state.aiBusy ? 'disabled' : ''}>接口设置</button></div></div><p class="field-help" role="status">${state.aiBusy ? '后台任务运行中，可切换页面，返回后查看结果。' : '个人名单保存后需执行规则更新；仍有广告需继续观察，定位实际来源。'}</p>${state.aiError ? `<div class="notice warn" role="alert">${esc(state.aiError)}</div>` : ''}${results}</div>`;
+  const results = total ? `<p class="field-help">仅凭域名无法确定广告来源，默认不勾选。正常服务不提供批量拦截。</p><div class="observe-selection-head"><b>${selected.length} 个已选</b><button class="btn" data-action="ai-select-all" ${state.aiResults.some(r => r.verdict !== 'essential' && validObservedDomain(r.domain)) ? '' : 'disabled'}>全选可选项</button><button class="btn" data-action="ai-clear-selection" ${selected.length ? '' : 'disabled'}>取消全选</button></div><div class="ai-results">${state.aiResults.slice(state.aiPage * 10, state.aiPage * 10 + 10).map(r => `<label class="observe-row"><input type="checkbox" data-ai-domain="${esc(r.domain)}" aria-label="选择 ${esc(r.domain)}" ${r.verdict === 'essential' ? 'disabled' : ''} ${selected.includes(r.domain) ? 'checked' : ''}><span class="observe-copy"><strong>${esc(r.domain)}</strong><small>${esc(r.reason)}${domainInList(r.domain, state.lists.blacklist) ? ' · 已保存到个人名单' : ''}</small></span>${tag(labels[r.verdict], r.verdict === 'ad' ? 'yellow' : '')}</label>`).join('')}</div><nav class="logs-pagination" aria-label="AI 结果分页"><button class="btn" data-action="ai-page" data-page="${state.aiPage - 1}" ${state.aiPage === 0 ? 'disabled' : ''}>上一页</button><span>第 ${state.aiPage + 1} / ${pages} 页 · 共 ${total} 条</span><button class="btn" data-action="ai-page" data-page="${state.aiPage + 1}" ${state.aiPage >= pages - 1 ? 'disabled' : ''}>下一页</button></nav><div class="btn-row"><button class="btn" data-action="ai-import" ${selected.length ? '' : 'disabled'}>加入个人拦截（${selected.length}）</button><button class="btn" data-action="ai-submit" ${selected.length ? '' : 'disabled'}>提交共享候选</button></div>` : '';
+  return `<div class="ai-panel" aria-live="polite"><div class="panel-head"><div><h3>AI 分析结果</h3><p class="section-sub">${state.aiBusy ? '正在分析所选域名…' : `本轮 ${total} 个域名 · 结果仅供核对`}</p></div><div class="btn-row"><button class="btn" data-action="ai-back-observation" ${state.aiBusy ? 'disabled' : ''}>返回观察结果</button><button class="btn" data-action="ai-settings" ${state.aiBusy ? 'disabled' : ''}>接口设置</button></div></div><p class="field-help" role="status">${state.aiBusy ? '后台任务运行中，可切换页面，返回后查看结果。' : '加入个人名单后自动应用，无需更新订阅；仍有广告需继续观察实际来源。'}</p>${state.aiError ? `<div class="notice warn" role="alert">${esc(state.aiError)}</div>` : ''}${results}</div>`;
 }
 function renderAI() {
   pageFragments.delete('lists');
@@ -447,7 +447,7 @@ async function importAIResults() {
   const preview = preparePersonalImport({ blacklist: domains, whitelist: [] });
   const count = preview.lists.blacklist.length;
   if (!count) { toast('所选域名已存在或与放行名单重叠，未修改名单'); return; }
-  confirm('加入个人拦截名单？', `合并导入 ${count} 个域名；保留已有名单并跳过放行项。AI 可能误判，请核对后操作。保存后执行规则更新生效。`, '合并导入', async () => {
+  confirm('加入个人拦截名单？', `合并导入 ${count} 个域名；保留已有名单并跳过放行项。AI 可能误判，请核对后操作。保存后自动应用个人名单，无需更新订阅。`, '合并导入', async () => {
     try { await importPersonalLists(preview.lists); state.aiSelected = []; renderAI(); } catch (e) { toast(e.message); }
   });
 }
@@ -829,10 +829,15 @@ async function monitorJob(id, action) {
         }
       }
       if (action === '--update') progress(code === 0 ? '规则更新完成' : '更新失败，请查看日志', `耗时 ${Math.floor((Date.now() - start) / 1000)} 秒`, code === 0 ? 'done' : 'failed');
+      if (action === '--apply-personal') {
+        state.personalApplyError = code !== 0;
+        state.personalApplyMessage = code === 0 ? (state.status?.filtering_enabled === 'false' ? '个人名单已应用；过滤当前关闭，开启过滤后生效。' : '个人名单已应用，未更新其他订阅。') : '名单已保存，但应用失败；可点“应用个人名单”重试，详情见运行日志。';
+        pageFragments.delete('lists');
+      }
       state.job = null; setBusy(false);
       syncStatusView();
-      if (action === '--observe' || (state.page === 'lists' && state.rulesView === 'shared')) render();
-      toast(action === '--observe' ? (code === 0 ? `观察完成，发现 ${fmt(state.observationDomains.length)} 个新域名` : '域名观察失败') : (code === 0 ? '操作已完成' : '操作失败，请查看运行日志'));
+      if (action === '--observe' || (action === '--apply-personal' && state.page === 'lists') || (state.page === 'lists' && state.rulesView === 'shared')) render();
+      toast(action === '--apply-personal' ? state.personalApplyMessage : action === '--observe' ? (code === 0 ? `观察完成，发现 ${fmt(state.observationDomains.length)} 个新域名` : '域名观察失败') : (code === 0 ? '操作已完成' : '操作失败，请查看运行日志'));
       return code;
     }
     if (action === '--update') {
@@ -1034,7 +1039,26 @@ function preparePersonalImport(lists) {
   }
   return { lists: prepared, skipped };
 }
-async function importPersonalLists(lists, message = '已合并导入，现有名单保留；执行规则更新后生效') {
+async function applyPersonalRules() {
+  if (state.job || jobStarting) throw new Error('已有后台任务正在运行，请等待完成');
+  setBusy(true);
+  state.personalApplyMessage = '正在应用个人名单，无需下载订阅…';
+  state.personalApplyError = false;
+  try { await startJob('--apply-personal'); }
+  catch (error) {
+    setBusy(false);
+    state.personalApplyError = true;
+    state.personalApplyMessage = '名单已保存，但尚未应用；请稍后点“应用个人名单”重试。';
+    throw new Error(`${state.personalApplyMessage} ${error.message}`);
+  } finally { pageFragments.delete('lists'); if (state.page === 'lists') render(); }
+}
+async function savePersonalDomain(action, domain, kind) {
+  setBusy(true);
+  try { await runConfig(action, domain); resetListView(kind); await loadList(kind, true); }
+  finally { setBusy(false); }
+  await applyPersonalRules();
+}
+async function importPersonalLists(lists, message = '个人名单已合并保存') {
   if (state.busy) throw new Error('请先等待当前操作完成');
   setBusy(true);
   try {
@@ -1045,6 +1069,7 @@ async function importPersonalLists(lists, message = '已合并导入，现有名
   state.selectedObservationDomains = [];
   render(); toast(message);
   } finally { setBusy(false); }
+  await applyPersonalRules();
 }
 async function importPersonalFile(file) {
   if (!file) return;
@@ -1053,7 +1078,7 @@ async function importPersonalFile(file) {
   const additions = preview.lists.blacklist.length + preview.lists.whitelist.length;
   if (!additions) throw new Error('没有新域名可导入；现有名单中的重复或冲突项已跳过');
   confirm('确认导入个人名单？', `预览：新增拦截 ${preview.lists.blacklist.length} 个、放行 ${preview.lists.whitelist.length} 个；跳过现有名单重复或冲突项 ${preview.skipped} 个。无效域名会在预览前拒绝。`, '确认导入', async () => {
-    try { await importPersonalLists(preview.lists, `已导入 ${additions} 个个人规则；执行规则更新后生效`); }
+    try { await importPersonalLists(preview.lists, `已导入 ${additions} 个个人规则`); }
     catch (error) { toast(error.message || '导入失败'); }
   });
 }
@@ -1173,10 +1198,13 @@ document.addEventListener('click', async event => {
     case 'ai-clear': confirm('删除 AI 配置？', '删除本机保存的接口密钥，不影响 DNS 或个人规则。', '删除配置', async () => { try { await aiCall('clear'); state.aiConfig = null; state.aiSettingsOpen = true; renderAISettings(); } catch (e) { toast(e.message); } }); break;
     case 'ai-analyze': requestAIAnalysis(); break;
     case 'ai-page': state.aiPage = Math.max(0, Number(button.dataset.page) || 0); renderAI(); break;
+    case 'ai-select-all': state.aiSelected = [...new Set(state.aiResults.filter(r => r.verdict !== 'essential' && validObservedDomain(r.domain)).map(r => r.domain))]; renderAI(); break;
+    case 'ai-clear-selection': state.aiSelected = []; renderAI(); break;
     case 'ai-import': importAIResults().catch(e => toast(e.message)); break;
     case 'ai-submit': { const domains = selectedAIResults(); if (domains.length) confirm('准备共享候选草稿？', '所选域名将写入 GitHub 草稿链接。请仅选择愿意公开的域名；需你手动提交，审核通过后才会进入共享规则。', '复制草稿链接', async () => { try { await copyText(communityIssueUrl(domains)); toast('草稿链接已复制，请在浏览器检查并手动提交'); } catch (e) { toast(e.message); } }); break; }
     case 'theme': state.theme = state.theme === 'dark' ? 'light' : 'dark'; localStorage.setItem('abp-theme', state.theme); document.documentElement.dataset.theme = state.theme; break;
     case 'personal-rules-export': exportPersonalRules().catch(e => toast(e.message)); break;
+    case 'personal-rules-apply': try { await applyPersonalRules(); } catch (e) { toast(e.message); } break;
     case 'personal-rules-import': $('#personal-rules-file')?.click(); break;
     case 'shared-open': state.rulesView = 'shared'; pageFragments.delete('lists'); if (state.page !== 'lists') navigate('lists'); else render(true); void loadSharedRules(); break;
     case 'shared-back': state.rulesView = 'local'; render(true); break;
@@ -1211,6 +1239,7 @@ document.addEventListener('click', async event => {
       catch (e) { state.observationError = `${e.message} 结果会在设备上短暂保留，可重试读取。`; render(); }
       break;
     }
+    case 'observe-select-all': state.selectedObservationDomains = [...new Set(state.observationDomains.slice(0, 50).map(item => item.domain).filter(validObservedDomain))]; renderObservationSelection(); break;
     case 'observe-select-visible': {
       const start = state.observationPage * OBSERVATION_PAGE_SIZE;
       const visible = state.observationDomains.slice(start, start + OBSERVATION_PAGE_SIZE).map(item => item.domain).filter(validObservedDomain);
@@ -1235,8 +1264,8 @@ document.addEventListener('click', async event => {
       const domains = chosen.filter(domain => !domainTouchesList(domain, state.lists.blacklist) && !domainTouchesList(domain, state.lists.whitelist));
       const skipped = chosen.length - domains.length;
       if (!domains.length) { toast('所选域名已存在于个人名单或与现有规则重叠，无需重复导入'); break; }
-      confirm('加入个人拦截名单？', `预览：新增 ${domains.length} 个拦截域名，跳过现有黑白名单重复或重叠项 ${skipped} 个。加入后会拦截该域名及其子域名，执行规则更新后生效。`, '确认导入', async () => {
-        try { await importPersonalLists({ blacklist: domains, whitelist: [] }, `已加入个人拦截名单；${domains.length} 个域名将在规则更新后生效`); }
+      confirm('加入个人拦截名单？', `预览：新增 ${domains.length} 个拦截域名，跳过现有黑白名单重复或重叠项 ${skipped} 个。加入后会拦截该域名及其子域名，保存后自动应用，无需更新订阅。`, '确认导入', async () => {
+        try { await importPersonalLists({ blacklist: domains, whitelist: [] }, `已加入个人拦截名单，共 ${domains.length} 个域名`); }
         catch (error) { toast(error.message || '导入失败'); }
       });
       break;
@@ -1247,8 +1276,8 @@ document.addEventListener('click', async event => {
       if (!validObservedDomain(domain)) { toast('域名格式无效'); break; }
       const kind = button.dataset.action === 'observe-allow' ? 'whitelist' : 'blacklist';
       const label = kind === 'whitelist' ? '放行' : '拦截';
-      confirm(`加入个人${kind === 'whitelist' ? '白' : '黑'}名单？`, `加入后会${label} ${domain} 及其子域名。名单保存后，执行规则更新才会应用到 DNS。`, `确认${label}`, async () => {
-        try { await runConfig(`add-${kind}`, domain); await loadList(kind, true); resetListView(kind); render(); toast(`已加入${label}名单；执行规则更新后生效`); }
+      confirm(`加入个人${kind === 'whitelist' ? '白' : '黑'}名单？`, `加入后会${label} ${domain} 及其子域名。保存后自动应用个人名单，无需更新订阅。`, `确认${label}`, async () => {
+        try { await savePersonalDomain(`add-${kind}`, domain, kind); }
         catch (error) { toast(error.message || '加入失败'); }
       });
       break;
@@ -1271,7 +1300,7 @@ document.addEventListener('click', async event => {
     case 'source-rename-cancel': state.sourceRenameUrl = ''; updateSourcesView(); break;
     case 'source-url-open': state.sourceEditUrl = button.dataset.url; state.sourceRenameUrl = ''; updateSourcesView(); break;
     case 'source-url-cancel': state.sourceEditUrl = ''; updateSourcesView(); break;
-    case 'list-delete': { const kind = button.dataset.kind, domain = button.dataset.domain; try { await runConfig(`remove-${kind}`, domain); await loadList(kind, true); toast('名单已保存；执行规则更新后生效'); } catch (e) { toast(e.message); } break; }
+    case 'list-delete': { const kind = button.dataset.kind, domain = button.dataset.domain; try { await savePersonalDomain(`remove-${kind}`, domain, kind); } catch (e) { toast(e.message); } break; }
     case 'logs-refresh': loadLogs(true).then(() => toast('日志已刷新')).catch(e => toast(e.message)); break;
     case 'logs-copy': try { await copyRecentLogs(); } catch (e) { toast(e.message || '复制日志失败'); } break;
     case 'logs-clear': confirm('清空操作日志？', '只删除本模块的操作记录，不会影响规则历史或当前过滤配置。', '清空日志', async () => { try { const r = await exec(`${JOB} clear`); if (Number(r.errno)) throw new Error(textOf(r)); await loadLogs(true); toast('操作日志已清空'); } catch (e) { toast(e.message); } }); break;
@@ -1343,7 +1372,7 @@ document.addEventListener('submit', async event => {
     try { await runConfig('edit-source', oldUrl, newUrl); state.sourceEditUrl = ''; invalidateSources(); await loadSources(); toast('规则订阅链接已保存；执行规则更新后生效'); } catch (e) { toast(e.message); }
   } else if (form.matches('.domain-form')) {
     event.preventDefault(); const kind = form.dataset.kind, domain = new FormData(form).get('domain')?.toString().trim();
-    try { await runConfig(`add-${kind}`, domain); resetListView(kind); await loadList(kind, true); form.reset(); toast('名单已保存；执行规则更新后生效'); } catch (e) { toast(e.message); }
+    try { await savePersonalDomain(`add-${kind}`, domain, kind); form.reset(); } catch (e) { toast(e.message); }
   } else if (form.id === 'domain-form') {
     event.preventDefault(); const domain = new FormData(form).get('domain')?.toString().trim(); const output = $('#domain-result'); output.textContent = '正在查询本地规则…';
     try { const result = await exec(`${COMMAND} --check-domain ${shellArg(domain)}`); if (Number(result.errno)) throw new Error(textOf(result)); output.textContent = textOf(result) || '查询完成'; } catch (e) { output.textContent = `检查失败：${e.message}`; }
@@ -1373,7 +1402,7 @@ async function init() {
   const pending = localStorage.getItem('abp-pending-job');
   if (pending) {
     const [id, action] = pending.split(':');
-    if (/^\d{1,20}$/.test(id) && ['--update','--sync-shared','--pause','--resume','--rollback','--rollback-history','--filtering','--takeover','--restart','--diagnose','--observe'].includes(action)) {
+    if (/^\d{1,20}$/.test(id) && ['--update','--sync-shared','--apply-personal','--pause','--resume','--rollback','--rollback-history','--filtering','--takeover','--restart','--diagnose','--observe'].includes(action)) {
       if (action === '--observe') {
         try { state.observation = JSON.parse(localStorage.getItem(OBSERVE_SESSION_KEY) || 'null'); } catch { state.observation = null; }
         if (!state.observation || state.observation.id !== id) state.observation = { id, startedAt: Date.now(), duration: 60, appLabel: '', active: true };
