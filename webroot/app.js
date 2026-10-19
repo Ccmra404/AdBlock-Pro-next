@@ -1360,7 +1360,7 @@ document.addEventListener('click', async event => {
     }
     case 'update': perform('--update'); break;
     case 'restart': confirm('重启 DNS 核心', '会重启本模块的 AdGuard Home 服务，可能短暂中断 DNS 解析。', '重启', () => perform('--restart')); break;
-    case 'restore-defaults': confirm('恢复默认设置？', '这会按当前安装包恢复模块默认状态：清除自定义订阅和名称、个人黑白名单、AI 密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享同步状态、观察结果、日志和历史；过滤及自动运行恢复默认开启，DNS 接管恢复为 IPv4 默认开启，IPv6 仍关闭。执行前会在 Download/AdBlock Pro 创建本机备份，并在完成后重启 DNS 核心。', '备份并恢复', () => perform('--factory-reset')); break;
+    case 'restore-defaults': confirm('恢复默认设置？', '这会按当前安装包恢复模块默认状态：清除自定义订阅和名称、个人黑白名单、AI 密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享同步状态、观察结果、日志和历史；过滤及自动运行恢复默认开启，DNS 接管恢复为 IPv4 默认开启，IPv6 仍关闭。执行前在 Download/AdBlock Pro 导出个人名单及基础偏好；含账号和密钥的完整备份仅保存在 /data/adb/adblockpro/backups，请勿分享。完成后会重启 DNS 核心。', '备份并恢复', () => perform('--factory-reset')); break;
     case 'disable-takeover': confirm('紧急解除 DNS 接管', '只会移除本模块创建的 DNS 重定向规则，AdGuard Home 服务会继续运行。', '解除接管', () => perform('--takeover', 'off')); break;
     case 'rollback': { const key = $('#history-select')?.value; if (!key) { toast('请先选择一个历史版本'); break; } confirm('恢复历史规则', '将替换当前规则来源和缓存。恢复后会重启 DNS 核心。', '恢复', () => perform('--rollback-history', key)); break; }
     case 'source-toggle': {

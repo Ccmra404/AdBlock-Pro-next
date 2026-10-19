@@ -69,10 +69,10 @@ function fixture(t, options = {}) {
   return { root, agh, state, module, jobs, exports, env, trace, run };
 }
 
-test('factory reset backs up private state, restores package defaults and preserves runtime code', t => {
+test('factory reset keeps full recovery private and exports only lists/preferences to Downloads', t => {
   const f = fixture(t); const result = f.run(['2000']);
   assert.equal(result.status, 0, result.stderr + result.stdout);
-  assert.match(result.stdout, /下载目录创建模块备份/);
+  assert.match(result.stdout, /Root 私有完整备份和下载目录规则备份/);
   assert.match(result.stdout, /IPv6 DNS 接管仍关闭/);
   assert.match(readFileSync(path.join(f.agh, 'settings.conf'), 'utf8'), /enable_ipv6_dns=false/);
   assert.equal(readFileSync(path.join(f.agh, 'admin.auth'), 'utf8'), 'admin:password\n');
@@ -95,16 +95,28 @@ test('factory reset backs up private state, restores package defaults and preser
   assert.equal(existsSync(path.join(f.module, 'bindhosts.sh')), true);
   assert.equal(existsSync(path.join(f.jobs, '2000.log')), true);
   assert.equal(existsSync(path.join(f.jobs, '1000.log')), false);
-  const backup = readdirSync(f.exports).find(name => name.endsWith('.tar.gz'));
+  const privateDir = path.join(f.agh, 'backups');
+  const backup = readdirSync(privateDir).find(name => name.endsWith('.tar.gz'));
   assert.ok(backup);
   assert.match(backup, /^AdBlock-Pro-default-settings-/);
-  assert.equal(statSync(path.join(f.exports, backup)).mode & 0o777, 0o600, 'the archive includes credentials and stays private');
-  const backupContents = spawnSync('tar', ['-tzf', shellPath(path.join(f.exports, backup))], { encoding: 'utf8' });
+  if (process.platform !== 'win32') {
+    assert.equal(statSync(privateDir).mode & 0o777, 0o700);
+    assert.equal(statSync(path.join(privateDir, backup)).mode & 0o777, 0o600);
+  }
+  const backupContents = spawnSync('bash', ['-c', 'tar -tzf "$1"', 'audit-tar', shellPath(path.join(privateDir, backup))], { encoding: 'utf8' });
   assert.equal(backupContents.status, 0, backupContents.stderr);
   assert.match(backupContents.stdout, /module-state\/ai\/config\.json/);
   assert.match(backupContents.stdout, /adguard-home\/admin\.auth/);
   assert.doesNotMatch(backupContents.stdout, /\.tmp|backups\//, 'the backup must not contain itself or prior backup archives');
   assert.doesNotMatch(result.stderr, /file is the archive; skipping/);
+  const exported = readdirSync(f.exports).filter(name => name.endsWith('.tar.gz'));
+  assert.equal(exported.length, 1);
+  const exportedText = spawnSync('bash', ['-c', 'tar -xOzf "$1"', 'audit-tar', shellPath(path.join(f.exports, exported[0]))], { encoding: 'utf8' });
+  assert.equal(exportedText.status, 0, exportedText.stderr);
+  assert.match(exportedText.stdout, /private-block\.example/);
+  assert.doesNotMatch(exportedText.stdout, /private-secret|old-password-hash|private\.example|old-user-config|old log/);
+  const exportedList = spawnSync('bash', ['-c', 'tar -tzf "$1"', 'audit-tar', shellPath(path.join(f.exports, exported[0]))], { encoding: 'utf8' });
+  assert.doesNotMatch(exportedList.stdout, /ai\/|admin\.auth|AdGuardHome\.yaml|sources|webui-jobs|dns-history/);
   assert.deepEqual(readFileSync(f.trace, 'utf8').trim().split('\n'), ['stop', 'start']);
 });
 
@@ -116,6 +128,19 @@ test('backup failure aborts before DNS stop or any state mutation', t => {
   assert.equal(existsSync(f.trace), false);
 });
 
+test('a failed Download export preserves the complete private backup and aborts before DNS stop', t => {
+  const f = fixture(t);
+  const tar = path.join(f.root.dir, 'export-fail.sh');
+  writeFileSync(tar, '#!/bin/sh\ncase "$2" in *AdBlock-Pro-rules-settings*) exit 1 ;; esac\nexec tar "$@"\n');
+  chmodSync(tar, 0o755); f.env.ABP_TAR = shellPath(tar);
+  const result = f.run(['2000']);
+  assert.notEqual(result.status, 0);
+  assert.equal(existsSync(f.trace), false);
+  assert.equal(readFileSync(path.join(f.state, 'ai/config.json'), 'utf8'), '{"key":"private-secret"}\n');
+  assert.equal(readdirSync(path.join(f.agh, 'backups')).filter(name => name.endsWith('.tar.gz')).length, 1);
+  assert.equal(readdirSync(f.exports).length, 0);
+});
+
 test('backup staging excludes its destination when the download folder is nested under module state', t => {
   const f = fixture(t);
   const exportDir = path.join(f.state, 'backups');
@@ -124,7 +149,7 @@ test('backup staging excludes its destination when the download folder is nested
   assert.equal(result.status, 0, result.stderr + result.stdout);
   const backup = readdirSync(exportDir).find(name => name.endsWith('.tar.gz'));
   assert.ok(backup);
-  const listing = spawnSync('tar', ['-tzf', shellPath(path.join(exportDir, backup))], { encoding: 'utf8' });
+  const listing = spawnSync('bash', ['-c', 'tar -tzf "$1"', 'audit-tar', shellPath(path.join(exportDir, backup))], { encoding: 'utf8' });
   assert.equal(listing.status, 0, listing.stderr);
   assert.doesNotMatch(listing.stdout, /backups\/|\.tmp/);
   assert.doesNotMatch(result.stderr, /file is the archive; skipping/);
