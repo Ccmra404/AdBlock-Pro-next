@@ -19,6 +19,29 @@ const antiAd = 'https://anti-ad.net/easylist.txt';
 const custom = 'https://example.org/filter.txt';
 const shared = 'shared';
 
+test('manual rules reject a DNS label over 63 characters and preserve valid entries', t => {
+  const f = fixture(t), accepted = 'a'.repeat(63) + '.example';
+  assert.equal(f.run('add-blacklist', accepted).status, 0);
+  const before = readFileSync(path.join(f.dir, 'blacklist.txt'), 'utf8');
+  assert.notEqual(f.run('add-blacklist', 'a'.repeat(64) + '.example').status, 0);
+  assert.equal(readFileSync(path.join(f.dir, 'blacklist.txt'), 'utf8'), before);
+});
+
+for (const kind of ['blacklist', 'whitelist']) {
+  test(`manual ${kind} selection moves only that domain and preserves other entries`, t => {
+    const f = fixture(t);
+    const opposite = kind === 'blacklist' ? 'whitelist' : 'blacklist';
+    writeFileSync(path.join(f.dir, opposite + '.txt'), '# keep comment\nADS.Example\r\nkeep.example\n');
+    writeFileSync(path.join(f.dir, kind + '.txt'), 'other.example\n');
+    const result = f.run('add-' + kind, 'ads.example');
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.equal(readFileSync(path.join(f.dir, opposite + '.txt'), 'utf8'), '# keep comment\nkeep.example\n');
+    assert.equal(readFileSync(path.join(f.dir, kind + '.txt'), 'utf8'), 'other.example\nads.example\n');
+    assert.equal(f.run('add-' + kind, 'ads.example').status, 0);
+    assert.equal(readFileSync(path.join(f.dir, kind + '.txt'), 'utf8'), 'other.example\nads.example\n');
+  });
+}
+
 function fixture(t, { light = '', balanced = '', strict = '', customSources = '', sourcesV2, sourceNames = '', profilesInitialized = true } = {}) {
   const root = rootFixture(t);
   root.addBusybox('Magisk');

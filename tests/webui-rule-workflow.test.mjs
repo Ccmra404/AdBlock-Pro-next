@@ -10,8 +10,27 @@ function harness() {
     localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{},
     exec:command=>new Promise(resolve=>pending.push({command,resolve})),setTimeout,clearTimeout,setInterval(){return 1;},requestAnimationFrame(){},cancelAnimationFrame(){} });
   vm.runInContext(source,context);
-  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,saveExportFile,observationAIPrompt,communityIssueUrl,parseObservationSnapshot,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,rulesPage,sourceRows,sharedResultsMarkup,startObservation})',context)};
+  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,saveExportFile,observationAIPrompt,communityIssueUrl,parseObservationSnapshot,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,rulesPage,sourceRows,sharedResultsMarkup,startObservation,savePersonalDomain})',context)};
 }
+
+test('a manual allow action refreshes both lists before applying the moved rule', async () => {
+  const h = harness();
+  h.state.lists.blacklist = ['ads.example']; h.state.lists.whitelist = [];
+  vm.runInContext('render = () => {}; startJob = async action => { state.testApply = action; };', h.context);
+  const saved = h.savePersonalDomain('add-whitelist', 'ads.example', 'whitelist');
+  assert.match(h.pending[0].command, /config add-whitelist/);
+  h.pending.shift().resolve({errno:0, stdout:'saved'});
+  await new Promise(setImmediate);
+  const reads = h.pending.splice(0);
+  assert.equal(reads.length, 2);
+  assert.ok(reads.some(x => x.command.includes('list-blacklist')));
+  assert.ok(reads.some(x => x.command.includes('list-whitelist')));
+  for (const read of reads) read.resolve({errno:0, stdout:read.command.includes('list-whitelist') ? 'ads.example\n' : ''});
+  await saved;
+  assert.deepEqual(Array.from(h.state.lists.blacklist), []);
+  assert.deepEqual(Array.from(h.state.lists.whitelist), ['ads.example']);
+  assert.equal(h.state.testApply, '--apply-personal');
+});
 
 test('TXT export sections, DNS rules and JSON import preserve blacklist and whitelist semantics',()=>{
   const h=harness();
@@ -346,8 +365,9 @@ test('allowing an observed domain confirms first, then saves the whitelist and r
  assert.equal(h.pending.length,0);assert.match(modal.innerHTML,/加入个人白名单/);
  const confirmed=modal.callback();assert.match(h.pending[0].command,/config add-whitelist 'ads.example'/);
  h.pending.shift().resolve({errno:0,stdout:'saved'});await new Promise(setImmediate);
- assert.match(h.pending[0].command,/config list-whitelist/);
- h.pending.shift().resolve({errno:0,stdout:'ads.example\n'});await new Promise(setImmediate);
+ assert.equal(h.pending.length,2);
+ for(const read of h.pending.splice(0)) read.resolve({errno:0,stdout:read.command.includes('list-whitelist')?'ads.example\n':''});
+ await new Promise(setImmediate);
  assert.match(h.pending[0].command,/start \d+ --apply-personal$/);h.pending.shift().resolve({errno:0,stdout:'started'});await confirmed;
  assert.deepEqual(Array.from(h.state.lists.whitelist),['ads.example']);assert.equal(h.state.job.action,'--apply-personal');assert.match(h.state.personalApplyMessage,/正在应用/);
 });
