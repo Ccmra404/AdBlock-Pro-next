@@ -5,13 +5,32 @@ import vm from 'node:vm';
 const source=readFileSync(new URL('../webroot/app.js',import.meta.url),'utf8').replace(/^import[^\n]*\n/,'').replace(/\ninit\(\);/,'\n');
 function harness() {
   const pending=[], handlers={}, storage=new Map();
-  const context=vm.createContext({ TextEncoder, btoa: s=>Buffer.from(s).toString('base64'),
+  const context=vm.createContext({ TextEncoder, btoa: s=>Buffer.from(s,'binary').toString('base64'),
     document:{ documentElement:{},body:{},addEventListener(n,fn){handlers[n]=fn;},querySelector(){return null;},querySelectorAll(){return [];} },
     localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{},
     exec:command=>new Promise(resolve=>pending.push({command,resolve})),setTimeout,clearTimeout,setInterval(){return 1;},requestAnimationFrame(){},cancelAnimationFrame(){} });
   vm.runInContext(source,context);
-  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,observationAIPrompt,communityIssueUrl,parseObservationSnapshot,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,rulesPage,sourceRows,sharedResultsMarkup,startObservation})',context)};
+  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,saveExportFile,observationAIPrompt,communityIssueUrl,parseObservationSnapshot,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,rulesPage,sourceRows,sharedResultsMarkup,startObservation,savePersonalDomain})',context)};
 }
+
+test('a manual allow action refreshes both lists before applying the moved rule', async () => {
+  const h = harness();
+  h.state.lists.blacklist = ['ads.example']; h.state.lists.whitelist = [];
+  vm.runInContext('render = () => {}; startJob = async action => { state.testApply = action; };', h.context);
+  const saved = h.savePersonalDomain('add-whitelist', 'ads.example', 'whitelist');
+  assert.match(h.pending[0].command, /config add-whitelist/);
+  h.pending.shift().resolve({errno:0, stdout:'saved'});
+  await new Promise(setImmediate);
+  const reads = h.pending.splice(0);
+  assert.equal(reads.length, 2);
+  assert.ok(reads.some(x => x.command.includes('list-blacklist')));
+  assert.ok(reads.some(x => x.command.includes('list-whitelist')));
+  for (const read of reads) read.resolve({errno:0, stdout:read.command.includes('list-whitelist') ? 'ads.example\n' : ''});
+  await saved;
+  assert.deepEqual(Array.from(h.state.lists.blacklist), []);
+  assert.deepEqual(Array.from(h.state.lists.whitelist), ['ads.example']);
+  assert.equal(h.state.testApply, '--apply-personal');
+});
 
 test('TXT export sections, DNS rules and JSON import preserve blacklist and whitelist semantics',()=>{
   const h=harness();
@@ -240,14 +259,26 @@ test('shared candidate submission without a selection returns to observation and
  assert.equal(h.state.rulesView,'local');assert.equal(h.state.observationResultsOpen,true);assert.match(toast.textContent,/先在域名观察结果中选择候选域名/);
 });
 
-test('TXT export downloads only selected valid domains',()=>{
+test('TXT export downloads only selected valid domains',async()=>{
  const h=harness(),downloads=[];h.state.observationDomains=[{domain:'ads.example'},{domain:'service.example'}];h.state.selectedObservationDomains=['ads.example','invalid;domain'];
  h.context.Blob=class {constructor(parts,options){this.parts=parts;this.options=options;}};
  h.context.URL={createObjectURL:blob=>{h.downloadBlob=blob;return 'blob:test';},revokeObjectURL(){}};
  h.context.document.createElement=()=>({click(){downloads.push({href:this.href,download:this.download});}});
- h.context.setTimeout=()=>1;h.exportObservedDomains();
- assert.deepEqual(downloads,[{href:'blob:test',download:'adblock-pro-observed-domains.txt'}]);
+ h.context.setTimeout=()=>1;await h.exportObservedDomains();
+ assert.deepEqual(downloads,[{href:'blob:test',download:'AdBlock-Pro-observed-domains.txt'}]);
  assert.equal(h.downloadBlob.parts[0],'ads.example\n');assert.equal(h.downloadBlob.options.type,'text/plain;charset=utf-8');
+});
+
+test('device exports write UTF-8 text through the fixed module download path',async()=>{
+ const h=harness();h.context.window.ksu={};
+ const content='广告.example\n';
+ const saving=h.saveExportFile('observed-domains',content,'AdBlock-Pro-observed-domains.txt','text/plain;charset=utf-8');
+ const request=h.pending.shift();
+ assert.match(request.command,/config export-file observed-domains \d+ '[A-Za-z0-9+/=]+'$/);
+ const encoded=request.command.match(/'([A-Za-z0-9+/=]+)'$/)[1];
+ assert.equal(Buffer.from(encoded,'base64').toString('utf8'),content);
+ request.resolve({errno:0,stdout:'exported_path=/sdcard/Download/AdBlock Pro/AdBlock-Pro-observed-domains-123.txt'});
+ assert.equal(await saving,'/sdcard/Download/AdBlock Pro/AdBlock-Pro-observed-domains-123.txt');
 });
 
 test('a new observation clears old selection and loaded results cannot revive it',async()=>{
@@ -334,8 +365,9 @@ test('allowing an observed domain confirms first, then saves the whitelist and r
  assert.equal(h.pending.length,0);assert.match(modal.innerHTML,/加入个人白名单/);
  const confirmed=modal.callback();assert.match(h.pending[0].command,/config add-whitelist 'ads.example'/);
  h.pending.shift().resolve({errno:0,stdout:'saved'});await new Promise(setImmediate);
- assert.match(h.pending[0].command,/config list-whitelist/);
- h.pending.shift().resolve({errno:0,stdout:'ads.example\n'});await new Promise(setImmediate);
+ assert.equal(h.pending.length,2);
+ for(const read of h.pending.splice(0)) read.resolve({errno:0,stdout:read.command.includes('list-whitelist')?'ads.example\n':''});
+ await new Promise(setImmediate);
  assert.match(h.pending[0].command,/start \d+ --apply-personal$/);h.pending.shift().resolve({errno:0,stdout:'started'});await confirmed;
  assert.deepEqual(Array.from(h.state.lists.whitelist),['ads.example']);assert.equal(h.state.job.action,'--apply-personal');assert.match(h.state.personalApplyMessage,/正在应用/);
 });

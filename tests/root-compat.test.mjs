@@ -6,6 +6,12 @@ import { spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { shellPath, rootFixture } from './shell-fixture.mjs';
 
+test('KernelSU description updates provide the module context expected by ksud', () => {
+  const base = readFileSync(new URL('../scripts/base.sh', import.meta.url), 'utf8');
+  assert.match(base, /KSU_MODULE="\$module_id" \/data\/adb\/ksud module config set override\.description/);
+  assert.doesNotMatch(base, /MODULE_ID="\$module_id" \/data\/adb\/ksud/);
+});
+
 for (const family of ['KernelSU', 'Magisk', 'APatch']) {
   test(family + ': reads logs, saves personal rules and launches workers with its own tools', async t => {
     const fixture = rootFixture(t);
@@ -32,16 +38,20 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     assert.match(run('webui-job.sh', ['list']), /1001/);
     assert.match(run('webui-job.sh', ['config', 'list-sources', 'balanced']), /秋风 AdGuard 全规则/);
     assert.equal(existsSync(path.join(jobs, '1001.done')), true);
-    const oldSource = 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward';
+    const oldSource = 'https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward';
     const newSource = 'https://mirror.example/ads.txt';
     run('webui-job.sh', ['config', 'edit-source', oldSource, newSource, '1003']);
     assert.match(run('webui-job.sh', ['config', 'list-sources', 'balanced']), /mirror\.example/);
     assert.equal(readFileSync(path.join(jobs, '1003.done'), 'utf8').trim(), '0');
-    writeFileSync(path.join(fixture.dir, 'bindhosts.sh'), '#!/bin/sh\nprintf "worker-action=%s\\n" "$1"\n');
+    writeFileSync(path.join(fixture.dir, 'bindhosts.sh'), '#!/bin/sh\nprintf "worker-action=%s %s\\n" "$1" "$2"\n');
     run('webui-job.sh', ['start', '1002', '--filtering', 'on']);
     for (let i = 0; i < 100 && !existsSync(path.join(jobs, '1002.done')); i++) await delay(20);
     assert.equal(readFileSync(path.join(jobs, '1002.done'), 'utf8').trim(), '0');
     assert.match(run('webui-job.sh', ['poll', '1002']), /worker-action=--filtering[\s\S]*JOB_DONE=0/);
+    run('webui-job.sh', ['start', '1004', '--factory-reset']);
+    for (let i = 0; i < 100 && !existsSync(path.join(jobs, '1004.done')); i++) await delay(20);
+    assert.equal(readFileSync(path.join(jobs, '1004.done'), 'utf8').trim(), '0');
+    assert.match(run('webui-job.sh', ['poll', '1004']), /worker-action=--factory-reset 1004[\s\S]*JOB_DONE=0/);
   });
 
   test(family + ': current manager takes priority over stale tool directories', t => {

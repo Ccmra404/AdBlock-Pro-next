@@ -1,6 +1,7 @@
 #!/system/bin/sh
 MODDIR=${0%/*}
 DIR=/data/adb/bindhosts_personal/webui-jobs
+AGH=/data/adb/adblockpro
 CONFIG=$MODDIR/webui-config.sh
 umask 077
 . "$MODDIR/scripts/compat.sh" || exit 1
@@ -33,6 +34,16 @@ prune_jobs() {
 
 case "$1" in
  ai-status|ai-config|ai-clear|ai-start|ai-poll)
+  if [ -e "$AGH/factory-reset.active" ]; then
+   reset_pid=$(cat "$AGH/factory-reset.active" 2>/dev/null)
+   case "$reset_pid" in ''|*[!0-9]*) reset_pid='' ;; esac
+   if [ -n "$reset_pid" ] && kill -0 "$reset_pid" 2>/dev/null; then
+    if [ ! -r "/proc/$reset_pid/cmdline" ] || "$BB" tr '\000' ' ' < "/proc/$reset_pid/cmdline" | "$BB" grep -Fq "$AGH/scripts/factory-reset.sh"; then
+     echo '[!] 默认设置恢复正在执行，请等待完成后重试。' >&2; exit 1
+    fi
+   fi
+   rm -f "$AGH/factory-reset.active"
+  fi
   ai=/data/adb/adblockpro/bin/adblock-ai
   [ -x "$ai" ] || { echo 'AI 分析组件不可用，请安装包含此功能的测试包。' >&2; exit 1; }
   case "$1" in
@@ -57,6 +68,7 @@ case "$1" in
    list-whitelist|list-blacklist|shared-rules) ;;
    import-lists) case "$3" in ''|*[!A-Za-z0-9+/=]*) exit 1 ;; esac; [ ${#3} -le 98304 ] || exit 1 ;;
    export-rules) case "$3" in local|shared) ;; *) exit 1 ;; esac ;;
+   export-file) case "$3" in operation-logs|observed-domains) ;; *) exit 1 ;; esac; case "$4" in ''|*[!0-9]*) exit 1 ;; esac; [ ${#4} -le 20 ] || exit 1; case "$5" in ''|*[!A-Za-z0-9+/=]*) exit 1 ;; esac; [ ${#5} -le 90000 ] || exit 1 ;;
    list-sources) case "$3" in ''|light|balanced|strict) ;; *) exit 1;; esac ;;
    add-whitelist|add-blacklist|remove-whitelist|remove-blacklist) echo "$3" | "$BB" grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' || exit 1 ;;
    auto-update|autostart) case "$3" in on|off) ;; *) exit 1;; esac ;;
@@ -71,7 +83,7 @@ case "$1" in
   # Serialize configuration writes with DNS worker operations across WebUI
   # sessions. Reads intentionally remain non-blocking.
   case "$2" in
-   list-whitelist|list-blacklist|list-sources|shared-rules) ;;
+   list-whitelist|list-blacklist|list-sources|shared-rules|export-file) ;;
    *)
     if [ "${ABP_JOB_CONFIG_LOCKED:-0}" != 1 ]; then
      mkdir -p "$DIR" || exit 1
@@ -90,6 +102,7 @@ case "$1" in
    list-sources) result=$(sh "$CONFIG" "$2" "$3" 2>&1); event_id='' ;;
    shared-rules) result=$(sh "$CONFIG" "$2" 2>&1); event_id='' ;;
    export-rules) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$4 ;;
+   export-file) result=$(sh "$CONFIG" "$2" "$3" "$4" "$5" 2>&1); event_id='' ;;
    *) result=$(sh "$CONFIG" "$2" "$3" 2>&1); event_id=$4 ;;
   esac
   code=$?
@@ -182,7 +195,7 @@ case "$1" in
  start)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
+  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--factory-reset|--diagnose|--observe) ;; *) exit 1;; esac
   case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
   if [ "$3" = --observe ]; then case "$4" in 5|10|15|30|60|90) ;; *) exit 1;; esac; fi
   if [ "$3" = --rollback-history ]; then echo "$4" | "$BB" grep -Eq '^[0-9]{14}-[0-9]+$' || exit 1; fi
@@ -197,7 +210,7 @@ case "$1" in
  worker)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1;; esac
+  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--factory-reset|--diagnose|--observe) ;; *) exit 1;; esac
   case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
   if [ "$3" = --observe ]; then case "$4" in 5|10|15|30|60|90) ;; *) exit 1;; esac; fi
   # Serialize privileged mutations from multiple WebUI sessions.
@@ -209,7 +222,7 @@ case "$1" in
     result=1
   fi
   if [ "$result" != 0 ]; then
-    echo "[!] Task failed or another DNS operation is already running (exit $result)." >> "$DIR/$2.log"
+    echo "[!] 任务执行失败（退出码 $result）；请查看上方具体错误。" >> "$DIR/$2.log"
   fi
   printf '%s\n' "$result" > "$DIR/$2.tmp" && mv "$DIR/$2.tmp" "$DIR/$2.done"
   bytes=$(wc -c < "$DIR/$2.log" 2>/dev/null)
@@ -221,9 +234,11 @@ case "$1" in
  execute)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--diagnose|--observe) ;; *) exit 1 ;; esac
+  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--factory-reset|--diagnose|--observe) ;; *) exit 1 ;; esac
   if [ "$3" = --observe ]; then
     exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$4" "$2" "${5:-}"
+  elif [ "$3" = --factory-reset ]; then
+    exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$2"
   else
     exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$4"
   fi

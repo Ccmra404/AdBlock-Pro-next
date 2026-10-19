@@ -46,12 +46,61 @@ function harness() {
   });
   vm.runInContext(source, context);
   const methods = vm.runInContext(
-    '({ state, refreshStatus, syncStatusView, loadSources, loadList, loadLogs, monitorJob, summaryText, memoryView, homePage, setBusy, nextJobId, progress, startJob })', context);
+    '({ state, refreshStatus, syncStatusView, loadSources, loadList, loadLogs, monitorJob, summaryText, memoryView, homePage, setBusy, nextJobId, progress, startJob, startObservation })', context);
   return { ...methods, pending, controls, timers, serviceRows, context };
 }
 const status = (state, mode = 'balanced') =>
   ({ errno: 0, stdout: 'state=' + state + ' blocked=25 mode=' + mode + '\nfiltering_enabled=true' });
 const sources = url => ({ errno: 0, stdout: 'source\t10007\tSource\t' + url + '\tenabled\tconfigured\tbase' });
+
+for (const [name, response, failed] of [
+  ['missing snapshot', {errno:1, stdout:'result is unavailable'}, true],
+  ['malformed snapshot', {errno:0, stdout:'not JSON'}, true],
+  ['unexpected response object', {errno:0, stdout:'{"error":"unavailable"}'}, true],
+  ['valid empty snapshot', {errno:0, stdout:'{"data":[]}'}, false],
+]) test(`observation completion distinguishes ${name} from zero captured domains`, async () => {
+  const h = harness();
+  h.state.job = {id:'123', action:'--observe'};
+  h.state.observation = {id:'123', startedAt:Date.now(), duration:10, active:true};
+  vm.runInContext('render = () => {}; localStorage.setItem("abp-pending-job", "123:--observe");', h.context);
+  const completed = h.monitorJob('123', '--observe');
+  h.timers.shift()(); await new Promise(setImmediate);
+  h.pending.shift().resolve({errno:0, stdout:'finished\nJOB_DONE=0'});
+  await new Promise(setImmediate);
+  for (const item of h.pending.splice(0)) item.resolve(item.command.endsWith(' recent') ? {errno:0, stdout:''} : status('active'));
+  await new Promise(setImmediate);
+  assert.match(h.pending[0].command, /observe-result 123$/);
+  h.pending.shift().resolve(response);
+  await new Promise(setImmediate);
+  if (!failed) {
+    assert.match(h.pending[0].command, /observe-clean 123$/);
+    h.pending.shift().resolve({errno:0, stdout:''});
+  }
+  await completed;
+  const message = vm.runInContext('document.querySelector("#toast").textContent', h.context);
+  if (failed) {
+    assert.ok(h.state.observationError);
+    assert.match(message, /读取失败/);
+    assert.doesNotMatch(message, /记录 0 个域名/);
+    assert.equal(vm.runInContext('localStorage.getItem("abp-pending-job")', h.context), '123:--observe');
+    assert.equal(h.state.observation.id, '123', 'retain the result id for retry');
+  } else {
+    assert.equal(h.state.observationError, '');
+    assert.match(message, /记录 0 个域名/);
+  }
+});
+
+for (const [values, message] of [
+  [{state:'bypassed', dns_core_running:'1', dns_takeover:'off'}, /核心正在运行.*接管已关闭/],
+  [{state:'degraded', dns_core_running:'1', dns_takeover:'on'}, /核心正在运行.*监听或接管异常/],
+  [{state:'paused', dns_core_running:'0'}, /核心未运行/],
+]) test(`observation explains ${values.state} without changing DNS settings`, async () => {
+  const h = harness(); h.state.status = values;
+  await h.startObservation();
+  const text = vm.runInContext('document.querySelector("#toast").textContent', h.context);
+  assert.match(text, message);
+  assert.equal(h.pending.length, 0);
+});
 
 test('unreadable, zero or inconsistent RSS never renders as 0.0 MB', () => {
   const h = harness();

@@ -14,7 +14,7 @@ REQUIRED = {
     'config-blacklist.txt', 'config-whitelist.txt', 'webroot/index.html',
     'webroot/app.js', 'webroot/kernelsu.js', 'scripts/compat.sh',
     'scripts/tool.sh', 'scripts/base.sh', 'scripts/iptables.sh', 'scripts/adb-debug.sh',
-    'scripts/rule-store.sh', 'rules/shared-app-domains.txt',
+    'scripts/rule-store.sh', 'scripts/factory-reset.sh', 'rules/shared-app-domains.txt',
     'scripts/footprint.sh', 'scripts/memory.sh', 'scripts/detach.sh', 'META-INF/com/google/android/update-binary',
     'bin/AdGuardHome', 'bin/adblock-bootstrap',
     'bin/curl', 'bin/adblock-ai', 'certs/cacert.pem',
@@ -22,6 +22,7 @@ REQUIRED = {
     'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/AWAvenue-GPL-3.0.txt',
     'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt', 'licenses/cacert-MPL-2.0.txt',
     'licenses/go-openai-Apache-2.0.txt',
+    'licenses/go-BSD-3-Clause.txt', 'licenses/go-crypto-BSD-3-Clause.txt',
 }
 CA_SHA256 = 'a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505'
 

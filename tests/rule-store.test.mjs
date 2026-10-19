@@ -9,10 +9,26 @@ const bundle = readFileSync(new URL('../rules/shared-app-domains.txt', import.me
 const bundledDomains = bundle.split(/\r?\n/).filter(row => row && !row.startsWith('#')).sort();
 const nextRevision = Number(bundle.match(/^# revision: (\d+)$/m)[1]) + 1;
 
+for (const [name, black, white, input] of [
+  ['conflicting tags in one file', '', '', 'B\tads.example\nW\tads.example\n'],
+  ['a stale block import conflicts with a saved allow entry', '', 'ADS.Example\r\n', 'B\tads.example\n'],
+  ['a stale allow import conflicts with a saved block entry', 'ads.example\n', '', 'W\tads.example\n'],
+]) test(`personal import rejects ${name} without partial writes`, t => {
+  const f = fixture(t);
+  writeFileSync(path.join(f.state, 'blacklist.txt'), black);
+  writeFileSync(path.join(f.state, 'whitelist.txt'), white);
+  const before = f.privateSnapshot();
+  const result = f.run('import', Buffer.from(input).toString('base64'));
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.deepEqual(f.privateSnapshot(), before);
+});
+
 function fixture(t) {
   const f = rootFixture(t); f.addBusybox('Magisk');
   const state = path.join(f.dir, 'state'), agh = path.join(f.dir, 'agh'), module = path.join(f.dir, 'module');
   mkdirSync(state); mkdirSync(path.join(module, 'rules'), { recursive:true });
+  mkdirSync(path.join(agh, 'certs'), { recursive:true });
+  writeFileSync(path.join(agh, 'certs', 'cacert.pem'), 'fixture CA bundle\n');
   const bundle = readFileSync(new URL('../rules/shared-app-domains.txt', import.meta.url));
   writeFileSync(path.join(module, 'rules/shared-app-domains.txt'), bundle);
   const script = path.join(f.dir, 'scripts/rule-store.sh');
@@ -22,12 +38,12 @@ function fixture(t) {
   const remote = path.join(f.dir,'remote');
   writeFileSync(remote,bundle);
   const curl = path.join(f.dir,'curl');
-  writeFileSync(curl,'#!/bin/sh\n[ "$FAIL_DOWNLOAD" != 1 ] || exit 28\nwhile [ "$1" != -o ]; do shift; done\ncp "$REMOTE" "$2"\n'); chmodSync(curl,0o755);
-  const env = { ...f.env('Magisk'), ABP_STATE_DIR:shellPath(state), ABP_AGH_DIR:shellPath(agh), ABP_MODULE_DIR:shellPath(module), CURL:shellPath(curl), REMOTE:shellPath(remote), ABP_EXPORT_DIR:shellPath(path.join(f.dir,'exports')) };
+  writeFileSync(curl,'#!/bin/sh\noutput= url=\nwhile [ "$#" -gt 0 ]; do case "$1" in --cacert|--connect-timeout|--max-time|--max-filesize) shift 2;; -o) output=$2; shift 2;; https://*) url=$1; shift;; *) shift;; esac; done\nprintf "%s\\n" "$url" >> "$CURL_URLS"\n[ "$url" != "$FAIL_URL" ] || { echo "curl: (28) Resolving timed out" >&2; exit 28; }\n[ "$FAIL_DOWNLOAD" != 1 ] || { echo "curl: (28) Resolving timed out" >&2; exit 28; }\n[ "$FAIL_TLS" != 1 ] || { echo "curl: (60) certificate verify failed" >&2; exit 60; }\ncp "$REMOTE" "$output"\n'); chmodSync(curl,0o755);
+  const env = { ...f.env('Magisk'), ABP_STATE_DIR:shellPath(state), ABP_AGH_DIR:shellPath(agh), ABP_MODULE_DIR:shellPath(module), CURL:shellPath(curl), REMOTE:shellPath(remote), CURL_URLS:shellPath(path.join(f.dir,'curl-urls')), ABP_EXPORT_DIR:shellPath(path.join(f.dir,'exports')) };
   const run = (...args) => spawnSync('bash',[shellPath(script),...args],{env,encoding:'utf8',timeout:10000});
   const file = path.join(state,'shared-app-domains.txt'), filter = path.join(agh,'bin/userfilters/adblock-pro-shared-app-rules.txt');
   const privateSnapshot = () => ['blacklist','whitelist'].map(k=>readFileSync(path.join(state,k+'.txt'),'utf8'));
-  return { run, state, remote, file, filter, env, privateSnapshot, dir:f.dir };
+  return { run, state, remote, file, filter, env, privateSnapshot, dir:f.dir, curlUrls:path.join(f.dir,'curl-urls') };
 }
 
 test('offline shared bank is installed independently and idempotently on existing devices', t=>{
@@ -55,6 +71,38 @@ test('shared sync validates downloaded data and retains newer cached versions ac
   assert.equal(f.run('init').status,0); assert.equal(readFileSync(f.filter,'utf8'),'||new.example^\n');
 });
 
+test('shared sync retries the official CDN mirror when GitHub Raw is unavailable', t=>{
+  const f=fixture(t); assert.equal(f.run('init').status,0);
+  f.env.FAIL_URL='https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/shared-app-domains.txt';
+  const result=f.run('sync');
+  assert.equal(result.status,0,result.stderr+result.stdout);
+  assert.deepEqual(readFileSync(f.curlUrls,'utf8').trim().split('\n'),[
+    'https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/shared-app-domains.txt',
+    'https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt',
+  ]);
+  assert.match(result.stdout,/共享规则已从 HTTPS 镜像获取/);
+});
+
+test('shared sync reports DNS and TLS failures while retaining the previous snapshot and lists', t=>{
+  const f=fixture(t); assert.equal(f.run('init').status,0);
+  const before=readFileSync(f.file,'utf8'), original=readFileSync(f.filter,'utf8'), lists=f.privateSnapshot();
+  f.env.FAIL_DOWNLOAD='1';
+  const dns=f.run('sync');
+  assert.notEqual(dns.status,0);
+  assert.match(dns.stderr,/域名无法解析或解析超时/);
+  assert.match(dns.stderr,/现有共享规则快照和个人名单均已保留/);
+  assert.deepEqual(readFileSync(f.curlUrls,'utf8').trim().split('\n'),[
+    'https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/shared-app-domains.txt',
+    'https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt',
+    'https://cdn.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt',
+  ]);
+  assert.equal(readFileSync(f.file,'utf8'),before); assert.equal(readFileSync(f.filter,'utf8'),original); assert.deepEqual(f.privateSnapshot(),lists);
+  f.env.FAIL_TLS='1'; delete f.env.FAIL_DOWNLOAD;
+  const tls=f.run('sync');
+  assert.notEqual(tls.status,0); assert.match(tls.stderr,/TLS 证书校验失败/);
+  assert.equal(readFileSync(f.file,'utf8'),before); assert.equal(readFileSync(f.filter,'utf8'),original); assert.deepEqual(f.privateSnapshot(),lists);
+});
+
 test('personal import merges, deduplicates, preserves comments and rejects entire malformed input', t=>{
   const f=fixture(t), encode=s=>Buffer.from(s).toString('base64');
   assert.equal(f.run('import',encode('B\tADS.LOCAL.EXAMPLE\nB\tnew.example\nW\tallow.example\n')).status,0);
@@ -78,10 +126,22 @@ test('failed second personal-file rename restores both previous lists', t=>{
 test('exports preserve separate scopes and refuse overwriting a prior download', t=>{
   const f=fixture(t); assert.equal(f.run('init').status,0);
   assert.equal(f.run('export','local','123').status,0);
-  const target=path.join(f.dir,'exports/adblock-pro-local-rules-123.txt');
+  const target=path.join(f.dir,'exports/AdBlock-Pro-personal-rules-123.txt');
   assert.match(readFileSync(target,'utf8'),/\[拦截名单\][\s\S]*ads.local.example[\s\S]*\[放行名单\][\s\S]*login.local.example/);
   assert.notEqual(f.run('export','local','123').status,0);
   assert.equal(f.run('export','shared','124').status,0);
-  assert.match(readFileSync(path.join(f.dir,'exports/adblock-pro-shared-rules-124.txt'),'utf8'),/# revision:/);
+  assert.match(readFileSync(path.join(f.dir,'exports/AdBlock-Pro-shared-rules-124.txt'),'utf8'),/# revision:/);
   assert.equal(existsSync(path.join(f.state,'shared-app-domains.txt')),true);
+});
+
+test('logs and observed-domain exports share the module folder and refuse overwrites', t=>{
+  const f=fixture(t);
+  const logs=Buffer.from('[{"status":"success"}]').toString('base64');
+  const domains=Buffer.from('ads.example\n').toString('base64');
+  assert.equal(f.run('write','operation-logs','125',logs).status,0);
+  assert.equal(readFileSync(path.join(f.dir,'exports/AdBlock-Pro-operation-logs-125.json'),'utf8'),'[{"status":"success"}]');
+  assert.equal(f.run('write','observed-domains','126',domains).status,0);
+  assert.equal(readFileSync(path.join(f.dir,'exports/AdBlock-Pro-observed-domains-126.txt'),'utf8'),'ads.example\n');
+  assert.notEqual(f.run('write','observed-domains','126',domains).status,0);
+  assert.notEqual(f.run('write','arbitrary-file','127',domains).status,0);
 });

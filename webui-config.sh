@@ -2,11 +2,15 @@
 DIR=/data/adb/bindhosts_personal
 MODDIR=${0%/*}
 . "$MODDIR/scripts/compat.sh" || exit 1
-REWARD=https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
-AWAVENUE=https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt
+REWARD=https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
+AWAVENUE=https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt
 LEGACY_REWARD=https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
+LEGACY_REWARD_CDN=https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
+LEGACY_REWARD_GCORE=https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
 LEGACY_AWAVENUE=https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt
+LEGACY_AWAVENUE_GCORE=https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt
 LEGACY_AWA_ADS=https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt
+LEGACY_AWA_ADS_GCORE=https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Adguard-Only.Ads.txt
 ANTIAD=https://anti-ad.net/easylist.txt
 ADRULES=https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt
 ADGUARD=https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt
@@ -14,10 +18,11 @@ PROFILE_DIR=$DIR/profiles
 SOURCES_V2=$DIR/sources-v2.txt
 SOURCE_NAMES=$DIR/source-names.tsv
 REMOVED_SOURCES=$DIR/removed-sources.txt
+SOURCE_MIGRATION=$DIR/source-url-migration-v1
 SHARED_SOURCE=shared
 umask 077
 
-case "$1" in list-whitelist|list-blacklist|list-sources|shared-rules) ;; *)
+case "$1" in list-whitelist|list-blacklist|list-sources|shared-rules|export-file) ;; *)
   if [ "${ABP_CONFIG_LOCKED:-0}" != 1 ]; then
     export ABP_CONFIG_LOCKED=1
     exec "$BB" flock -n "$DIR/update.lock" "$BB" sh "$0" "$@"
@@ -26,7 +31,7 @@ case "$1" in list-whitelist|list-blacklist|list-sources|shared-rules) ;; *)
 esac
 
 valid_domain() {
-  [ ${#1} -le 253 ] && printf '%s\n' "$1" | "$BB" grep -Eiq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+  [ ${#1} -le 253 ] && printf '%s\n' "$1" | "$BB" grep -Eiq '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'
 }
 valid_custom_url() {
   [ ${#1} -ge 12 ] && [ ${#1} -le 2048 ] || return 1
@@ -85,6 +90,34 @@ remove_line() {
   [ "$rc" -le 1 ] || { rm -f "$tmp"; return 1; }
   chmod 600 "$tmp" && mv "$tmp" "$file"
 }
+save_personal_domain() {
+  local target=$1 domain=$2 work="$DIR/.personal-edit.$$" kind file restored=1
+  mkdir "$work" || return 1
+  for kind in blacklist whitelist; do
+    file="$DIR/$kind.txt"
+    if [ -e "$file" ]; then
+      cp -p "$file" "$work/$kind.before" || { rm -rf "$work"; return 1; }
+    else : > "$work/$kind.before"; : > "$work/$kind.absent"; fi
+    "$BB" awk -v domain="$domain" -v selected="$target" -v kind="$kind" '
+      { d=tolower($0); gsub(/^[[:space:]]+|[[:space:]]+$/, "", d)
+        if(d==domain) { if(kind==selected && !seen++) print domain; next }
+        print
+      }
+      END { if(kind==selected && !seen) print domain }
+    ' "$work/$kind.before" > "$work/$kind.next" || { rm -rf "$work"; return 1; }
+  done
+  if ! chmod 600 "$work/blacklist.next" "$work/whitelist.next" ||
+     ! mv "$work/blacklist.next" "$DIR/blacklist.txt" || ! mv "$work/whitelist.next" "$DIR/whitelist.txt"; then
+    for kind in blacklist whitelist; do
+      if [ -f "$work/$kind.absent" ]; then rm -f "$DIR/$kind.txt" || restored=0;
+      else cp -p "$work/$kind.before" "$DIR/$kind.txt" || restored=0; fi
+    done
+    if [ "$restored" = 1 ]; then rm -rf "$work";
+    else echo "[!] 名单自动恢复未完成；原名单备份保留在 $work，请勿删除。" >&2; fi
+    return 1
+  fi
+  rm -rf "$work"
+}
 mode_sources() {
   case "$1" in
     light|balanced|strict)
@@ -96,12 +129,16 @@ mode_sources() {
 migrate_source_url_file() {
   file=$1
   [ -f "$file" ] || return 0
-  if ! "$BB" grep -Fqx "$LEGACY_REWARD" "$file" && ! "$BB" grep -Fqx "$LEGACY_AWAVENUE" "$file" && ! "$BB" grep -Fqx "$LEGACY_AWA_ADS" "$file"; then return 0; fi
+  if ! "$BB" grep -Fqx "$LEGACY_REWARD" "$file" && ! "$BB" grep -Fqx "$LEGACY_REWARD_CDN" "$file" &&
+    ! "$BB" grep -Fqx "$LEGACY_REWARD_GCORE" "$file" && ! "$BB" grep -Fqx "$LEGACY_AWAVENUE" "$file" &&
+    ! "$BB" grep -Fqx "$LEGACY_AWAVENUE_GCORE" "$file" && ! "$BB" grep -Fqx "$LEGACY_AWA_ADS" "$file" &&
+    ! "$BB" grep -Fqx "$LEGACY_AWA_ADS_GCORE" "$file"; then return 0; fi
   tmp="$file.migrate.$$"
   raw="$tmp.raw"
-  "$BB" awk -v old_reward="$LEGACY_REWARD" -v reward="$REWARD" -v old_awa="$LEGACY_AWAVENUE" -v old_ads="$LEGACY_AWA_ADS" -v awa="$AWAVENUE" '
-    $0 == old_reward { print reward; next }
-    $0 == old_awa || $0 == old_ads { print awa; next }
+  "$BB" awk -v old_reward="$LEGACY_REWARD" -v old_reward_cdn="$LEGACY_REWARD_CDN" -v old_reward_gcore="$LEGACY_REWARD_GCORE" -v reward="$REWARD" \
+    -v old_awa="$LEGACY_AWAVENUE" -v old_awa_gcore="$LEGACY_AWAVENUE_GCORE" -v old_ads="$LEGACY_AWA_ADS" -v old_ads_gcore="$LEGACY_AWA_ADS_GCORE" -v awa="$AWAVENUE" '
+    $0 == old_reward || $0 == old_reward_cdn || $0 == old_reward_gcore { print reward; next }
+    $0 == old_awa || $0 == old_awa_gcore || $0 == old_ads || $0 == old_ads_gcore { print awa; next }
     $0 != "" { print }
   ' "$file" > "$raw" || { rm -f "$raw" "$tmp"; return 1; }
   "$BB" sort -u "$raw" -o "$tmp" || { rm -f "$raw" "$tmp"; return 1; }
@@ -110,14 +147,17 @@ migrate_source_url_file() {
 }
 migrate_source_names() {
   [ -f "$SOURCE_NAMES" ] || return 0
-  if ! "$BB" awk -F '\t' -v old_reward="$LEGACY_REWARD" -v old_awa="$LEGACY_AWAVENUE" -v old_ads="$LEGACY_AWA_ADS" '$1 == old_reward || $1 == old_awa || $1 == old_ads { found=1 } END { exit !found }' "$SOURCE_NAMES"; then return 0; fi
+  if ! "$BB" awk -F '\t' -v old_reward="$LEGACY_REWARD" -v old_reward_cdn="$LEGACY_REWARD_CDN" -v old_reward_gcore="$LEGACY_REWARD_GCORE" \
+    -v old_awa="$LEGACY_AWAVENUE" -v old_awa_gcore="$LEGACY_AWAVENUE_GCORE" -v old_ads="$LEGACY_AWA_ADS" -v old_ads_gcore="$LEGACY_AWA_ADS_GCORE" \
+    '$1 == old_reward || $1 == old_reward_cdn || $1 == old_reward_gcore || $1 == old_awa || $1 == old_awa_gcore || $1 == old_ads || $1 == old_ads_gcore { found=1 } END { exit !found }' "$SOURCE_NAMES"; then return 0; fi
   tmp="$SOURCE_NAMES.migrate.$$"
-  "$BB" awk -F '\t' -v old_reward="$LEGACY_REWARD" -v reward="$REWARD" -v old_awa="$LEGACY_AWAVENUE" -v old_ads="$LEGACY_AWA_ADS" -v awa="$AWAVENUE" '
+  "$BB" awk -F '\t' -v old_reward="$LEGACY_REWARD" -v old_reward_cdn="$LEGACY_REWARD_CDN" -v old_reward_gcore="$LEGACY_REWARD_GCORE" -v reward="$REWARD" \
+    -v old_awa="$LEGACY_AWAVENUE" -v old_awa_gcore="$LEGACY_AWAVENUE_GCORE" -v old_ads="$LEGACY_AWA_ADS" -v old_ads_gcore="$LEGACY_AWA_ADS_GCORE" -v awa="$AWAVENUE" '
     BEGIN { OFS="\t" }
     {
       original=$1; url=original; name=substr($0, index($0, "\t") + 1)
-      if (url == old_reward) url=reward
-      else if (url == old_awa || url == old_ads) url=awa
+      if (url == old_reward || url == old_reward_cdn || url == old_reward_gcore) url=reward
+      else if (url == old_awa || url == old_awa_gcore || url == old_ads || url == old_ads_gcore) url=awa
       if (!(url in names) || (original == url && !preferred[url])) { names[url]=name; preferred[url]=(original == url) }
     }
     END { for (url in names) print url, names[url] }
@@ -125,7 +165,8 @@ migrate_source_names() {
   chmod 600 "$tmp" && mv "$tmp" "$SOURCE_NAMES"
 }
 migrate_source_state() {
-  for file in "$SOURCES_V2" "$DIR/custom-sources.txt" "$DIR/sources.txt" "$DIR/disabled-sources.txt" \
+  [ ! -f "$SOURCE_MIGRATION" ] || return 0
+  for file in "$SOURCES_V2" "$DIR/custom-sources.txt" "$DIR/sources.txt" "$DIR/disabled-sources.txt" "$REMOVED_SOURCES" \
     "$PROFILE_DIR/light.txt" "$PROFILE_DIR/balanced.txt" "$PROFILE_DIR/strict.txt"; do
     migrate_source_url_file "$file" || return 1
   done
@@ -133,7 +174,10 @@ migrate_source_state() {
 }
 init_sources() {
   migrate_source_state || return 1
-  [ -f "$SOURCES_V2" ] && return 0
+  if [ -f "$SOURCES_V2" ]; then
+    [ -f "$SOURCE_MIGRATION" ] || : > "$SOURCE_MIGRATION"
+    return $?
+  fi
   init_profiles || return 1
   migrate_source_state || return 1
   read_mode
@@ -141,7 +185,8 @@ init_sources() {
   mode_sources "$mode" > "$tmp" || { rm -f "$tmp"; return 1; }
   printf '%s\n' "$SHARED_SOURCE" >> "$tmp" || { rm -f "$tmp"; return 1; }
   "$BB" sort -u "$tmp" -o "$tmp" || { rm -f "$tmp"; return 1; }
-  chmod 600 "$tmp" && mv "$tmp" "$SOURCES_V2"
+  chmod 600 "$tmp" && mv "$tmp" "$SOURCES_V2" || return 1
+  : > "$SOURCE_MIGRATION"
 }
 source_is_selected() {
   [ -f "$SOURCES_V2" ] && "$BB" grep -Fxq "$1" "$SOURCES_V2"
@@ -200,11 +245,14 @@ case "$1" in
   export-rules)
     "$BB" sh /data/adb/adblockpro/scripts/rule-store.sh export "$2" "$3"
     ;;
+  export-file)
+    "$BB" sh /data/adb/adblockpro/scripts/rule-store.sh write "$2" "$3" "$4"
+    ;;
   add-whitelist|add-blacklist)
     domain=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
     valid_domain "$domain" || { echo '[!] Invalid domain.' >&2; exit 1; }
-    append_line "$DIR/${1#add-}.txt" "$domain" || exit 1
-    echo "[+] Added $domain to ${1#add-}."
+    save_personal_domain "${1#add-}" "$domain" || { echo '[!] 名单保存失败，已尝试恢复原名单。' >&2; exit 1; }
+    echo "[+] 已将 $domain 设为 ${1#add-}；已移除相反名单中的同名条目，其他域名保留。"
     ;;
   remove-whitelist|remove-blacklist)
     domain=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')

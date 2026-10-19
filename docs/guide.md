@@ -1,11 +1,11 @@
 # AdBlock Pro 使用指南
 
-[返回项目主页](../README.md) · [下载安装包](https://github.com/Ccmra404/AdBlock-Pro-next/releases)
+[返回项目主页](../README.md) · [GitHub 下载](https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest) · [OpenList 下载](https://pan.112589.xyz/本地文件/AdBlock-Pro)
 
 AdBlock Pro 在手机本地运行 [AdGuard Home](https://github.com/AdguardTeam/AdGuardHome)，通过模块管理的 DNS 重定向、订阅规则和个人黑白名单，过滤广告及部分跟踪域名。项目提供适配手机与平板的 Root WebUI，让规则、开关、日志和诊断尽量集中在一个界面完成。
 
 > [!IMPORTANT]
-> **当前稳定版为 `v0.13.3`（versionCode 49）。** 从 [Releases](https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest) 下载 ARM64 模块 ZIP。GitHub 自动生成的 `Source code` 压缩包不是可安装模块；兼容性与验证范围以对应版本说明为准。
+> 从 [最新稳定版](https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest) 下载完整 ARM64 模块 ZIP。GitHub 自动生成的 `Source code` 压缩包不是可安装模块；兼容性与验证范围以对应版本说明为准。
 
 **项目定位：** 优先兼顾国内 Android 应用的日常兼容性、可维护的过滤规则，以及异常情况下的 DNS 可用性。不追求“规则条数越多越好”，也不承诺拦截所有应用广告。
 
@@ -25,6 +25,14 @@ AdBlock Pro 在手机本地运行 [AdGuard Home](https://github.com/AdguardTeam/
 安装包内置 **10007** 和 **秋风 AdGuard 全规则**（广告、隐私与不受欢迎内容）快照，首次安装也会启用共享抓包规则。预置订阅只有这两个公开规则源；你可以在规则管理中自行导入、停用、移除、重命名或修改订阅链接。移除内置来源只会从当前订阅列表移除，之后仍可重新导入。
 
 规则来源变更后，在「规则管理」执行更新。个人名单编辑、导入或 AI 导入会单独应用，不重新下载订阅，也不重启 DNS。订阅下载和校验失败时会保留上一版有效规则。增加来源可能提高内存占用和误拦截风险，不等于一定提高拦截效果。
+
+### 每日自动更新
+
+启用后，模块按每日周期下载已启用的规则来源；包含共享来源时也会尝试同步公共快照。失败后间隔重试，保留可用规则。关闭开机自启、停止核心或禁用模块时，不会为了更新而自动启动核心。
+
+### 域名观察与 AI
+
+域名观察位于「名单」页顶部，记录观察窗口内经过 AdGuard Home 的请求，不限于此前没出现过的域名。结果可能包含后台应用流量，不能仅凭一次记录认定归属或广告性质。详细流程见[共享规则与短时观察](shared-app-rules.md)；可选接口和发送范围见[AI 域名分析](ai-domain-analysis.md)。
 
 ## 工作原理
 
@@ -99,10 +107,16 @@ boot_network_wait=20
 1. **总览**：查看 DNS 核心、重定向、规则条目、内存和查询统计。
 2. **规则管理**：逐项导入、停用、移除或重命名规则来源，执行「立即检查并更新」，必要时从规则历史恢复。
 3. **个人名单**：添加、删除或导入放行与拦截域名。模块会单独应用个人名单，不下载其他订阅，也不重启 DNS。
-4. **系统设置**：控制 DNS 接管、开机自启、自动更新，并进入原生 AdGuard Home 后台。
-5. **运行日志**：查看模块任务结果、诊断信息；使用短时域名观察辅助排查漏拦截。
+4. **系统设置**：控制 DNS 接管、开机自启和每日自动更新，配置可选 AI 接口，并进入原生 AdGuard Home 后台。
+5. **运行日志**：查看、搜索、复制或导出操作记录和诊断信息；域名观察位于「名单」页顶部。
 
 原生 AdGuard Home 管理界面在本机 **`http://127.0.0.1:3000/`**。它与 AdBlock Pro WebUI 是两个不同的管理界面：前者负责 DNS 引擎的高级功能，后者负责模块级来源、个人名单与维护操作。首次安装默认使用 `admin / password`；覆盖升级保留旧账号和密码。后台仅监听本机，若自行开放远程访问，请先修改默认密码。现有设备可用 root 终端通过 `cat /data/adb/adblockpro/admin.auth` 查看实际的 `账号:密码`，不要公开此文件或设备配置。
+
+### 导出与恢复默认设置
+
+个人名单、观察结果和操作日志等导出文件统一保存到 `Download/AdBlock Pro`。
+
+「设置 → 恢复默认设置」会清除自定义订阅、个人名单、AI 配置、账号设置和历史，恢复当前安装包的默认状态。普通升级无需执行此操作。执行前会导出个人名单及基础偏好；含账号和密钥的完整恢复备份仅保存在 `/data/adb/adblockpro/backups/`，不能把它当作可公开分享的规则备份。
 
 ### 常用排查命令
 
@@ -147,7 +161,8 @@ AdBlock-Pro/
 
 ## 版本与验证
 
-当前稳定版为 `v0.13.3`（versionCode 49）。从 [Releases](https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest) 下载完整 ARM64 安装包。自动化检查和设备验证范围以该版本的 Release 说明为准；CI 通过不代表所有 Root 管理器和设备都已实测。
+版本号、更新日志和下载文件以 [最新稳定版](https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest) 为准。自动化检查和设备验证范围以该版本的 Release 说明为准；CI 通过不代表所有 Root 管理器和设备都已实测。
+
 ## 常见问题
 
 **为什么开了过滤还是会看到广告？**
@@ -164,7 +179,7 @@ DNS 只能依据域名决策。与正常内容共用域名的广告、应用内 
 
 **它与 AdGuard Home 模块有什么区别？**
 
-AdGuard Home 是底层 DNS 引擎；AdBlock Pro 在其上提供面向 KernelSU 的预设规则、个人名单、故障保护、WebUI 工作流和模块级维护。它不是另一个独立 DNS 引擎。
+AdGuard Home 是底层 DNS 引擎；AdBlock Pro 在其上提供面向 Android Root 模块环境的规则管理、个人名单、故障保护、WebUI 工作流和模块级维护。它不是另一个独立 DNS 引擎。
 
 ## 上游项目与声明
 
@@ -176,4 +191,4 @@ AdGuard Home 是底层 DNS 引擎；AdBlock Pro 在其上提供面向 KernelSU �
 
 第三方二进制、规则和其他组件分别受其上游许可证及使用条款约束；请勿默认仓库所有内容都具有相同的再分发授权。
 
-**隐私提醒：** 本仓库包含设备使用者自行整理的个人名单文件。将仓库公开、Fork 或镜像前，应先逐项检查这些文件、配置和可能出现的凭据，避免泄露私人域名与账号信息。
+**隐私提醒：** 本机个人名单、账号、AI 密钥和查询记录不属于公共共享规则。反馈问题前检查日志内容，不要公开设备配置和认证文件。

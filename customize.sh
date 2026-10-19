@@ -46,6 +46,33 @@ mkdir -p "$DATA_DIR/certs" || fail "Cannot prepare the CA certificate directory.
 cp "$ca_file" "$DATA_DIR/certs/cacert.pem" || fail "Cannot install the CA certificate bundle."
 chmod 644 "$DATA_DIR/certs/cacert.pem" || fail "Cannot read the installed CA certificate bundle."
 
+# Keep the current package defaults separately from persistent user settings so
+# the WebUI can safely restore a fresh-install state after an overlay upgrade.
+defaults_tmp="$DATA_DIR/.defaults.new.$$"
+mkdir -p "$defaults_tmp" || fail "Cannot prepare factory-reset defaults."
+unzip -oq "$ZIPFILE" "settings.conf" "config-blacklist.txt" "config-whitelist.txt" \
+  "bin/data/filters/10007.txt" "bin/data/filters/1791638912.txt" -d "$defaults_tmp" || {
+    rm -rf "$defaults_tmp"
+    fail "Cannot extract factory-reset defaults."
+  }
+for file in settings.conf config-blacklist.txt config-whitelist.txt bin/data/filters/10007.txt bin/data/filters/1791638912.txt; do
+  [ -s "$defaults_tmp/$file" ] || { rm -rf "$defaults_tmp"; fail "Factory-reset default is missing: $file."; }
+done
+mkdir -p "$DATA_DIR/defaults/filters" || { rm -rf "$defaults_tmp"; fail "Cannot install factory-reset defaults."; }
+mv -f "$defaults_tmp/settings.conf" "$DATA_DIR/defaults/settings.conf" &&
+  mv -f "$defaults_tmp/config-blacklist.txt" "$DATA_DIR/defaults/config-blacklist.txt" &&
+  mv -f "$defaults_tmp/config-whitelist.txt" "$DATA_DIR/defaults/config-whitelist.txt" &&
+  mv -f "$defaults_tmp/bin/data/filters/10007.txt" "$DATA_DIR/defaults/filters/10007.txt" &&
+  mv -f "$defaults_tmp/bin/data/filters/1791638912.txt" "$DATA_DIR/defaults/filters/1791638912.txt" || {
+    rm -rf "$defaults_tmp"
+    fail "Cannot save factory-reset defaults."
+  }
+rm -rf "$defaults_tmp"
+chmod 700 "$DATA_DIR/defaults" "$DATA_DIR/defaults/filters"
+chmod 600 "$DATA_DIR/defaults/settings.conf" "$DATA_DIR/defaults/config-blacklist.txt" \
+  "$DATA_DIR/defaults/config-whitelist.txt" "$DATA_DIR/defaults/filters/10007.txt" \
+  "$DATA_DIR/defaults/filters/1791638912.txt"
+
 initialize_switch() {
   file="$STATE_DIR/$1"
   origin=preserved
@@ -86,6 +113,8 @@ chmod 755 "$DATA_DIR/bin/curl" || fail "Cannot make the bundled curl binary exec
 unzip -oq "$ZIPFILE" "bin/adblock-ai" -d "$DATA_DIR/.install" || fail "Missing optional AI analysis helper."
 chmod 700 "$DATA_DIR/.install/bin/adblock-ai" || fail "Cannot prepare the AI analysis helper."
 mv -f "$DATA_DIR/.install/bin/adblock-ai" "$DATA_DIR/bin/adblock-ai" || fail "Cannot install the AI analysis helper."
+unzip -oq "$ZIPFILE" "bin/adblock-bootstrap" -d "$DATA_DIR" || fail "Missing per-device setup helper."
+chmod 700 "$DATA_DIR/bin/adblock-bootstrap" || fail "Cannot prepare setup helper."
 unzip -oq "$ZIPFILE" "bin/AdGuardHome" -d "$DATA_DIR/.install" || fail "Cannot extract AdGuard Home files."
 [ -s "$DATA_DIR/.install/bin/AdGuardHome" ] || fail "The extracted AdGuard Home binary is missing."
 mv -f "$DATA_DIR/.install/bin/AdGuardHome" "$DATA_DIR/bin/AdGuardHome" || fail "Cannot replace the AdGuard Home binary."
@@ -106,11 +135,8 @@ unzip -oq "$ZIPFILE" "config-blacklist.txt" "config-whitelist.txt" -d "$MODPATH"
 # Create first-install defaults and a fresh bcrypt hash on the device.
 # Existing credentials are preserved; never archive runtime auth/config files.
 if [ ! -f "$DATA_DIR/bin/AdGuardHome.yaml" ] && [ ! -f "$DATA_DIR/admin.auth" ]; then
-  unzip -oq "$ZIPFILE" "bin/adblock-bootstrap" -d "$DATA_DIR" || fail "Missing per-device setup helper."
-  chmod 700 "$DATA_DIR/bin/adblock-bootstrap" || fail "Cannot execute setup helper."
   "$DATA_DIR/bin/adblock-bootstrap" "$DATA_DIR/bin/AdGuardHome.yaml" "$DATA_DIR/admin.auth" ||
     fail "Failed to create local API credentials and DNS settings."
-  rm -f "$DATA_DIR/bin/adblock-bootstrap"
 else
   [ -s "$DATA_DIR/bin/AdGuardHome.yaml" ] && [ -s "$DATA_DIR/admin.auth" ] ||
     fail "Existing DNS settings or API credentials are incomplete; refusing to overwrite them."
@@ -171,8 +197,8 @@ if [ ! -f "$STATE_DIR/v3-installed" ]; then
     cp "$MODPATH/config-whitelist.txt" "$STATE_DIR/whitelist.txt" || fail "Cannot initialize whitelist."
   fi
   printf '%s\n' \
-    'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' \
-    'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt' \
+    'https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' \
+    'https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt' \
     > "$STATE_DIR/sources-applied.txt"
   : > "$STATE_DIR/last-update"
   : > "$STATE_DIR/v3-installed"
