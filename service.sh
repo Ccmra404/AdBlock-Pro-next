@@ -81,6 +81,7 @@ fi
 (
   AGH=/data/adb/adblockpro
   cleanup_warning=0
+  auto_update_ticks=0
   while [ -d "$MODDIR" ]; do
     sleep 5
     [ -d "$MODDIR" ] || break
@@ -93,6 +94,12 @@ fi
     # Leave a healthy enabled core alone, without polling firewall snapshots.
     if [ "$alive" = 1 ] && [ ! -f "$MODDIR/disable" ]; then
       cleanup_warning=0
+      auto_update_ticks=$((auto_update_ticks + 1))
+      if [ "$auto_update_ticks" -ge 12 ]; then
+        auto_update_ticks=0
+        # Downloads must not block crash cleanup on a slow network.
+        "$BB" sh "$MODDIR/bindhosts.sh" --auto-update >/dev/null 2>&1 &
+      fi
       continue
     fi
     # Saved takeover=off cannot prove that a previous redirect was removed.

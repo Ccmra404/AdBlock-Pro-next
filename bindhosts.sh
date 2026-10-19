@@ -434,6 +434,11 @@ restore_snapshot() {
 update_failed() {
   message=$1
   printf '%s\n' "$message" >&2
+  if [ "${AUTO_UPDATE:-0}" = 1 ] && { [ -f "$MODDIR/disable" ] || [ -f "$MODDIR/remove" ] ||
+     ! is_our_process "$(cat "$AGH/bin/agh.pid" 2>/dev/null)"; }; then
+    echo '[提醒] 自动更新期间核心已停止或模块已禁用；保留规则快照，不自动重启核心。' >&2
+    return 1
+  fi
   if [ -n "${LAST_SNAPSHOT:-}" ]; then
     echo '[恢复] 更新未完成，正在恢复更新前的规则与配置。' >&2
     restore_snapshot "$LAST_SNAPSHOT" || { echo '[!] 自动恢复失败；请从规则管理中手动恢复历史版本。' >&2; return 1; }
@@ -803,6 +808,30 @@ update_rules() {
   echo "[成功] 规则更新完成，规则数：$count"
 }
 
+auto_update_rules() {
+  local now last attempt selected
+  [ ! -f "$MODDIR/disable" ] && [ ! -f "$MODDIR/remove" ] || return 0
+  [ ! -f "$STATE/auto-update" ] || [ "$(cat "$STATE/auto-update")" = on ] || return 0
+  is_our_process "$(cat "$AGH/bin/agh.pid" 2>/dev/null)" && is_dns_listening || return 0
+  now=$(date '+%s')
+  case "$now" in ''|*[!0-9]*) return 1 ;; esac
+  last=$(cat "$STATE/last-update" 2>/dev/null)
+  attempt=$(cat "$STATE/auto-update-attempt" 2>/dev/null)
+  case "$last" in ''|*[!0-9]*|0[0-9]*) last=0 ;; esac
+  case "$attempt" in ''|*[!0-9]*|0[0-9]*) attempt=0 ;; esac
+  [ ${#last} -le 11 ] || last=0
+  [ ${#attempt} -le 11 ] || attempt=0
+  [ "$last" -le "$now" ] || last=0
+  [ "$attempt" -le "$now" ] || attempt=0
+  [ $((now - last)) -ge 86400 ] && [ $((now - attempt)) -ge 3600 ] || return 0
+  selected=$("$BB" sh "$MODDIR/webui-config.sh" list-sources) || return 1
+  printf '%s\n' "$selected" | "$BB" awk -F '\t' '$1=="source" && $5=="enabled" { found=1 } END { exit !found }' || return 0
+  printf '%s\n' "$now" > "$STATE/auto-update-attempt.tmp" &&
+    chmod 600 "$STATE/auto-update-attempt.tmp" && mv "$STATE/auto-update-attempt.tmp" "$STATE/auto-update-attempt" || return 1
+  printf '%s [自动更新] 下载已启用的规则来源。\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$AGH/history.log"
+  AUTO_UPDATE=1 update_rules >> "$AGH/history.log" 2>&1
+}
+
 diagnose() {
   root_uid=$(id -u 2>/dev/null); case "$root_uid" in ''|*[!0-9]*) root_uid=unknown ;; esac
   pid=''; [ ! -r "$AGH/bin/agh.pid" ] || pid=$(cat "$AGH/bin/agh.pid")
@@ -856,6 +885,14 @@ case "$1" in
     # start now reconciles a running resolver's listener and firewall state;
     # avoid an unnecessary DNS interruption when merely resuming.
     "$AGH/scripts/tool.sh" start && ensure_shared_filter
+    ;;
+  --auto-update)
+    if [ "${ABP_UPDATE_LOCKED:-0}" != 1 ]; then
+      mkdir -p "$STATE/webui-jobs" || exit 1
+      export ABP_UPDATE_LOCKED=1
+      exec "$BB" flock -n "$STATE/webui-jobs/worker.lock" "$BB" flock -n "$STATE/update.lock" "$BB" sh "$0" --auto-update
+    fi
+    auto_update_rules
     ;;
   --update)
     if [ "${ABP_UPDATE_LOCKED:-0}" != 1 ]; then

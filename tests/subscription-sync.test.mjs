@@ -70,8 +70,25 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
   writeFileSync(script, body); chmodSync(script, 0o755);
   const env = { ...root.env('Magisk'), CURL: shellPath(curl), CURL_CALLS: shellPath(curlCalls), CURL_OPTIONS: shellPath(curlOptions), SOURCE_LIST: shellPath(sourceList), API_CALLS: shellPath(calls), FAIL_URL: failDownloadUrl || (failDownload ? feed : ''), FAIL_CURL_CODE: '28', FAIL_REMOVE: failRemove ? '1' : '0', STATUS_URL: existingShared ? shellPath(sharedFilter) : statusUrl, EXISTING_URL: existingShared ? shellPath(sharedFilter) : '' };
   const run = () => spawnSync('bash', [shellPath(script)], { encoding: 'utf8', timeout: 15000, env });
-  return { run, state, agh, calls, curlCalls, curlOptions, oldCache, sharedFilter, env };
+  return { run, state, agh, calls, curlCalls, curlOptions, oldCache, sharedFilter, env, script };
 }
+
+test('a due daily update downloads the subscribed remote source and registers its validated local cache', t => {
+  const f = fixture(t);
+  const automatic = bindhosts.slice(bindhosts.indexOf('auto_update_rules() {'), bindhosts.indexOf('\ndiagnose() {'));
+  const script = readFileSync(f.script, 'utf8').replace(/\nsync_sources$/, '\n' + [
+    'is_our_process() { return 0; }', 'is_dns_listening() { return 0; }',
+    'update_rules() { sync_sources; }', automatic, 'auto_update_rules',
+  ].join('\n'));
+  writeFileSync(f.script, script);
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(readFileSync(f.curlCalls, 'utf8').trim(), feed);
+  assert.match(readFileSync(f.calls, 'utf8'), /POST\t\/filtering\/add_url\t.*adblock-pro-source-/);
+  writeFileSync(path.join(f.state, 'auto-update'), 'off\n');
+  assert.equal(f.run().status, 0);
+  assert.equal(readFileSync(f.curlCalls, 'utf8').trim(), feed, 'off never sends a second download');
+});
 
 test('subscriptions download through system curl and AdGuard Home receives only the validated local file', t => {
   const f = fixture(t, { marker: false, oldApplied: feed + '\n' });
