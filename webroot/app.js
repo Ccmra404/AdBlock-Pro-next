@@ -1479,7 +1479,7 @@ async function init() {
   const pending = localStorage.getItem('abp-pending-job');
   if (pending) {
     const [id, action] = pending.split(':');
-    if (/^\d{1,20}$/.test(id) && ['--update','--sync-shared','--apply-personal','--pause','--resume','--rollback','--rollback-history','--filtering','--takeover','--restart','--diagnose','--observe'].includes(action)) {
+    if (/^\d{1,20}$/.test(id) && ['--update','--sync-shared','--apply-personal','--pause','--resume','--rollback','--rollback-history','--filtering','--takeover','--restart','--factory-reset','--diagnose','--observe'].includes(action)) {
       if (action === '--observe') {
         try { state.observation = JSON.parse(localStorage.getItem(OBSERVE_SESSION_KEY) || 'null'); } catch { state.observation = null; }
         if (!state.observation || state.observation.id !== id) state.observation = { id, startedAt: Date.now(), duration: 60, appLabel: '', active: true };
