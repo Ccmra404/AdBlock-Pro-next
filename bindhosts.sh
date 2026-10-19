@@ -40,6 +40,7 @@ is_our_process() {
 
 api() {
   method=$1; path=$2; body=${3-}; timeout=${4:-20}
+  [ "$method" != GET ] || timeout=${3:-20}
   if [ -z "${CURL:-}" ]; then CURL=$(abp_find_curl) || return 1; fi
   [ -r "$AUTH_FILE" ] || { echo '[!] Local API credentials are missing.' >&2; return 1; }
   if [ "$method" = GET ]; then
