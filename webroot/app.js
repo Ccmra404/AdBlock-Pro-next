@@ -1130,7 +1130,12 @@ async function applyPersonalRules() {
 }
 async function savePersonalDomain(action, domain, kind) {
   setBusy(true);
-  try { await runConfig(action, domain); resetListView(kind); await loadList(kind, true); }
+  try {
+    await runConfig(action, domain);
+    const changed = action.startsWith('add-') ? ['blacklist', 'whitelist'] : [kind];
+    changed.forEach(resetListView);
+    await Promise.all(changed.map(name => loadList(name, true)));
+  }
   finally { setBusy(false); }
   await applyPersonalRules();
 }
