@@ -157,6 +157,33 @@ test('fresh source catalog contains only 10007, full AWAvenue, and the shared li
   assert.ok(sources.every(x => x.removable === 'removable'));
 });
 
+test('an explicit edit back to an official source URL survives subsequent reads', t => {
+  const f = fixture(t); f.list();
+  assert.equal(f.run('rename-source', base, 'My official source').status, 0);
+  assert.equal(f.run('edit-source', base, oldBase).status, 0);
+  for (let i = 0; i < 2; i++) {
+    const row = f.list().find(x => x.url === oldBase);
+    assert.ok(row, 'automatic migration must not overwrite an explicit URL edit');
+    assert.equal(row.label, 'My official source');
+    assert.equal(row.enabled, 'enabled');
+  }
+});
+
+test('explicitly imported official mirrors are not remapped or re-added after removal', t => {
+  const f = fixture(t); f.list();
+  assert.equal(f.run('add-source', oldAwaAds, 'Ads only').status, 0);
+  assert.ok(f.list().find(x => x.url === oldAwaAds && x.enabled === 'enabled'));
+  assert.equal(f.run('remove-source', oldAwaAds).status, 0);
+  assert.equal(f.list().some(x => x.url === oldAwaAds), false);
+});
+
+test('legacy removal records migrate with the source catalog and stay hidden', t => {
+  const f = fixture(t, {sourcesV2: shared + '\n'});
+  writeFileSync(path.join(f.dir, 'removed-sources.txt'), oldBase + '\n' + oldAwaAds + '\n');
+  const rows = f.list();
+  assert.equal(rows.some(x => x.url === base || x.url === awaFull), false);
+});
+
 test('a fresh source setup does not inject the old anti-AD strict-profile default', t => {
   const f = fixture(t, { profilesInitialized: false });
   const sources = f.list();

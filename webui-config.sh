@@ -18,6 +18,7 @@ PROFILE_DIR=$DIR/profiles
 SOURCES_V2=$DIR/sources-v2.txt
 SOURCE_NAMES=$DIR/source-names.tsv
 REMOVED_SOURCES=$DIR/removed-sources.txt
+SOURCE_MIGRATION=$DIR/source-url-migration-v1
 SHARED_SOURCE=shared
 umask 077
 
@@ -136,7 +137,8 @@ migrate_source_names() {
   chmod 600 "$tmp" && mv "$tmp" "$SOURCE_NAMES"
 }
 migrate_source_state() {
-  for file in "$SOURCES_V2" "$DIR/custom-sources.txt" "$DIR/sources.txt" "$DIR/disabled-sources.txt" \
+  [ ! -f "$SOURCE_MIGRATION" ] || return 0
+  for file in "$SOURCES_V2" "$DIR/custom-sources.txt" "$DIR/sources.txt" "$DIR/disabled-sources.txt" "$REMOVED_SOURCES" \
     "$PROFILE_DIR/light.txt" "$PROFILE_DIR/balanced.txt" "$PROFILE_DIR/strict.txt"; do
     migrate_source_url_file "$file" || return 1
   done
@@ -144,7 +146,10 @@ migrate_source_state() {
 }
 init_sources() {
   migrate_source_state || return 1
-  [ -f "$SOURCES_V2" ] && return 0
+  if [ -f "$SOURCES_V2" ]; then
+    [ -f "$SOURCE_MIGRATION" ] || : > "$SOURCE_MIGRATION"
+    return $?
+  fi
   init_profiles || return 1
   migrate_source_state || return 1
   read_mode
@@ -152,7 +157,8 @@ init_sources() {
   mode_sources "$mode" > "$tmp" || { rm -f "$tmp"; return 1; }
   printf '%s\n' "$SHARED_SOURCE" >> "$tmp" || { rm -f "$tmp"; return 1; }
   "$BB" sort -u "$tmp" -o "$tmp" || { rm -f "$tmp"; return 1; }
-  chmod 600 "$tmp" && mv "$tmp" "$SOURCES_V2"
+  chmod 600 "$tmp" && mv "$tmp" "$SOURCES_V2" || return 1
+  : > "$SOURCE_MIGRATION"
 }
 source_is_selected() {
   [ -f "$SOURCES_V2" ] && "$BB" grep -Fxq "$1" "$SOURCES_V2"
