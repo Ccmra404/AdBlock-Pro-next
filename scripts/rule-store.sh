@@ -74,6 +74,17 @@ import_lists() {
     { sub(/\r$/, ""); d=tolower($2); if(NF!=2 || ($1!="B" && $1!="W") || !valid(d)) bad=1; else print $1 "\t" d; if(++n>5000) bad=1 }
     END { if(bad || n<1) exit 1 }
   ' "$work/import" > "$work/validated" || return 1
+  # Confirm against current files under the caller's update lock, not just a
+  # possibly stale WebUI preview. Reject the whole import before any writes.
+  "$BB" awk -F '\t' '
+    FILENAME==ARGV[1] { d=tolower($0); gsub(/^[[:space:]]+|[[:space:]]+$/, "", d); blocked[d]=1; next }
+    FILENAME==ARGV[2] { d=tolower($0); gsub(/^[[:space:]]+|[[:space:]]+$/, "", d); allowed[d]=1; next }
+    $1=="B" { if($2 in allowed || $2 in new_allowed) bad=1; new_blocked[$2]=1 }
+    $1=="W" { if($2 in blocked || $2 in new_blocked) bad=1; new_allowed[$2]=1 }
+    END { exit bad ? 1 : 0 }
+  ' "$STATE/blacklist.txt" "$STATE/whitelist.txt" "$work/validated" || {
+    echo '[!] 名单存在拦截与放行冲突，未导入任何条目；请先核对已有名单。' >&2; return 1;
+  }
   for kind in blacklist whitelist; do
     file="$STATE/$kind.txt"
     [ -f "$file" ] || return 1

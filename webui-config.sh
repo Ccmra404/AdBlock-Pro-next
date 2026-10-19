@@ -217,6 +217,11 @@ case "$1" in
   add-whitelist|add-blacklist)
     domain=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
     valid_domain "$domain" || { echo '[!] Invalid domain.' >&2; exit 1; }
+    case "$1" in add-blacklist) opposite=whitelist ;; *) opposite=blacklist ;; esac
+    if [ -e "$DIR/$opposite.txt" ]; then
+      conflict=$("$BB" awk -v domain="$domain" '{ gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if(tolower($0)==domain) found=1 } END { print found+0 }' "$DIR/$opposite.txt") || exit 1
+      [ "$conflict" = 0 ] || { echo '[!] 此域名已在相反名单中，请先移除原条目再切换拦截或放行。' >&2; exit 1; }
+    fi
     append_line "$DIR/${1#add-}.txt" "$domain" || exit 1
     echo "[+] Added $domain to ${1#add-}."
     ;;
