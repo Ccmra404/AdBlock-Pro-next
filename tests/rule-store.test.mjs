@@ -9,6 +9,20 @@ const bundle = readFileSync(new URL('../rules/shared-app-domains.txt', import.me
 const bundledDomains = bundle.split(/\r?\n/).filter(row => row && !row.startsWith('#')).sort();
 const nextRevision = Number(bundle.match(/^# revision: (\d+)$/m)[1]) + 1;
 
+for (const [name, black, white, input] of [
+  ['conflicting tags in one file', '', '', 'B\tads.example\nW\tads.example\n'],
+  ['a stale block import conflicts with a saved allow entry', '', 'ADS.Example\r\n', 'B\tads.example\n'],
+  ['a stale allow import conflicts with a saved block entry', 'ads.example\n', '', 'W\tads.example\n'],
+]) test(`personal import rejects ${name} without partial writes`, t => {
+  const f = fixture(t);
+  writeFileSync(path.join(f.state, 'blacklist.txt'), black);
+  writeFileSync(path.join(f.state, 'whitelist.txt'), white);
+  const before = f.privateSnapshot();
+  const result = f.run('import', Buffer.from(input).toString('base64'));
+  assert.notEqual(result.status, 0, result.stdout);
+  assert.deepEqual(f.privateSnapshot(), before);
+});
+
 function fixture(t) {
   const f = rootFixture(t); f.addBusybox('Magisk');
   const state = path.join(f.dir, 'state'), agh = path.join(f.dir, 'agh'), module = path.join(f.dir, 'module');

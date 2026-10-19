@@ -19,6 +19,18 @@ const antiAd = 'https://anti-ad.net/easylist.txt';
 const custom = 'https://example.org/filter.txt';
 const shared = 'shared';
 
+for (const kind of ['blacklist', 'whitelist']) {
+  test(`manual ${kind} addition rejects an exact opposite-list entry without deleting it`, t => {
+    const f = fixture(t);
+    const opposite = kind === 'blacklist' ? 'whitelist' : 'blacklist';
+    writeFileSync(path.join(f.dir, opposite + '.txt'), 'ADS.Example\r\n');
+    const result = f.run('add-' + kind, 'ads.example');
+    assert.notEqual(result.status, 0, result.stdout);
+    assert.equal(readFileSync(path.join(f.dir, opposite + '.txt'), 'utf8'), 'ADS.Example\r\n');
+    assert.equal(existsSync(path.join(f.dir, kind + '.txt')), false);
+  });
+}
+
 function fixture(t, { light = '', balanced = '', strict = '', customSources = '', sourcesV2, sourceNames = '', profilesInitialized = true } = {}) {
   const root = rootFixture(t);
   root.addBusybox('Magisk');
