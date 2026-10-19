@@ -31,7 +31,7 @@ case "$1" in list-whitelist|list-blacklist|list-sources|shared-rules|export-file
 esac
 
 valid_domain() {
-  [ ${#1} -le 253 ] && printf '%s\n' "$1" | "$BB" grep -Eiq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$'
+  [ ${#1} -le 253 ] && printf '%s\n' "$1" | "$BB" grep -Eiq '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$'
 }
 valid_custom_url() {
   [ ${#1} -ge 12 ] && [ ${#1} -le 2048 ] || return 1

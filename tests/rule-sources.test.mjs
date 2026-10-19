@@ -19,6 +19,14 @@ const antiAd = 'https://anti-ad.net/easylist.txt';
 const custom = 'https://example.org/filter.txt';
 const shared = 'shared';
 
+test('manual rules reject a DNS label over 63 characters and preserve valid entries', t => {
+  const f = fixture(t), accepted = 'a'.repeat(63) + '.example';
+  assert.equal(f.run('add-blacklist', accepted).status, 0);
+  const before = readFileSync(path.join(f.dir, 'blacklist.txt'), 'utf8');
+  assert.notEqual(f.run('add-blacklist', 'a'.repeat(64) + '.example').status, 0);
+  assert.equal(readFileSync(path.join(f.dir, 'blacklist.txt'), 'utf8'), before);
+});
+
 for (const kind of ['blacklist', 'whitelist']) {
   test(`manual ${kind} addition rejects an exact opposite-list entry without deleting it`, t => {
     const f = fixture(t);
