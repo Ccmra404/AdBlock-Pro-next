@@ -118,8 +118,14 @@ reset_defaults() {
   mkdir -p "$backup_dir" || { echo '[!] Cannot create the AdBlock Pro download directory.' >&2; return 1; }
   chmod 755 "$backup_dir" || { echo '[!] Cannot make the AdBlock Pro download directory accessible.' >&2; return 1; }
   stamp=$(date '+%Y%m%d-%H%M%S')
-  backup="$backup_dir/AdBlock-Pro-default-settings-$stamp.tar.gz"
-  [ ! -e "$backup" ] || backup="$backup_dir/AdBlock-Pro-default-settings-$stamp-$$.tar.gz"
+  private_dir="$AGH/backups"
+  [ ! -L "$private_dir" ] && mkdir -p "$private_dir" && chmod 700 "$private_dir" || {
+    echo '[!] Cannot protect the private recovery directory; nothing was changed.' >&2; return 1;
+  }
+  backup="$private_dir/AdBlock-Pro-default-settings-$stamp.tar.gz"
+  [ ! -e "$backup" ] || backup="$private_dir/AdBlock-Pro-default-settings-$stamp-$$.tar.gz"
+  export_backup="$backup_dir/AdBlock-Pro-rules-settings-$stamp-$$.tar.gz"
+  [ ! -e "$export_backup" ] && [ ! -e "$export_backup.tmp" ] || return 1
   backup_tmp="$backup.tmp"
   stage="$AGH/.factory-reset-stage.$$"
   old_state="$stage/old-state"
@@ -171,7 +177,7 @@ reset_defaults() {
   : > "$new_state/v3-installed"
   chmod 600 "$new_state"/* || { rm -rf "$stage"; echo '[!] Cannot protect fresh-install preferences.' >&2; return 1; }
 
-  echo "[进度] 在下载目录创建模块备份：$backup_dir"
+  echo '[进度] 创建 Root 私有完整备份和下载目录规则备份…'
   for item in "$STATE"/* "$STATE"/.[!.]* "$STATE"/..?*; do
     [ -e "$item" ] || [ -L "$item" ] || continue
     name=${item##*/}
@@ -199,6 +205,23 @@ reset_defaults() {
   chmod 600 "$backup_tmp" && mv "$backup_tmp" "$backup" || {
     rm -f "$backup_tmp"; rm -rf "$stage"; echo '[!] Cannot safely save the reset backup; original settings were not changed.' >&2; return 1;
   }
+
+  # Shared storage cannot enforce Root-only permissions. Export only known
+  # rule lists/preferences; credentials, subscription URLs and logs stay private.
+  export_stage="$stage/rules-export"
+  mkdir -p "$export_stage" || { rm -rf "$stage"; return 1; }
+  for name in blacklist.txt whitelist.txt auto-update autostart dns-takeover; do
+    [ ! -f "$STATE/$name" ] || cp "$STATE/$name" "$export_stage/$name" || { rm -rf "$stage"; return 1; }
+  done
+  printf '%s\n' 'This archive contains personal lists and basic preferences only.' \
+    'The complete recovery backup, including credentials, stays in the module Root-private backups directory.' > "$export_stage/README.txt"
+  if ! "$TARBIN" -czf "$export_backup.tmp" -C "$export_stage" . ||
+     ! "$TARBIN" -tzf "$export_backup.tmp" >/dev/null 2>&1 ||
+     ! mv "$export_backup.tmp" "$export_backup"; then
+    rm -f "$export_backup.tmp"; rm -rf "$stage"
+    echo '[!] 规则备份创建失败；原设置未更改，完整私有备份仍保留。' >&2
+    return 1
+  fi
 
   echo '[进度] 安全停止 DNS 服务并清理 IPv4 接管…'
   "$BB" sh "$TOOL" stop || { rm -rf "$stage"; echo '[!] DNS 服务或接管未能安全停止；未清除任何设置。' >&2; echo "[备份] $backup"; return 1; }
@@ -256,7 +279,8 @@ reset_defaults() {
     [ "$name" = "$request_id" ] || rm -f "$item"
   done
   echo '[完成] 已恢复本版本的全新安装默认状态。IPv6 DNS 接管仍关闭。'
-  echo "[备份] 原配置已保存在本机：$backup"
+  echo "[规则备份] $export_backup"
+  echo "[私有完整备份] $backup（含凭据，仅 Root 可访问，请勿分享）"
 }
 
 case "${1:-}" in
