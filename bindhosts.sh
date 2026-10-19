@@ -808,7 +808,7 @@ update_rules() {
     # Removing every source and personal rule is a valid user choice.
     if printf '%s\n' "$selected_sources" | "$BB" awk -F '\t' '$1=="source" && $5=="enabled" { found=1 } END { exit !found }' ||
        [ "${USER_RULE_COUNT:-0}" -gt 0 ] ||
-       ! printf '%s' "$filter_json" | "$BB" tr '\r\n' '  ' | "$BB" grep -Eq '"filters"[[:space:]]*:[[:space:]]*\[[[:space:]]*\]'; then
+       ! printf '%s' "$filter_json" | "$BB" tr '\r\n' '  ' | "$BB" grep -Eq '"filters"[[:space:]]*:[[:space:]]*(\[[[:space:]]*\]|null)[[:space:]]*[,}]'; then
       update_failed '[!] 更新后没有可用过滤规则。'; return 1
     fi
   fi

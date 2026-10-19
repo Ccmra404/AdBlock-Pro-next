@@ -10,10 +10,13 @@ const update = source.slice(source.indexOf('update_rules() {'), source.indexOf('
 const count = source.slice(source.indexOf('rules_count() {'), source.indexOf('\nhistory_text() {'));
 for (const [name, sources, personal, status, success] of [
   ['removed sources and empty personal lists stay empty', 'mode\tbalanced\n', 0, '{"filters":[]}', true],
+  ['native AdGuard Home null filter slice is intentionally empty', '', 0, '{"filters":null,"whitelist_filters":null}', true],
   ['disabled sources also allow empty filters', 'source\tcustom\tFeed\thttps://feed.example\tdisabled\n', 0, '{"filters": [\n ]}', true],
   ['an enabled source with no rules still rolls back', 'source\tcustom\tFeed\thttps://feed.example\tenabled\n', 0, '{"filters":[]}', false],
+  ['enabled source still rejects a null filter slice', 'source\tcustom\tFeed\thttps://feed.example\tenabled\n', 0, '{"filters":null}', false],
   ['missing expected personal rules still rolls back', '', 1, '{"filters":[]}', false],
   ['an invalid filter status is not accepted as intentionally empty', '', 0, '{}', false],
+  ['a null prefix is not an empty filter slice', '', 0, '{"filters":nullish}', false],
 ]) {
   test(name, t => {
     const root = rootFixture(t); root.addBusybox('Magisk');
