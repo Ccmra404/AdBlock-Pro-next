@@ -20,7 +20,7 @@ for (const [name, sources, personal, status, success] of [
     const state = path.join(root.dir, 'state'); mkdirSync(state);
     writeFileSync(path.join(root.dir, 'sources'), sources);
     writeFileSync(path.join(root.dir, 'status'), status);
-    writeFileSync(path.join(root.dir, 'webui-config.sh'), '#!/bin/sh\ncat "$MODDIR/sources"\n');
+    writeFileSync(path.join(root.dir, 'webui-config.sh'), '#!/bin/sh\ncat "${0%/*}/sources"\n');
     const script = path.join(root.dir, 'update.sh');
     writeFileSync(script, [
       'MODDIR=' + shellPath(root.dir), 'STATE=' + shellPath(state), 'BB=' + shellPath(root.paths.Magisk),
@@ -32,6 +32,7 @@ for (const [name, sources, personal, status, success] of [
     ].join('\n'));
     const r = spawnSync('bash', [shellPath(script)], {encoding:'utf8', env:root.env('Magisk')});
     assert.equal(r.status, success ? 0 : 1, r.stderr + r.stdout);
+    assert.match(r.stdout, /下载并校验规则源/);
     assert.equal(existsSync(path.join(state, 'last-update')), success);
     if (success) assert.doesNotMatch(r.stderr, /ROLLBACK/);
     else assert.match(r.stderr, /ROLLBACK/);
