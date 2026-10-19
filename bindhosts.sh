@@ -798,7 +798,14 @@ update_rules() {
   api POST /filtering/refresh '{"whitelist":false}' 180 || { update_failed '[!] 规则下载或校验失败。'; return 1; }
   filter_json=$(api GET /filtering/status) || { update_failed '[!] 无法读取更新后的规则状态。'; return 1; }
   count=$(rules_count "$filter_json")
-  [ "$count" -gt 0 ] || { update_failed '[!] 更新后没有可用过滤规则。'; return 1; }
+  if [ "$count" -eq 0 ]; then
+    # Removing every source and personal rule is a valid user choice.
+    if printf '%s\n' "$selected_sources" | "$BB" awk -F '\t' '$1=="source" && $5=="enabled" { found=1 } END { exit !found }' ||
+       [ "${USER_RULE_COUNT:-0}" -gt 0 ] ||
+       ! printf '%s' "$filter_json" | "$BB" tr '\r\n' '  ' | "$BB" grep -Eq '"filters"[[:space:]]*:[[:space:]]*(\[[[:space:]]*\]|null)[[:space:]]*[,}]'; then
+      update_failed '[!] 更新后没有可用过滤规则。'; return 1
+    fi
+  fi
   date '+%s' > "$STATE/last-update.tmp" && mv "$STATE/last-update.tmp" "$STATE/last-update" || { update_failed '[!] 无法记录规则更新时间。'; return 1; }
   echo "[成功] 规则更新完成，规则数：$count"
 }
