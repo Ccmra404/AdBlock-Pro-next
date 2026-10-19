@@ -22,6 +22,7 @@ REQUIRED = {
     'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/AWAvenue-GPL-3.0.txt',
     'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt', 'licenses/cacert-MPL-2.0.txt',
     'licenses/go-openai-Apache-2.0.txt',
+    'licenses/go-BSD-3-Clause.txt', 'licenses/go-crypto-BSD-3-Clause.txt',
 }
 CA_SHA256 = 'a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505'
 
