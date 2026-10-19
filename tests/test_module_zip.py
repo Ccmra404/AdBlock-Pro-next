@@ -62,7 +62,8 @@ class ModuleZipTests(unittest.TestCase):
 
     def test_missing_upstream_notices_are_rejected(self):
         for name in ['THIRD_PARTY_NOTICES.md', 'licenses/AWAvenue-GPL-3.0.txt',
-                     'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt', 'licenses/cacert-MPL-2.0.txt']:
+                     'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt', 'licenses/cacert-MPL-2.0.txt',
+                     'licenses/go-BSD-3-Clause.txt', 'licenses/go-crypto-BSD-3-Clause.txt']:
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'missing installer'):
                 validator.validate(self.fixture(missing=name), VERSION, 45)
 
