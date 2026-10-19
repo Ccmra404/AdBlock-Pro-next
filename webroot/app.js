@@ -858,7 +858,7 @@ async function monitorJob(id, action) {
       state.job = null; setBusy(false);
       syncStatusView();
       if (action === '--observe' || action === '--factory-reset' || (action === '--apply-personal' && state.page === 'lists') || (state.page === 'lists' && state.rulesView === 'shared')) render();
-      toast(action === '--apply-personal' ? state.personalApplyMessage : action === '--observe' ? (code === 0 ? `观察完成，记录 ${fmt(state.observationDomains.length)} 个域名` : '域名观察失败') : action === '--factory-reset' ? (code === 0 ? '已恢复默认设置；备份位置见运行日志' : '恢复默认设置失败；请查看运行日志') : (code === 0 ? '操作已完成' : '操作失败，请查看运行日志'));
+      toast(action === '--apply-personal' ? state.personalApplyMessage : action === '--observe' ? (code !== 0 ? '域名观察失败' : state.observationError ? '观察已结束，但结果读取失败；请重试读取' : `观察完成，记录 ${fmt(state.observationDomains.length)} 个域名`) : action === '--factory-reset' ? (code === 0 ? '已恢复默认设置；备份位置见运行日志' : '恢复默认设置失败；请查看运行日志') : (code === 0 ? '操作已完成' : '操作失败，请查看运行日志'));
       return code;
     }
     if (action === '--update') {
@@ -909,7 +909,9 @@ function parseObservationSnapshot(raw, startedAt) {
   if (meta) { truncated = meta[1] === '1'; snapshot = snapshot.slice(0, meta.index); }
   const entries = snapshot.split(/\n__ABP_PAGE__\n/).flatMap(page => {
     const payload = JSON.parse(page);
-    return Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : [];
+    if (Array.isArray(payload)) return payload;
+    if (Array.isArray(payload?.data)) return payload.data;
+    throw new Error('观察结果格式无效，请重试读取。');
   });
   const domains = new Map();
   for (const entry of entries) {
@@ -979,7 +981,11 @@ async function loadObservationResult(id) {
 }
 async function startObservation() {
   if (state.aiBusy) throw new Error('请先等待当前 AI 分析结束');
-  if (state.status?.state !== 'active') { toast('DNS 核心未运行，请先在总览确认服务状态'); return; }
+  if (state.status?.state !== 'active') {
+    const running = state.status?.dns_core_running === '1' || state.status?.state === 'bypassed';
+    toast(!running ? 'DNS 核心未运行，请先在总览确认服务状态' : state.status?.dns_takeover === 'off' ? 'DNS 核心正在运行，但接管已关闭；请先开启 DNS 接管再观察' : 'DNS 核心正在运行，但监听或接管异常；请先查看总览或运行诊断');
+    return;
+  }
   if (!state.selectedApp) { toast('请输入并选择匹配的本机应用'); return; }
   const duration = $('#observe-duration')?.value || '10';
   if (!['5','10','15','30'].includes(duration)) throw new Error('请选择有效观察时长');
