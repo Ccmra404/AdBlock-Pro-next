@@ -28,14 +28,17 @@ test('manual rules reject a DNS label over 63 characters and preserve valid entr
 });
 
 for (const kind of ['blacklist', 'whitelist']) {
-  test(`manual ${kind} addition rejects an exact opposite-list entry without deleting it`, t => {
+  test(`manual ${kind} selection moves only that domain and preserves other entries`, t => {
     const f = fixture(t);
     const opposite = kind === 'blacklist' ? 'whitelist' : 'blacklist';
-    writeFileSync(path.join(f.dir, opposite + '.txt'), 'ADS.Example\r\n');
+    writeFileSync(path.join(f.dir, opposite + '.txt'), '# keep comment\nADS.Example\r\nkeep.example\n');
+    writeFileSync(path.join(f.dir, kind + '.txt'), 'other.example\n');
     const result = f.run('add-' + kind, 'ads.example');
-    assert.notEqual(result.status, 0, result.stdout);
-    assert.equal(readFileSync(path.join(f.dir, opposite + '.txt'), 'utf8'), 'ADS.Example\r\n');
-    assert.equal(existsSync(path.join(f.dir, kind + '.txt')), false);
+    assert.equal(result.status, 0, result.stderr + result.stdout);
+    assert.equal(readFileSync(path.join(f.dir, opposite + '.txt'), 'utf8'), '# keep comment\nkeep.example\n');
+    assert.equal(readFileSync(path.join(f.dir, kind + '.txt'), 'utf8'), 'other.example\nads.example\n');
+    assert.equal(f.run('add-' + kind, 'ads.example').status, 0);
+    assert.equal(readFileSync(path.join(f.dir, kind + '.txt'), 'utf8'), 'other.example\nads.example\n');
   });
 }
 

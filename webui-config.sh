@@ -89,6 +89,34 @@ remove_line() {
   [ "$rc" -le 1 ] || { rm -f "$tmp"; return 1; }
   chmod 600 "$tmp" && mv "$tmp" "$file"
 }
+save_personal_domain() {
+  local target=$1 domain=$2 work="$DIR/.personal-edit.$$" kind file restored=1
+  mkdir "$work" || return 1
+  for kind in blacklist whitelist; do
+    file="$DIR/$kind.txt"
+    if [ -e "$file" ]; then
+      cp -p "$file" "$work/$kind.before" || { rm -rf "$work"; return 1; }
+    else : > "$work/$kind.before"; : > "$work/$kind.absent"; fi
+    "$BB" awk -v domain="$domain" -v selected="$target" -v kind="$kind" '
+      { d=tolower($0); gsub(/^[[:space:]]+|[[:space:]]+$/, "", d)
+        if(d==domain) { if(kind==selected && !seen++) print domain; next }
+        print
+      }
+      END { if(kind==selected && !seen) print domain }
+    ' "$work/$kind.before" > "$work/$kind.next" || { rm -rf "$work"; return 1; }
+  done
+  if ! chmod 600 "$work/blacklist.next" "$work/whitelist.next" ||
+     ! mv "$work/blacklist.next" "$DIR/blacklist.txt" || ! mv "$work/whitelist.next" "$DIR/whitelist.txt"; then
+    for kind in blacklist whitelist; do
+      if [ -f "$work/$kind.absent" ]; then rm -f "$DIR/$kind.txt" || restored=0;
+      else cp -p "$work/$kind.before" "$DIR/$kind.txt" || restored=0; fi
+    done
+    if [ "$restored" = 1 ]; then rm -rf "$work";
+    else echo "[!] 名单自动恢复未完成；原名单备份保留在 $work，请勿删除。" >&2; fi
+    return 1
+  fi
+  rm -rf "$work"
+}
 mode_sources() {
   case "$1" in
     light|balanced|strict)
@@ -217,13 +245,8 @@ case "$1" in
   add-whitelist|add-blacklist)
     domain=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
     valid_domain "$domain" || { echo '[!] Invalid domain.' >&2; exit 1; }
-    case "$1" in add-blacklist) opposite=whitelist ;; *) opposite=blacklist ;; esac
-    if [ -e "$DIR/$opposite.txt" ]; then
-      conflict=$("$BB" awk -v domain="$domain" '{ gsub(/^[[:space:]]+|[[:space:]]+$/, ""); if(tolower($0)==domain) found=1 } END { print found+0 }' "$DIR/$opposite.txt") || exit 1
-      [ "$conflict" = 0 ] || { echo '[!] 此域名已在相反名单中，请先移除原条目再切换拦截或放行。' >&2; exit 1; }
-    fi
-    append_line "$DIR/${1#add-}.txt" "$domain" || exit 1
-    echo "[+] Added $domain to ${1#add-}."
+    save_personal_domain "${1#add-}" "$domain" || { echo '[!] 名单保存失败，已尝试恢复原名单。' >&2; exit 1; }
+    echo "[+] 已将 $domain 设为 ${1#add-}；已移除相反名单中的同名条目，其他域名保留。"
     ;;
   remove-whitelist|remove-blacklist)
     domain=$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')
