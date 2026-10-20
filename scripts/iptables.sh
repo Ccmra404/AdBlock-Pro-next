@@ -54,13 +54,19 @@ EOF
   printf '%s\n' "$count"
 }
 
+ipv4_redirect_status() {
+  local count
+  count=$(count_chain_jumps "$iptables_w" nat ADGUARD_REDIRECT_DNS) || return 2
+  [ "$count" -eq 0 ] || return 0
+  return 1
+}
+
 # Read-only: 0 = an owned jump exists, 1 = confirmed absent, 2 = unknown.
 # A visible jump takes precedence over an unreadable table so cleanup is tried.
 redirect_status() {
   local count table chain present=0 unknown=0
-  count=$(count_chain_jumps "$iptables_w" nat ADGUARD_REDIRECT_DNS) && {
-    [ "$count" -eq 0 ] || present=1
-  } || unknown=1
+  ipv4_redirect_status
+  case "$?" in 0) present=1 ;; 1) ;; *) unknown=1 ;; esac
   for table in nat filter; do
     if [ "$table" = nat ]; then chain=ADGUARD_REDIRECT_DNS6
     else chain=ADGUARD_BLOCK_DNS; fi
@@ -197,8 +203,12 @@ rollback_failed_enable() {
 }
 
 case "$1" in
-status)
-  redirect_status
+status|status-ipv4)
+  if [ "$1" = status-ipv4 ]; then
+    # UI reads must not wait through a long-running firewall writer.
+    iptables_w="iptables -w 1"
+    ipv4_redirect_status
+  else redirect_status; fi
   case "$?" in
     0) echo present; exit 0 ;;
     1) echo absent; exit 1 ;;
@@ -234,7 +244,7 @@ disable)
   disable_ipv6_iptables || exit 1
   ;;
 *)
-  echo "Usage: $0 {enable|disable|status}"
+  echo "Usage: $0 {enable|disable|status|status-ipv4}"
   exit 1
   ;;
 esac

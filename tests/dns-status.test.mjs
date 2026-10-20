@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
 
-function statusFixture(t, { takeover = 'on', listener = true, redirect = true, running = true, api = true, filtering = '{"enabled":true,"filters":[]}' } = {}) {
+function statusFixture(t, { takeover = 'on', listener = true, redirect = true, running = true, api = true, firewallOutput, firewallExit, filtering = '{"enabled":true,"filters":[]}' } = {}) {
   const root = rootFixture(t); root.addBusybox('Magisk');
   const runtime = path.join(root.dir, 'runtime'), state = path.join(root.dir, 'state'), proc = path.join(root.dir, 'proc');
   for (const dir of [path.join(runtime, 'bin'), path.join(runtime, 'scripts'), state, path.join(proc, 'net'), path.join(proc, '1234')]) mkdirSync(dir, { recursive: true });
@@ -21,6 +21,7 @@ function statusFixture(t, { takeover = 'on', listener = true, redirect = true, r
   writeFileSync(path.join(state, 'engine-version'), 'fixture-engine\n');
   writeFileSync(path.join(root.dir, 'module.prop'), 'version=v0.13.0-rc.3\n');
   for (const file of ['memory.sh', 'footprint.sh']) writeFileSync(path.join(runtime, 'scripts', file), readFileSync(new URL('../scripts/' + file, import.meta.url), 'utf8'));
+  writeFileSync(path.join(runtime, 'scripts/iptables.sh'), `#!/bin/sh\n[ "$1" = status-ipv4 ] || exit 2\nprintf '%s\\n' '${firewallOutput ?? (redirect ? 'present' : 'absent')}'\nexit ${firewallExit ?? (redirect ? 0 : 1)}\n`);
   const curl = path.join(root.dir, 'curl');
   const requests = path.join(root.dir, 'requests');
   writeFileSync(curl, '#!/bin/sh\n' + (api ? '' : 'exit 1\n') + `printf '%s\\n' "$*" >> '${shellPath(requests)}'\n` + `case "$*" in */filtering/status*) printf '%s\\n' '${filtering}';; *) echo '{}';; esac\n`); chmodSync(curl, 0o755);
@@ -52,6 +53,19 @@ for (const [name, filtering, expected] of [
 ]) {
   test('filtering state reads only the top-level switch: ' + name, t => {
     assert.equal(statusFixture(t, { filtering })().filtering_enabled, expected);
+  });
+}
+
+for (const [firewallOutput, firewallExit] of [['unknown', 2], ['', 1], ['absent', 2], ['present', 1]]) {
+  for (const takeover of ['on', 'off']) test(`unreliable firewall query stays unknown: ${takeover}/${firewallOutput}/${firewallExit}`, t => {
+    const run = statusFixture(t, { takeover, redirect: false, firewallOutput, firewallExit });
+    const status = run();
+    assert.equal(status.dns_redirect, 'unknown');
+    assert.equal(status.dns_health, 'takeover_state_unknown');
+    assert.equal(status.state, 'degraded');
+    const diag = run('--diagnose');
+    assert.equal(diag.diag_dns_redirect, 'unknown');
+    assert.equal(diag.diag_dns_health, 'takeover_state_unknown');
   });
 }
 

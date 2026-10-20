@@ -319,11 +319,24 @@ history_text() {
   done
 }
 
+read_redirect_status() {
+  local redirect_state redirect_rc
+  redirect_state=$("$BB" sh "$AGH/scripts/iptables.sh" status-ipv4 2>/dev/null)
+  redirect_rc=$?
+  # A generic shell/query failure can also exit 1: require both signals.
+  case "$redirect_state:$redirect_rc" in
+    present:0) redirected=1 ;;
+    absent:1) redirected=0 ;;
+    *) redirected=unknown ;;
+  esac
+}
+
 classify_dns_health() {
   state=degraded
   if [ "$running" != 1 ]; then health=stopped; state=paused
   elif [ "$listening" != 1 ]; then health=listener_failed
   elif [ "$api_ok" != 0 ]; then health=api_failed
+  elif [ "$redirected" = unknown ]; then health=takeover_state_unknown
   elif [ "$takeover" = off ] && [ "$redirected" = 0 ]; then health=takeover_off; state=bypassed
   elif [ "$takeover" = off ]; then health=takeover_cleanup_pending
   elif [ "$takeover" != on ]; then health=takeover_unknown
@@ -345,8 +358,7 @@ status() {
   listening_udp=0; is_protocol_listening '/proc/net/udp /proc/net/udp6' 07 && listening_udp=1
   listening_tcp=0; is_protocol_listening '/proc/net/tcp /proc/net/tcp6' 0A && listening_tcp=1
   listening=0; [ "$listening_udp" = 1 ] && [ "$listening_tcp" = 1 ] && listening=1
-  redirected=0
-  iptables -t nat -C OUTPUT -j ADGUARD_REDIRECT_DNS >/dev/null 2>&1 && redirected=1
+  read_redirect_status
   takeover=$(cat "$STATE/dns-takeover" 2>/dev/null); case "$takeover" in on|off) ;; *) takeover=unknown ;; esac
   classify_dns_health
   mode=$(cat "$STATE/blocking-mode" 2>/dev/null); case "$mode" in light|balanced|strict) ;; *) mode=balanced ;; esac
@@ -848,7 +860,7 @@ diagnose() {
   listening_udp=0; is_protocol_listening '/proc/net/udp /proc/net/udp6' 07 && listening_udp=1
   listening_tcp=0; is_protocol_listening '/proc/net/tcp /proc/net/tcp6' 0A && listening_tcp=1
   listening=0; [ "$listening_udp" = 1 ] && [ "$listening_tcp" = 1 ] && listening=1
-  redirected=0; iptables -t nat -C OUTPUT -j ADGUARD_REDIRECT_DNS >/dev/null 2>&1 && redirected=1
+  read_redirect_status
   api GET /status 4 >/dev/null 2>&1; api_ok=$?
   filter_json=$(api GET /filtering/status 4 2>/dev/null); filter_ok=$?
   count=0; [ "$filter_ok" -ne 0 ] || count=$(rules_count "$filter_json")

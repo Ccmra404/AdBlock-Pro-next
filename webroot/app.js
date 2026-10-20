@@ -96,6 +96,7 @@ function summaryText() {
   if (s.dns_core_running === '0' || s.state === 'paused') return ['DNS 核心已停止', '系统 DNS 未接入本地过滤服务。'];
   if (s.dns_health === 'listener_failed' || s.dns_listener === '0') return ['DNS 监听异常', '核心进程存在，但 TCP/UDP DNS 监听未全部就绪。请查看环境检测。'];
   if (s.dns_health === 'api_failed') return ['DNS 管理接口异常', '核心进程存在，但无法读取 AdGuard Home API。请查看环境检测。'];
+  if (s.dns_health === 'takeover_state_unknown' || s.dns_redirect === 'unknown') return ['系统 DNS 接管状态未知', '无法可靠读取防火墙规则；尚不能确认接管已应用或已清理。请查看环境检测。'];
   if (s.dns_health === 'takeover_cleanup_pending') return ['系统接管尚未清理', '已保存关闭偏好，但仍检测到本模块重定向。请检查后再停止核心。'];
   if (s.dns_takeover === 'off') return ['已关闭系统接管，DNS 核心仍运行', '这是已保存的关闭偏好；系统 DNS 不会经过本模块过滤。可在设置中重新开启。'];
   if (s.dns_health === 'takeover_unknown') return ['系统接管偏好无法读取', '未确认已保存的接管设置，请查看环境检测。'];
@@ -107,6 +108,12 @@ function summaryText() {
 function coreRunning(s = state.status) {
   return s?.dns_core_running !== undefined ? s.dns_core_running === '1'
     : ['active', 'degraded', 'bypassed'].includes(s?.state);
+}
+function redirectText(s) {
+  return s?.dns_redirect === '1' ? '已应用' : s?.dns_redirect === '0' ? '未应用' : '状态未知';
+}
+function takeoverText(s) {
+  return s?.dns_redirect === '0' && s?.dns_takeover === 'off' ? '主动关闭' : `重定向${redirectText(s)}`;
 }
 function queryTotal(stats) {
   if (!stats) return null;
@@ -136,9 +143,9 @@ function homePage() {
   const headAction = `<button class="btn" data-action="diagnose">${icon('activity')} 环境诊断</button>`;
   return `${heading('总览', '查看过滤与 DNS 服务状态', headAction)}
     <div class="stack">
-      <section class="panel hero"><div class="hero-content"><span class="hero-symbol ${s?.state === 'active' ? '' : 'off'}">${icon(s?.state === 'active' ? 'shield' : 'power')}</span><div><div class="hero-title">${esc(title)}</div><div class="hero-sub">${esc(subtitle)}</div><div class="status-pills"><span class="mini-status"><i class="dot ${coreRunning(s) ? 'on' : 'warn'}"></i> DNS ${coreRunning(s) ? '运行中' : s ? '已停止' : '待检查'}</span><span class="mini-status"><i class="dot ${s?.dns_redirect === '1' ? 'on' : 'warn'}"></i> DNS 重定向 ${s?.dns_redirect === '1' ? '已应用' : '未应用'}</span></div></div></div>${toggle('filtering', s?.filtering_enabled === 'true', '广告规则过滤')}</section>
+      <section class="panel hero"><div class="hero-content"><span class="hero-symbol ${s?.state === 'active' ? '' : 'off'}">${icon(s?.state === 'active' ? 'shield' : 'power')}</span><div><div class="hero-title">${esc(title)}</div><div class="hero-sub">${esc(subtitle)}</div><div class="status-pills"><span class="mini-status"><i class="dot ${coreRunning(s) ? 'on' : 'warn'}"></i> DNS ${coreRunning(s) ? '运行中' : s ? '已停止' : '待检查'}</span><span class="mini-status"><i class="dot ${s?.dns_redirect === '1' ? 'on' : 'warn'}"></i> DNS 重定向 ${redirectText(s)}</span></div></div></div>${toggle('filtering', s?.filtering_enabled === 'true', '广告规则过滤')}</section>
       <section class="metrics" aria-label="设备实时统计"><div class="metric"><div class="metric-label">已加载规则条目</div><div class="metric-value">${s ? fmt(s.blocked) : '—'}</div><div class="metric-foot">不是广告命中次数</div></div><div class="metric"><div class="metric-label">DNS 查询统计</div><div class="metric-value">${queryCount === null ? '—' : fmt(queryCount)}</div><div class="metric-foot">AdGuard Home 统计接口</div></div><div class="metric"><div class="metric-label">DNS 核心内存</div><div class="metric-value">${memory.value} <span style="font-size:14px">MB</span></div><div class="metric-foot">${esc(memory.label)}</div></div></section>
-      <section class="panel" data-service-status><div class="panel-head"><div><h2 class="section-title">服务状态</h2><p class="section-sub">模块与独立应用状态</p></div></div><div class="rows">${row('server', 'AdGuard Home', '本地 DNS 过滤核心', tag(coreRunning(s) ? '运行中' : s ? '已停止' : '未知', coreRunning(s) ? 'green' : 'yellow'))}${row('globe', '系统 DNS 接管', '仅接管模块管理的 IPv4 DNS 规则', tag(s?.dns_redirect === '1' ? '重定向已应用' : s?.dns_takeover === 'off' ? '主动关闭' : '未重定向', s?.dns_redirect === '1' ? 'green' : 'yellow'))}${row('activity', 'GKD 开屏跳过', '由 GKD 独立管理', tag('独立应用'))}</div></section>
+      <section class="panel" data-service-status><div class="panel-head"><div><h2 class="section-title">服务状态</h2><p class="section-sub">模块与独立应用状态</p></div></div><div class="rows">${row('server', 'AdGuard Home', '本地 DNS 过滤核心', tag(coreRunning(s) ? '运行中' : s ? '已停止' : '未知', coreRunning(s) ? 'green' : 'yellow'))}${row('globe', '系统 DNS 接管', '仅接管模块管理的 IPv4 DNS 规则', tag(takeoverText(s), s?.dns_redirect === '1' ? 'green' : 'yellow'))}${row('activity', 'GKD 开屏跳过', '由 GKD 独立管理', tag('独立应用'))}</div></section>
       <section class="panel"><div class="panel-head"><div><h2 class="section-title">最近规则更新</h2><p class="section-sub">${esc(s ? when(s.last_update) : '读取中')}</p></div><button class="btn" data-nav="rules">规则管理</button></div><div class="notice">${icon('info')}<span>仅显示设备实际返回的数据。当前模块不采集每次 DNS 请求或广告命中日志。</span></div></section>
     </div>`;
 }
@@ -528,7 +535,7 @@ function syncStatusView() {
     if (pills[1]) {
       const dot = $('.dot', pills[1]);
       if (dot) dot.className = 'dot ' + (s?.dns_redirect === '1' ? 'on' : 'warn');
-      if (pills[1].lastChild?.nodeType === 3) pills[1].lastChild.textContent = ' DNS 重定向 ' + (s?.dns_redirect === '1' ? '已应用' : '未应用');
+      if (pills[1].lastChild?.nodeType === 3) pills[1].lastChild.textContent = ' DNS 重定向 ' + redirectText(s);
     }
     const filtering = $('[data-toggle="filtering"]');
     if (filtering && !state.busy && !filtering.disabled) filtering.checked = s?.filtering_enabled === 'true';
@@ -544,7 +551,7 @@ function syncStatusView() {
     if (metricFeet[2] && metricFeet[2].textContent !== memory.label) metricFeet[2].textContent = memory.label;
     const serviceRows = $$('#page-content [data-service-status] .rowitem');
     updateTag($('.tag', serviceRows[0]), coreRunning(s) ? '运行中' : s ? '已停止' : '未知', coreRunning(s));
-    updateTag($('.tag', serviceRows[1]), s?.dns_redirect === '1' ? '重定向已应用' : s?.dns_takeover === 'off' ? '主动关闭' : '未重定向', s?.dns_redirect === '1');
+    updateTag($('.tag', serviceRows[1]), takeoverText(s), s?.dns_redirect === '1');
     setText('#page-content .stack > .panel:last-child .panel-head .section-sub', s ? when(s.last_update) : '读取中');
   } else if (state.page === 'manage') {
     for (const [key, on] of [['takeover', s?.dns_takeover === 'on'], ['autostart', s?.autostart !== 'off'], ['auto-update', s?.auto_update !== 'off']]) {
