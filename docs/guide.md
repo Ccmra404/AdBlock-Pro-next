@@ -56,6 +56,8 @@ Android 应用 / 系统 DNS 请求
 
 AdBlock Pro 的默认设计**只接管 IPv4 明文 DNS**，并不尝试强制覆盖 Android 私人 DNS、VPN、应用内 DoH/DoT 或所有 IPv6 查询。这些流量可能绕过模块过滤，属于目前明确的功能边界。
 
+与 FlClash 同时使用时，VPN 和额外的系统 HTTP 代理可能采用不同的解析路径。已验证用法、恢复步骤与未覆盖范围见 [FlClash VPN 共存排查](vpn-compatibility.md)。
+
 域名过滤无法直接删除应用已经渲染出来的广告占位、贴片组件，也无法自动点击「跳过广告」。需要处理开屏跳过时，可独立搭配 [GKD](https://github.com/gkd-kit/gkd)；**GKD 不是本模块的内置引擎**。
 
 ## 安装前须知
