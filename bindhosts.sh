@@ -319,7 +319,7 @@ history_text() {
   done
 }
 
-read_redirect_status() {
+read_redirect_state() {
   local redirect_state redirect_rc
   redirect_state=$("$BB" sh "$AGH/scripts/iptables.sh" status-ipv4 2>/dev/null)
   redirect_rc=$?
@@ -358,7 +358,7 @@ status() {
   listening_udp=0; is_protocol_listening '/proc/net/udp /proc/net/udp6' 07 && listening_udp=1
   listening_tcp=0; is_protocol_listening '/proc/net/tcp /proc/net/tcp6' 0A && listening_tcp=1
   listening=0; [ "$listening_udp" = 1 ] && [ "$listening_tcp" = 1 ] && listening=1
-  read_redirect_status
+  read_redirect_state
   takeover=$(cat "$STATE/dns-takeover" 2>/dev/null); case "$takeover" in on|off) ;; *) takeover=unknown ;; esac
   classify_dns_health
   mode=$(cat "$STATE/blocking-mode" 2>/dev/null); case "$mode" in light|balanced|strict) ;; *) mode=balanced ;; esac
@@ -860,7 +860,7 @@ diagnose() {
   listening_udp=0; is_protocol_listening '/proc/net/udp /proc/net/udp6' 07 && listening_udp=1
   listening_tcp=0; is_protocol_listening '/proc/net/tcp /proc/net/tcp6' 0A && listening_tcp=1
   listening=0; [ "$listening_udp" = 1 ] && [ "$listening_tcp" = 1 ] && listening=1
-  read_redirect_status
+  read_redirect_state
   api GET /status 4 >/dev/null 2>&1; api_ok=$?
   filter_json=$(api GET /filtering/status 4 2>/dev/null); filter_ok=$?
   count=0; [ "$filter_ok" -ne 0 ] || count=$(rules_count "$filter_json")
