@@ -5,6 +5,24 @@
 # An upgrade keeps the user's existing settings.conf, so a key added to that
 # file after the user installed is simply missing here and arrives empty.
 startup_timeout="${startup_timeout:-120}"
+RUNTIME_STATE=/data/adb/bindhosts_personal
+RUNTIME_REQUEST=$RUNTIME_STATE/runtime-request
+
+# Autostart is a boot preference, not the user's current run/pause intent.
+# Publish requests before waiting for the lifecycle lock so a queued pause
+# can cancel a slow start. A newer request always supersedes an older one.
+record_runtime_request() {
+  umask 077
+  mkdir -p "$RUNTIME_STATE" || return 1
+  runtime_request="$1:$(date +%s):$$"
+  printf '%s\n' "$runtime_request" > "$RUNTIME_REQUEST.$$.tmp" &&
+    mv -f "$RUNTIME_REQUEST.$$.tmp" "$RUNTIME_REQUEST"
+}
+
+start_requested() {
+  [ -n "${runtime_request:-}" ] && [ "$(cat "$RUNTIME_REQUEST" 2>/dev/null)" = "$runtime_request" ] &&
+    [ -d "$MOD_PATH" ] && [ ! -f "$MOD_PATH/disable" ] && [ ! -f "$MOD_PATH/remove" ]
+}
 
 move_to_system_cgroup() {
   echo $$ > /sys/fs/cgroup/cgroup.procs 2>/dev/null
@@ -46,6 +64,7 @@ is_dns_listening() {
 wait_for_dns_ready() {
   local waited=0
   while [ "$waited" -lt "$startup_timeout" ]; do
+    start_requested || return 1
     is_dns_listening && return 0
     # stop waiting if the process died instead of sitting out the full timeout
     kill -0 "$adg_pid" 2>/dev/null || return 1
@@ -75,6 +94,7 @@ wait_for_adguardhome() {
 }
 
 start_adguardhome() {
+  start_requested || return 75
   # A live PID is not sufficient: the firewall may have been removed by
   # the crash watchdog or a previous listener timeout.
   if [ -r "$PID_FILE" ] && is_our_adguardhome "$(cat "$PID_FILE")"; then
@@ -96,6 +116,7 @@ start_adguardhome() {
     printf '%s\n' "$adg_pid" > "$PID_FILE" || return 1
   fi
 
+  start_requested || return 75
   takeover=$(cat /data/adb/bindhosts_personal/dns-takeover 2>/dev/null)
   if [ "$enable_iptables" != true ] || [ "$takeover" = off ]; then
     # A preference change must also remove leftovers from older boots.
@@ -115,7 +136,12 @@ start_adguardhome() {
     update_description "🟡 DNS running (listener not ready)" "🟡 DNS 运行中（监听未就绪）"
     return 1
   fi
+  start_requested || return 75
   if "$SCRIPT_DIR/iptables.sh" enable; then
+    if ! start_requested; then
+      "$SCRIPT_DIR/iptables.sh" disable >/dev/null 2>&1
+      return 75
+    fi
     log "AdGuardHome ready [PID: $adg_pid], DNS redirected" "AdGuardHome 已就绪 [PID: $adg_pid]，DNS 已接管"
     update_description "🟢 DNS filtering [PID: $adg_pid]" "🟢 DNS 防护运行中 [PID: $adg_pid]"
   else
@@ -166,24 +192,52 @@ stop_adguardhome() {
 
 toggle_adguardhome() {
   if [ -r "$PID_FILE" ] && is_our_adguardhome "$(cat "$PID_FILE")"; then
-    stop_adguardhome
+    printf 'stop\n'
   else
-    start_adguardhome
+    printf 'start\n'
   fi
 }
 
 case "$1" in
-start)
-  start_adguardhome
+start|stop|toggle)
+  runtime_action=$1
+  [ "$runtime_action" != toggle ] || runtime_action=$(toggle_adguardhome)
+  request_mode=stop
+  [ "$runtime_action" != start ] || request_mode=run
+  record_runtime_request "$request_mode" || exit 1
+  exec "$BB" flock "$RUNTIME_STATE/runtime.lock" "$BB" sh "$0" __locked "$runtime_action" "$runtime_request"
   ;;
-stop)
-  stop_adguardhome
+recover)
+  runtime_request=$(cat "$RUNTIME_REQUEST" 2>/dev/null)
+  case "$runtime_request" in run:*) ;; *) exit 75 ;; esac
+  mkdir -p "$RUNTIME_STATE/webui-jobs" || exit 1
+  # Busy maintenance is not a failed recovery attempt. Acquired-lock failures
+  # return 2 below, distinct from flock's busy exit 1 and stale request 75.
+  exec "$BB" flock -n "$RUNTIME_STATE/webui-jobs/worker.lock" "$BB" flock -n "$RUNTIME_STATE/update.lock" \
+    "$BB" flock -n "$RUNTIME_STATE/runtime.lock" "$BB" sh "$0" __locked recover "$runtime_request"
   ;;
-toggle)
-  toggle_adguardhome
+__locked)
+  runtime_action=$2
+  runtime_request=$3
+  [ -n "$runtime_request" ] && [ "$(cat "$RUNTIME_REQUEST" 2>/dev/null)" = "$runtime_request" ] || exit 75
+  case "$runtime_action" in
+    start) start_adguardhome ;;
+    stop) stop_adguardhome ;;
+    recover)
+      start_requested || exit 75
+      if [ -r "$PID_FILE" ] && is_our_adguardhome "$(cat "$PID_FILE")"; then exit 75; fi
+      # Unknown is never permission to reattach DNS. Cleanup is the watchdog's
+      # first job; recovery only starts after positively verified absence.
+      [ "$("$SCRIPT_DIR/iptables.sh" status 2>/dev/null)" = absent ] || exit 75
+      log "Attempting automatic DNS core recovery" "[恢复] 尝试自动恢复 DNS 核心"
+      start_adguardhome && exit 0
+      exit 2
+      ;;
+    *) exit 1 ;;
+  esac
   ;;
 *)
-  echo "Usage: $0 {start|stop|toggle}"
+  echo "Usage: $0 {start|stop|toggle|recover}"
   exit 1
   ;;
 esac

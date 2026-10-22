@@ -49,6 +49,8 @@ wait_for_boot_network() {
 
 # Start the module enable/disable watcher even when boot autostart is off.
 # A manually resumed DNS service still needs lifecycle hooks and crash safety.
+# Last boot's runtime request must not override autostart=off.
+rm -f "$STATE_DIR/runtime-request"
 "$BB" inotifyd /data/adb/adblockpro/scripts/inotify.sh "$MODDIR:d,n" &
 
 if [ "$(cat "$AUTOSTART" 2>/dev/null)" = on ]; then
@@ -76,15 +78,28 @@ if [ "$(cat "$AUTOSTART" 2>/dev/null)" = on ]; then
 fi
 
 # Fail open if the resolver crashes after DNS redirection was installed.
-# This monitor removes only this module's redirect; it does not restart AGH
-# repeatedly or alter the user's takeover preference.
+# Remove only our redirects first, then make bounded attempts to recover an
+# explicitly requested core. Never change autostart or takeover preferences.
 (
   AGH=/data/adb/adblockpro
   cleanup_warning=0
   auto_update_ticks=0
+  recovery_request=''
+  recovery_attempts=0
+  recovery_ticks=0
+  recovery_stable=0
+  recovery_warning=0
   while [ -d "$MODDIR" ]; do
     sleep 5
     [ -d "$MODDIR" ] || break
+    request=$(cat /data/adb/bindhosts_personal/runtime-request 2>/dev/null)
+    if [ "$request" != "$recovery_request" ]; then
+      recovery_request=$request
+      recovery_attempts=0
+      recovery_ticks=0
+      recovery_stable=0
+      recovery_warning=0
+    fi
     pid=$(cat "$AGH/bin/agh.pid" 2>/dev/null)
     alive=0
     case "$pid" in ''|*[!0-9]*) ;; *)
@@ -92,8 +107,15 @@ fi
       ;;
     esac
     # Leave a healthy enabled core alone, without polling firewall snapshots.
-    if [ "$alive" = 1 ] && [ ! -f "$MODDIR/disable" ]; then
+    if [ "$alive" = 1 ] && [ ! -f "$MODDIR/disable" ] && [ ! -f "$MODDIR/remove" ]; then
       cleanup_warning=0
+      # A short-lived successful launch must not reset a crash-loop budget.
+      recovery_stable=$((recovery_stable + 1))
+      if [ "$recovery_stable" -eq 60 ]; then
+        recovery_attempts=0
+        recovery_ticks=0
+        recovery_warning=0
+      fi
       auto_update_ticks=$((auto_update_ticks + 1))
       if [ "$auto_update_ticks" -ge 12 ]; then
         auto_update_ticks=0
@@ -102,24 +124,57 @@ fi
       fi
       continue
     fi
+    recovery_stable=0
+    auto_update_ticks=0
     # Saved takeover=off cannot prove that a previous redirect was removed.
     # Require the explicit snapshot result: a failed helper can also exit 1.
     redirect_state=$("$AGH/scripts/iptables.sh" status 2>/dev/null)
-    if [ "$redirect_state" = absent ]; then
-      cleanup_warning=0
+    if [ "$redirect_state" != absent ]; then
+      "$AGH/scripts/iptables.sh" disable >/dev/null 2>&1
+      redirect_state=$("$AGH/scripts/iptables.sh" status 2>/dev/null)
+      cleanup_reason='AdGuard Home 进程异常退出'
+      [ ! -f "$MODDIR/disable" ] || cleanup_reason='模块已禁用'
+      [ ! -f "$MODDIR/remove" ] || cleanup_reason='模块待卸载'
+      if [ "$redirect_state" = absent ]; then
+        printf '%s [恢复] %s，已解除本模块 DNS 重定向。\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$cleanup_reason" >> "$AGH/history.log"
+        cleanup_warning=0
+      elif [ "$cleanup_warning" = 0 ]; then
+        printf '%s [警告] %s，DNS 重定向仍有残留或状态未知，将继续重试。\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$cleanup_reason" >> "$AGH/history.log"
+        cleanup_warning=1
+      fi
+    fi
+    [ "$redirect_state" != absent ] || cleanup_warning=0
+    if [ "$redirect_state" != absent ] || [ "$alive" = 1 ] ||
+      [ -f "$MODDIR/disable" ] || [ -f "$MODDIR/remove" ]; then
+      recovery_ticks=0
       continue
     fi
-    "$AGH/scripts/iptables.sh" disable >/dev/null 2>&1
-    redirect_state=$("$AGH/scripts/iptables.sh" status 2>/dev/null)
-    cleanup_reason='AdGuard Home 进程异常退出'
-    [ ! -f "$MODDIR/disable" ] || cleanup_reason='模块已禁用'
-    if [ "$redirect_state" = absent ]; then
-      printf '%s [恢复] %s，已解除本模块 DNS 重定向。\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$cleanup_reason" >> "$AGH/history.log"
-      cleanup_warning=0
-    elif [ "$cleanup_warning" = 0 ]; then
-      printf '%s [警告] %s，DNS 重定向仍有残留或状态未知，将继续重试。\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$cleanup_reason" >> "$AGH/history.log"
-      cleanup_warning=1
+    case "$request" in run:*) ;; *) recovery_ticks=0; continue ;; esac
+    if [ "$recovery_attempts" -ge 3 ]; then
+      if [ "$recovery_warning" = 0 ]; then
+        printf '%s [警告] DNS 核心连续异常，已停止自动恢复；请检查运行日志后手动恢复。\n' \
+          "$(date '+%Y-%m-%d %H:%M:%S')" >> "$AGH/history.log"
+        recovery_warning=1
+      fi
+      continue
     fi
+    # Three delays: at least 30, 60, 120 seconds. Busy maintenance does not
+    # consume an attempt; tool.sh rechecks intent inside all three locks.
+    recovery_ticks=$((recovery_ticks + 1))
+    recovery_delay=$((6 << recovery_attempts))
+    [ "$recovery_ticks" -ge "$recovery_delay" ] || continue
+    "$BB" sh "$AGH/scripts/tool.sh" recover >/dev/null 2>&1
+    recovery_result=$?
+    case "$recovery_result" in
+      0|2)
+        recovery_ticks=0
+        recovery_attempts=$((recovery_attempts + 1))
+        recovery_message='DNS 核心已完成自动恢复'
+        [ "$recovery_result" = 0 ] || recovery_message='DNS 核心自动恢复未完成'
+        printf '%s [恢复] %s（本轮 %s/3）。\n' "$(date '+%Y-%m-%d %H:%M:%S')" \
+          "$recovery_message" "$recovery_attempts" >> "$AGH/history.log"
+        ;;
+    esac
   done
 ) >/dev/null 2>&1 &
 

@@ -21,6 +21,7 @@ function run(t, options = {}) {
   for (const folder of [mod, path.join(agh, 'bin'), path.join(agh, 'scripts'), state, path.join(proc, '777')]) mkdirSync(folder, { recursive: true });
   writeFileSync(path.join(agh, 'bin/agh.pid'), '777\n');
   writeFileSync(path.join(state, 'dns-takeover'), options.takeover || 'on');
+  if (options.request) writeFileSync(path.join(state, 'runtime-request'), options.request);
   const cmdline = path.join(proc, '777/cmdline');
   if (options.alive) writeFileSync(cmdline, shellPath(agh) + '/bin/AdGuardHome\0');
   if (options.disabled) writeFileSync(path.join(mod, 'disable'), '');
@@ -61,19 +62,32 @@ esac
   writeFileSync(ip6, readFileSync(iptables));
   chmodSync(ip6, 0o755);
   const fw = path.join(agh, 'scripts/iptables.sh');
-  writeFileSync(fw, firewall
+  writeFileSync(fw, options.simpleFirewall ? '#!/bin/sh\ncase "$1" in status) [ "$QUERY_RESULT" != 2 ] || { echo unknown; exit 2; }; echo absent; exit 1 ;; disable) exit 0 ;; esac\n' : firewall
     .replace(/^#![^\n]*\n/, '#!/usr/bin/env bash\n[ "$BROKEN_HELPER" != 1 ] || exit 1\nlog() { :; }\n')
     .replace(/^\. \/data\/adb\/adblockpro\/(?:settings.conf|scripts\/base.sh)\r?$/gm, ''));
   chmodSync(fw, 0o755);
   const bb = path.join(dir, 'bb');
   writeFileSync(bb, '#!/bin/sh\nexec "$@"\n');
   chmodSync(bb, 0o755);
+  writeFileSync(path.join(agh, 'scripts/tool.sh'), [
+    '#!/bin/sh',
+    'tick=$(cat "$TICKS")',
+    'printf "recover %s\\n" "$tick" >> "$CALLS"',
+    'if [ "$BUSY_UNTIL" -ge "$tick" ] 2>/dev/null; then exit 1; fi',
+    'if [ "$RECOVERY_ALIVE" = 1 ]; then printf "%s\\0" "' + shellPath(agh) + '/bin/AdGuardHome" > "$CMDLINE"; fi',
+    'exit "${RECOVERY_RESULT:-2}"',
+  ].join('\n'));
   const body = [
     'MODDIR="' + shellPath(mod) + '"',
     'BB="' + shellPath(bb) + '"',
     'ticks=0',
     `sleep() {
       ticks=$((ticks + 1))
+      echo "$ticks" > "$TICKS"
+      [ "$CRASH_EACH_PASS" != 1 ] || rm -f "$CMDLINE"
+      [ "$ticks" != "$PAUSE_AT" ] || echo stop:pause > '${shellPath(state)}/runtime-request'
+      [ "$ticks" != "$RESUME_AT" ] || echo run:resume > '${shellPath(state)}/runtime-request'
+      [ "$ticks" != "$CRASH_AT" ] || rm -f "$CMDLINE"
       if [ "$CRASH_ON_SECOND" = 1 ] && [ "$ticks" = 2 ]; then rm -f "$CMDLINE"; fi
       if [ "$ticks" -gt "\${PASSES:-1}" ]; then rm -f "$MODDIR/disable"; rmdir "$MODDIR"; fi
     }`,
@@ -85,9 +99,9 @@ esac
       .replace(/\) >\/dev\/null 2>&1 &\s*$/, ')'),
   ].join('\n');
   const result = spawnSync('bash', ['-c', body], {
-    encoding: 'utf8', timeout: 10000,
+    encoding: 'utf8', timeout: options.simpleFirewall ? 60000 : 10000,
     env: { ...process.env, PATH: dir + path.delimiter + process.env.PATH,
-      CALLS: shellPath(calls), JUMPS: shellPath(jumps), CMDLINE: shellPath(cmdline), ...options.env },
+      CALLS: shellPath(calls), JUMPS: shellPath(jumps), CMDLINE: shellPath(cmdline), TICKS: shellPath(path.join(dir, 'ticks')), ...options.env },
   });
   assert.equal(result.status, 0, result.stderr);
   const log = path.join(agh, 'history.log');
@@ -178,4 +192,52 @@ test('an unknown IPv6 backend cannot produce an all-clear recovery message', t =
   assert.equal(r.residual, false);
   assert.match(r.log, /\[警告\]/);
   assert.doesNotMatch(r.log, /已解除/);
+});
+
+function recoveries(t, env = {}, options = {}) {
+  const r = run(t, { simpleFirewall: true, request: 'run:initial', env: { PASSES: '60', ...env }, ...options });
+  return { ...r, ticks: [...r.calls.matchAll(/^recover (\d+)$/gm)].map(m => Number(m[1])) };
+}
+
+test('failed recovery backs off 30/60/120 seconds and stops at three attempts', t => {
+  const r = recoveries(t);
+  assert.deepEqual(r.ticks, [6, 18, 42]);
+  assert.equal((r.log.match(/已停止自动恢复/g) || []).length, 1);
+  assert.doesNotMatch(r.log, /已完成自动恢复/);
+});
+
+test('a healthy recovered process stops further attempts', t => {
+  const r = recoveries(t, { RECOVERY_RESULT: '0', RECOVERY_ALIVE: '1', PASSES: '10' });
+  assert.deepEqual(r.ticks, [6]);
+  assert.match(r.log, /已完成自动恢复/);
+});
+
+test('short-lived launches do not reset the retry budget', t => {
+  const r = recoveries(t, { RECOVERY_RESULT: '0', RECOVERY_ALIVE: '1', CRASH_EACH_PASS: '1' });
+  assert.deepEqual(r.ticks, [6, 18, 42]);
+  assert.match(r.log, /已停止自动恢复/);
+});
+
+test('busy maintenance does not consume the retry budget', t => {
+  const r = recoveries(t, { BUSY_UNTIL: '8' });
+  assert.deepEqual(r.ticks, [6, 7, 8, 9, 21, 45]);
+});
+
+test('a pause cancels recovery, while a later manual resume renews its budget', t => {
+  const r = recoveries(t, { PAUSE_AT: '4', RESUME_AT: '12', PASSES: '20' });
+  assert.deepEqual(r.ticks, [17]);
+});
+
+for (const [name, env, options] of [
+  ['paused', {}, { request: 'stop:manual' }],
+  ['disabled', {}, { disabled: true }],
+  ['unknown firewall', { QUERY_RESULT: '2' }, {}],
+]) test('recovery never starts when ' + name, t => {
+  assert.deepEqual(recoveries(t, { PASSES: '8', ...env }, options).ticks, []);
+});
+
+test('five minutes of healthy runtime renews the retry budget', t => {
+  const r = recoveries(t, { RECOVERY_RESULT: '0', RECOVERY_ALIVE: '1', CRASH_AT: '67', PASSES: '73' });
+  assert.deepEqual(r.ticks, [6, 72]);
+  assert.equal((r.log.match(/本轮 1\/3/g) || []).length, 2);
 });
