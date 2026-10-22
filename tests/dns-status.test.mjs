@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
 
-function statusFixture(t, { takeover = 'on', listener = true, redirect = true, running = true, api = true, firewallOutput, firewallExit, filtering = '{"enabled":true,"filters":[]}' } = {}) {
+function statusFixture(t, { takeover = 'on', listener = true, redirect = true, running = true, api = true, firewallOutput, firewallExit, networkDiagnostics = false, filtering = '{"enabled":true,"filters":[]}' } = {}) {
   const root = rootFixture(t); root.addBusybox('Magisk');
   const runtime = path.join(root.dir, 'runtime'), state = path.join(root.dir, 'state'), proc = path.join(root.dir, 'proc');
   for (const dir of [path.join(runtime, 'bin'), path.join(runtime, 'scripts'), state, path.join(proc, 'net'), path.join(proc, '1234')]) mkdirSync(dir, { recursive: true });
@@ -22,6 +22,17 @@ function statusFixture(t, { takeover = 'on', listener = true, redirect = true, r
   writeFileSync(path.join(root.dir, 'module.prop'), 'version=v0.13.0-rc.3\n');
   for (const file of ['memory.sh', 'footprint.sh']) writeFileSync(path.join(runtime, 'scripts', file), readFileSync(new URL('../scripts/' + file, import.meta.url), 'utf8'));
   writeFileSync(path.join(runtime, 'scripts/iptables.sh'), `#!/bin/sh\n[ "$1" = status-ipv4 ] || exit 2\nprintf '%s\\n' '${firewallOutput ?? (redirect ? 'present' : 'absent')}'\nexit ${firewallExit ?? (redirect ? 0 : 1)}\n`);
+  const networkTrace = path.join(root.dir, 'network-queries');
+  writeFileSync(networkTrace, '');
+  if (networkDiagnostics) {
+    writeFileSync(path.join(runtime, 'scripts/compat.sh'), readFileSync(root.compatFile, 'utf8'));
+    writeFileSync(path.join(runtime, 'scripts/network-diagnostics.sh'), readFileSync(new URL('../scripts/network-diagnostics.sh', import.meta.url), 'utf8'));
+    for (const command of ['settings', 'dumpsys']) {
+      const mock = path.join(root.dir, command);
+      writeFileSync(mock, `#!/bin/sh\nprintf '%s\\n' '${command}' >> '${shellPath(networkTrace)}'\nexit 1\n`);
+      chmodSync(mock, 0o755);
+    }
+  }
   const curl = path.join(root.dir, 'curl');
   const requests = path.join(root.dir, 'requests');
   writeFileSync(curl, '#!/bin/sh\n' + (api ? '' : 'exit 1\n') + `printf '%s\\n' "$*" >> '${shellPath(requests)}'\n` + `case "$*" in */filtering/status*) printf '%s\\n' '${filtering}';; *) echo '{}';; esac\n`); chmodSync(curl, 0o755);
@@ -32,7 +43,8 @@ function statusFixture(t, { takeover = 'on', listener = true, redirect = true, r
   writeFileSync(script, `kill() { return ${running ? 0 : 1}; }\niptables() { return ${redirect ? 0 : 1}; }\n` + source);
   function run(command = '--status', ...args) {
     const result = spawnSync('bash', [shellPath(script), command, ...args], { timeout: 15000, encoding: 'utf8', env: {
-      ...root.env('Magisk'), CURL: shellPath(curl), ABP_AGH_DIR: shellPath(runtime), ABP_STATE_DIR: shellPath(state), ABP_PROC_DIR: shellPath(proc),
+      ...root.env('Magisk'), PATH: root.dir + path.delimiter + process.env.PATH,
+      CURL: shellPath(curl), ABP_AGH_DIR: shellPath(runtime), ABP_STATE_DIR: shellPath(state), ABP_PROC_DIR: shellPath(proc),
     } });
     assert.equal(result.status, 0, result.stderr);
     return Object.fromEntries(result.stdout.trim().split(/\n| (?=blocked=|mode=)/).map(row => {
@@ -40,8 +52,21 @@ function statusFixture(t, { takeover = 'on', listener = true, redirect = true, r
     }));
   }
   run.requests = () => readFileSync(requests, 'utf8');
+  run.networkQueries = () => readFileSync(networkTrace, 'utf8');
   return run;
 }
+
+test('network probes run only on explicit diagnosis and failed probes remain unknown', t => {
+  const run = statusFixture(t, { networkDiagnostics: true });
+  run(); assert.equal(run.networkQueries(), '');
+  const diagnosis = run('--diagnose');
+  assert.equal(diagnosis.diag_private_dns, 'unknown');
+  assert.equal(diagnosis.diag_global_http_proxy, 'unknown');
+  assert.equal(diagnosis.diag_vpn, 'unknown');
+  assert.equal(diagnosis.diag_ipv6_mode, 'unknown');
+  assert.match(run.networkQueries(), /settings/);
+  assert.match(run.networkQueries(), /dumpsys/);
+});
 
 for (const [name, filtering, expected] of [
   ['enabled subscription and paused global filtering', '{"filters":[{"enabled":true}],"interval":24,"enabled":false}', 'false'],

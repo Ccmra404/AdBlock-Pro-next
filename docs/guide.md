@@ -134,6 +134,8 @@ su -c 'sh /data/adb/modules/bindhosts_personal/bindhosts.sh --takeover off'
 ```
 
 > [!WARNING]
+环境诊断会分别报告 IPv6 配置、实际跳转、表是否可读取，以及私人 DNS、全局 HTTP 代理和系统当前 VPN 网络记录。查询失败保留未知状态；详细含义及边界见[网络诊断说明](network-diagnostics.md)。
+
 > 修改 DNS 重定向、防火墙规则或 AdGuard Home 服务，可能暂时影响全机域名解析。遇到断网应优先撤销 DNS 接管，不要在网络异常时反复强制重启。私人 DNS、VPN、双栈/IPv6 网络等场景需要单独排查。
 
 ## 项目结构

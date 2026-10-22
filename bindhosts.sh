@@ -871,7 +871,9 @@ diagnose() {
     "$root_uid" "$state" "$([ -x "$AGH/bin/AdGuardHome" ] && echo yes || echo no)" "$count"
   printf 'diag_dns_listener=%s\ndiag_dns_listener_udp=%s\ndiag_dns_listener_tcp=%s\ndiag_dns_api=%s\ndiag_dns_takeover=%s\ndiag_dns_redirect=%s\n' \
     "$listening" "$listening_udp" "$listening_tcp" "$([ "$api_ok" = 0 ] && echo yes || echo no)" "$takeover" "$redirected"
-  printf 'diag_ipv6_mode=passthrough\ndiag_private_dns=not-overridden\ndiag_vpn=may-bypass-or-intercept\n'
+  if [ -f "$AGH/scripts/network-diagnostics.sh" ]; then
+    "$BB" sh "$AGH/scripts/network-diagnostics.sh" || echo '[提醒] 网络诊断未完成，不能据此确认网络状态。'
+  else echo '[提醒] 网络诊断组件缺失，请完整更新模块。'; fi
   printf 'diag_root_family=%s\ndiag_busybox=%s\n' "$(abp_root_family)" "$BB"
   printf 'diag_dns_core_running=%s\ndiag_dns_health=%s\n' "$running" "$health"
   # Only during explicit diagnosis; no additional overhead in 30s status polls.
