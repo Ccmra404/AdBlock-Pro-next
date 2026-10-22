@@ -56,13 +56,13 @@ def exercise(engine, bootstrap):
         config.write_text(text)
         credential = base64.b64encode(auth.read_text().strip().encode()).decode()
 
-        def api(route, body=None):
+        def api(route, body=None, *, parse_json=True):
             request = urllib.request.Request(f'http://127.0.0.1:{http_port}/control' + route,
                 data=None if body is None else json.dumps(body).encode(),
                 headers={'Authorization': 'Basic ' + credential, 'Content-Type': 'application/json'})
             with urllib.request.urlopen(request, timeout=5) as response:
                 data = response.read()
-                return json.loads(data) if data else None
+                return json.loads(data) if data and parse_json else None
 
         # Run the shipped command against this isolated core, without Android
         # paths, real credentials, network subscriptions or a DNS service restart.
@@ -204,7 +204,7 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                     '||paired-browser.example^\n||paired-important.example^$important\n'
                     '@@||paired-safe.example^\n@@||paired-browser.example^$domain=site.example\n'
                     '@@||paired-important.example^\n')
-                api('/filtering/add_url', {'name': 'Paired source regression', 'url': str(paired), 'whitelist': False})
+                api('/filtering/add_url', {'name': 'Paired source regression', 'url': str(paired), 'whitelist': False}, parse_json=False)
                 wait_until(lambda: blocked('paired-ad.example'))
                 safe = api('/filtering/check_host?name=paired-safe.example')
                 assert safe['reason'] == 'NotFilteredWhiteList', safe
@@ -212,7 +212,7 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                 assert blocked('paired-important.example'), 'ordinary exception incorrectly overrode important block'
                 apply_personal(['readded-personal.example'], ['paired-ad.example'])
                 wait_until(lambda: not blocked('paired-ad.example'))
-                api('/filtering/remove_url', {'url': str(paired), 'whitelist': False})
+                api('/filtering/remove_url', {'url': str(paired), 'whitelist': False}, parse_json=False)
                 wait_until(lambda: not blocked('paired-browser.example'))
                 assert blocked('readded-personal.example') and blocked('native-regression.example')
             finally:
