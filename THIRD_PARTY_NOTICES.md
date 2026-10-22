@@ -10,7 +10,7 @@ This project includes or redistributes the following upstream components and rul
 - **Mozilla CA root certificates (2026-09-25)**: PEM bundle at `certs/cacert.pem`, distributed by https://curl.se/docs/caextract.html under MPL-2.0. Source, checksum and update instructions are in `certs/README.md`; the license is at `licenses/cacert-MPL-2.0.txt`.
 
 - **go-openai v1.43.0**: OpenAI-compatible API client linked into the optional `bin/adblock-ai` helper. Source: https://github.com/sashabaranov/go-openai/tree/v1.43.0. Apache-2.0 license: `licenses/go-openai-Apache-2.0.txt`.
-- **Go runtime and standard library**: linked into the Go helpers. BSD-3-Clause license: `licenses/go-BSD-3-Clause.txt`, from https://github.com/golang/go/blob/go1.27.2/LICENSE.
+- **Go runtime and standard library**: linked into the Go helpers. BSD-3-Clause license: `licenses/go-BSD-3-Clause.txt`, from https://github.com/golang/go/blob/go1.27.3/LICENSE.
 - **golang.org/x/crypto v0.31.0**: bcrypt/blowfish used by `bin/adblock-bootstrap` to create local credentials. BSD-3-Clause license: `licenses/go-crypto-BSD-3-Clause.txt`, from https://github.com/golang/crypto/blob/v0.31.0/LICENSE.
 
 See each upstream repository for its complete license and current source. The original AdBlock Pro code is licensed under GPL-3.0-only. The maintainer-approved public app-domain snapshot is included at `rules/shared-app-domains.txt`; local personal lists, credentials and device query logs are not included.
