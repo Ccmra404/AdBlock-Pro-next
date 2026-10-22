@@ -86,7 +86,7 @@ jobs:
           path: bin
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.27.2'
+          go-version: '1.27.3'
       - name: Test per-device credential generator
         working-directory: tools/bootstrap
         run: |
