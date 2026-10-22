@@ -197,6 +197,24 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                 assert blocked('native-regression.example') and blocked('shared-refresh-regression.example')
                 apply_personal(['readded-personal.example'], [])
                 wait_until(lambda: blocked('readded-personal.example'))
+                # Verify the real bundled API accepts only our four editable
+                # DNS fields without altering filters or query-log preferences.
+                dns_before = api('/dns_info')
+                keys = ('upstream_dns', 'bootstrap_dns', 'fallback_dns', 'upstream_mode')
+                original_dns = {key: dns_before[key] for key in keys}
+                candidate_dns = {**original_dns, 'upstream_mode': 'parallel'}
+                filter_urls = [item['url'] for item in api('/filtering/status')['filters']]
+                try:
+                    api('/dns_config', candidate_dns)
+                    assert api('/dns_info')['upstream_mode'] == 'parallel', 'DNS mode did not apply'
+                    assert process.poll() is None, 'DNS settings stopped the core'
+                    assert api('/querylog_info')['enabled'] is False, 'DNS settings changed observation privacy'
+                    assert [item['url'] for item in api('/filtering/status')['filters']] == filter_urls, 'DNS settings replaced filters'
+                    api('/cache_clear', {})
+                finally:
+                    api('/dns_config', original_dns)
+                dns_restored = api('/dns_info')
+                assert all(dns_restored[key] == original_dns[key] for key in keys), 'DNS API rollback lost original settings'
             finally:
                 process.terminate()
                 try:
@@ -204,7 +222,7 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-    print('Native ARM64: personal-only apply, repeat edits, empty/re-add, whitelist, native user_rules and memory-only observation parsing passed.')
+    print('Native ARM64: personal rules, memory-only observation and DNS configuration API preservation passed.')
 
 
 if __name__ == '__main__':
