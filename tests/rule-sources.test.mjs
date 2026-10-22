@@ -18,6 +18,22 @@ const oldAwaAdsGcore = 'https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-R
 const antiAd = 'https://anti-ad.net/easylist.txt';
 const custom = 'https://example.org/filter.txt';
 const shared = 'shared';
+const goodbye = 'https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt';
+
+test('GOODBYEADS is optional and its complete pair can be enabled, renamed and removed without changing other selections', t => {
+  const f = fixture(t, { sourcesV2: base + '\nshared\n' });
+  const before = readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8');
+  assert.equal(f.list().find(x => x.url === goodbye)?.enabled, 'disabled');
+  assert.equal(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8'), before);
+  assert.equal(f.run('set-source', goodbye, 'on').status, 0);
+  assert.equal(f.run('rename-source', goodbye, 'Optional pair').status, 0);
+  assert.equal(f.list().find(x => x.url === goodbye)?.label, 'Optional pair');
+  assert.equal(f.run('remove-source', goodbye).status, 0);
+  assert.equal(f.list().some(x => x.url === goodbye), false);
+  assert.equal(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8'), before);
+  assert.equal(f.run('set-source', goodbye, 'on').status, 0);
+  assert.equal(f.list().find(x => x.url === goodbye)?.enabled, 'enabled');
+});
 
 test('manual rules reject a DNS label over 63 characters and preserve valid entries', t => {
   const f = fixture(t), accepted = 'a'.repeat(63) + '.example';
@@ -169,13 +185,14 @@ test('subscription URL edits reject invalid or duplicate targets without mutatin
   assert.equal(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8').includes(custom), true);
 });
 
-test('fresh source catalog contains only 10007, full AWAvenue, and the shared library', t => {
+test('fresh sources enable the existing defaults and leave GOODBYEADS unselected', t => {
   const f = fixture(t);
   const sources = f.list();
   assert.equal(sources.find(x => x.url === base).enabled, 'enabled');
   assert.equal(sources.find(x => x.url === awaFull).enabled, 'enabled');
   assert.equal(sources.find(x => x.url === shared).enabled, 'enabled');
-  assert.equal(sources.length, 3);
+  assert.equal(sources.find(x => x.url === goodbye).enabled, 'disabled');
+  assert.equal(sources.length, 4);
   assert.equal(sources.filter(x => x.enabled === 'enabled').length, 3);
   assert.ok(sources.every(x => x.removable === 'removable'));
 });
@@ -210,6 +227,6 @@ test('legacy removal records migrate with the source catalog and stay hidden', t
 test('a fresh source setup does not inject the old anti-AD strict-profile default', t => {
   const f = fixture(t, { profilesInitialized: false });
   const sources = f.list();
-  assert.deepEqual(sources.map(x => x.url).sort(), [base, awaFull, shared].sort());
+  assert.deepEqual(sources.filter(x => x.enabled === 'enabled').map(x => x.url).sort(), [base, awaFull, shared].sort());
   assert.doesNotMatch(readFileSync(path.join(f.dir, 'sources-v2.txt'), 'utf8'), /anti-ad\.net/);
 });

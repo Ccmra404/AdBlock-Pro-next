@@ -197,6 +197,24 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                 assert blocked('native-regression.example') and blocked('shared-refresh-regression.example')
                 apply_personal(['readded-personal.example'], [])
                 wait_until(lambda: blocked('readded-personal.example'))
+                # The optional GOODBYEADS source combines unchanged @@ exceptions
+                # with its DNS blocklist in one ordinary local filter.
+                paired = personal.with_name('paired-regression.txt')
+                paired.write_text('||paired-ad.example^\n||paired-safe.example^\n'
+                    '||paired-browser.example^\n||paired-important.example^$important\n'
+                    '@@||paired-safe.example^\n@@||paired-browser.example^$domain=site.example\n'
+                    '@@||paired-important.example^\n')
+                api('/filtering/add_url', {'name': 'Paired source regression', 'url': str(paired), 'whitelist': False})
+                wait_until(lambda: blocked('paired-ad.example'))
+                safe = api('/filtering/check_host?name=paired-safe.example')
+                assert safe['reason'] == 'NotFilteredWhiteList', safe
+                assert blocked('paired-browser.example'), 'unsupported browser modifier widened an exception'
+                assert blocked('paired-important.example'), 'ordinary exception incorrectly overrode important block'
+                apply_personal(['readded-personal.example'], ['paired-ad.example'])
+                wait_until(lambda: not blocked('paired-ad.example'))
+                api('/filtering/remove_url', {'url': str(paired), 'whitelist': False})
+                wait_until(lambda: not blocked('paired-browser.example'))
+                assert blocked('readded-personal.example') and blocked('native-regression.example')
             finally:
                 process.terminate()
                 try:
@@ -204,7 +222,7 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-    print('Native ARM64: personal-only apply, repeat edits, empty/re-add, whitelist, native user_rules and memory-only observation parsing passed.')
+    print('Native ARM64: personal-only apply, repeat edits, empty/re-add, whitelist, native user_rules, paired subscription exceptions and memory-only observation parsing passed.')
 
 
 if __name__ == '__main__':

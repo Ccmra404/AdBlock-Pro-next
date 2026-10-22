@@ -466,11 +466,16 @@ source_name() {
     https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt) printf 'AdRules DNS' ;;
     https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt) printf 'AdGuard DNS' ;;
     shared) printf '共享抓包规则' ;;
+    https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt) printf 'GOODBYEADS DNS（含配套放行）' ;;
     *) host=${1#https://}; host=${host%%/*}; printf '%s' "$host" ;;
   esac
 }
 source_mirror_urls() {
   case "$1" in
+    https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt)
+      printf '%s\n' "https://${1#https://ghfast.top/}" ;;
+    https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt)
+      printf '%s\n' "https://ghfast.top/${1#https://}" ;;
     https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward)
       printf '%s\n' 'https://lingeringsound.github.io/10007_auto/reward' 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
     https://lingeringsound.github.io/10007_auto/reward)
@@ -558,6 +563,32 @@ download_source() {
   rm -f "$output"
   return 1
 }
+download_rule_source() (
+  # A paired source stays one local filter, so existing removal/rollback covers both.
+  source_url=$1; target=$2; label=$3
+  download_source "$source_url" "$target" "$label" || return 1
+  case "$source_url" in
+    https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt) ;;
+    *) return 0 ;;
+  esac
+  allow_url=${source_url%/dns.txt}/allow.txt
+  allow_file="$target.allow"
+  download_source "$allow_url" "$allow_file" 'GOODBYEADS 配套放行' || { rm -f "$target" "$allow_file"; return 1; }
+  # Keep modifiers intact: removing a browser-only modifier can broaden an exception.
+  if ! "$BB" awk '
+    { sub(/\r$/, "") }
+    /^[[:space:]]*($|!|#)/ || /^\[Adblock[^]]*\]$/ { next }
+    substr($0,1,2) != "@@" { invalid=1 }
+    /^@@\|\|[a-zA-Z0-9][a-zA-Z0-9.*_-]*\^(\$important)?$/ { dns_allow=1 }
+    END { exit (invalid || !dns_allow) }
+  ' "$allow_file"; then
+    echo '[!] GOODBYEADS 放行文件格式异常；未应用本次订阅，现有规则保留。' >&2
+    rm -f "$target" "$allow_file"; return 1
+  fi
+  printf '\n! GOODBYEADS companion exceptions (unsupported DNS syntax is ignored by AdGuard Home)\n' >> "$target" &&
+    cat "$allow_file" >> "$target" || { rm -f "$target" "$allow_file"; return 1; }
+  rm -f "$allow_file"
+)
 sync_sources() {
   config="$MODDIR/webui-config.sh"
   desired="$STATE/.desired-sources.$$"
@@ -579,7 +610,7 @@ sync_sources() {
     if [ "$url" != shared ]; then
       key=$(source_cache_key "$url")
       temp="$work/$key.txt"
-      download_source "$url" "$temp" "$name" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 2; }
+      download_rule_source "$url" "$temp" "$name" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 2; }
     elif [ ! -s "$filter" ]; then
       echo '[!] 随包或本地共享规则文件缺失；现有规则保留。' >&2
       rm -rf "$work"; rm -f "$desired" "$entries"; return 1

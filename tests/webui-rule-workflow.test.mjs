@@ -13,6 +13,17 @@ function harness() {
   return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,saveExportFile,observationAIPrompt,communityIssueUrl,parseObservationSnapshot,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,rulesPage,sourceRows,sharedResultsMarkup,startObservation,savePersonalDomain})',context)};
 }
 
+test('the optional paired source explains its scope and uses the existing import and remove controls', () => {
+  const h = harness();
+  h.state.sources = [{id:'goodbyeads', label:'GOODBYEADS DNS（含配套放行）', url:'https://filters.example/dns.txt', enabled:'disabled'}];
+  const markup = h.sourceRows();
+  assert.match(markup, /拦截与放行成对更新/);
+  assert.match(markup, /与秋风部分重复，按需选择/);
+  assert.match(markup, /data-action="source-toggle"[^>]*>导入/);
+  assert.match(markup, /data-action="source-delete"/);
+  assert.match(markup, /未导入/);
+});
+
 test('a manual allow action refreshes both lists before applying the moved rule', async () => {
   const h = harness();
   h.state.lists.blacklist = ['ads.example']; h.state.lists.whitelist = [];

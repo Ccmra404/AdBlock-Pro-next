@@ -148,7 +148,7 @@ function sourceRows() {
     const enabled = source.enabled === 'enabled';
     const renaming = state.sourceRenameUrl === source.url;
     const editing = state.sourceEditUrl === source.url;
-    const detail = source.url === 'shared' ? '维护者审核的共享抓包规则' : source.url;
+    const detail = source.url === 'shared' ? '维护者审核的共享抓包规则' : source.id === 'goodbyeads' ? `${source.url} · 拦截与放行成对更新；与秋风部分重复，按需选择` : source.url;
     const shared = source.url === 'shared' ? state.status?.dns_filter_json?.filters?.find(x => x.url?.endsWith('/adblock-pro-shared-app-rules.txt')) : null;
     const actions = `<div class="source-actions"><button class="btn" data-action="source-toggle" data-url="${esc(source.url)}" data-enabled="${source.enabled}">${enabled ? '停用' : '导入'}</button>${source.url === 'shared' ? '' : `<button class="btn" data-action="source-url-open" data-url="${esc(source.url)}">修改链接</button>`}<button class="btn" data-action="source-rename-open" data-url="${esc(source.url)}">重命名</button><button class="btn btn-danger" data-action="source-delete" data-url="${esc(source.url)}">移除</button></div>`;
     const rename = renaming ? `<form class="source-rename-form btn-row" data-url="${esc(source.url)}"><input class="field" name="name" maxlength="64" value="${esc(source.label)}" aria-label="规则来源名称" required><button class="btn btn-primary" type="submit">保存名称</button><button class="btn" type="button" data-action="source-rename-cancel">取消</button></form>` : '';
