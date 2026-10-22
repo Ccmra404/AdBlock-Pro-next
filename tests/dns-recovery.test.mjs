@@ -99,6 +99,22 @@ test('only an acquired recovery attempt returns failed-attempt code 2', t => {
   assert.match(f.output(), /start/);
 });
 
+test('cleanup rechecks a restarted core under the lifecycle lock, preserving its redirect', t => {
+  const f = fixture(t);
+  writeFileSync(path.join(f.agh, 'alive'), '');
+  assert.equal(f.run(['protect']).status, 75);
+  assert.equal(f.output(), '');
+});
+
+test('cleanup works without a run request and still cleans a disabled live core', t => {
+  const f = fixture(t);
+  assert.equal(f.run(['protect']).stdout, 'absent\n');
+  writeFileSync(path.join(f.agh, 'alive'), '');
+  writeFileSync(path.join(f.mod, 'disable'), '');
+  assert.equal(f.run(['protect']).stdout, 'absent\n');
+  assert.equal(f.output(), 'disable\nstatus\ndisable\nstatus\n');
+});
+
 for (const [name, env] of [['listener timeout', { NOT_READY: '1' }], ['pause during startup', { CANCEL_READY: '1' }]]) {
   test(`${name} cannot install redirects`, t => {
     const f = fixture(t, { realStart: true });

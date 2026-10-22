@@ -71,6 +71,12 @@ esac
   chmodSync(bb, 0o755);
   writeFileSync(path.join(agh, 'scripts/tool.sh'), [
     '#!/bin/sh',
+    '[ "$BROKEN_TOOL" != 1 ] || exit 1',
+    'if [ "$1" = protect ]; then',
+    '  "${0%/*}/iptables.sh" disable >/dev/null 2>&1',
+    '  state=$("${0%/*}/iptables.sh" status 2>/dev/null)',
+    '  echo "${state:-unknown}"; exit 0',
+    'fi',
     'tick=$(cat "$TICKS")',
     'printf "recover %s\\n" "$tick" >> "$CALLS"',
     'if [ "$BUSY_UNTIL" -ge "$tick" ] 2>/dev/null; then exit 1; fi',
@@ -148,6 +154,13 @@ test('a helper initialization failure with exit 1 is unknown, never confirmed ab
   const r = run(t, { env: { BROKEN_HELPER: '1' } });
   assert.equal(r.residual, true);
   assert.match(r.log, /\[警告\]/);
+  assert.doesNotMatch(r.log, /已解除/);
+});
+
+test('a lifecycle helper failure cannot hide an uncleared crash redirect', t => {
+  const r = run(t, { env: { BROKEN_TOOL: '1', PASSES: '2' } });
+  assert.equal(r.residual, true);
+  assert.equal((r.log.match(/\[警告\]/g) || []).length, 1);
   assert.doesNotMatch(r.log, /已解除/);
 });
 

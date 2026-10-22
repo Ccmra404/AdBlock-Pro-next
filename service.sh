@@ -130,8 +130,10 @@ fi
     # Require the explicit snapshot result: a failed helper can also exit 1.
     redirect_state=$("$AGH/scripts/iptables.sh" status 2>/dev/null)
     if [ "$redirect_state" != absent ]; then
-      "$AGH/scripts/iptables.sh" disable >/dev/null 2>&1
-      redirect_state=$("$AGH/scripts/iptables.sh" status 2>/dev/null)
+      # The core may have restarted since the snapshot. Recheck under the
+      # same lock as start/stop before touching a healthy core's firewall.
+      redirect_state=$("$BB" sh "$AGH/scripts/tool.sh" protect 2>/dev/null)
+      case "$?" in 75) continue ;; 0) ;; *) redirect_state=unknown ;; esac
       cleanup_reason='AdGuard Home 进程异常退出'
       [ ! -f "$MODDIR/disable" ] || cleanup_reason='模块已禁用'
       [ ! -f "$MODDIR/remove" ] || cleanup_reason='模块待卸载'

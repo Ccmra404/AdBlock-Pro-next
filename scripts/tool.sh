@@ -216,13 +216,27 @@ recover)
   exec "$BB" flock -n "$RUNTIME_STATE/webui-jobs/worker.lock" "$BB" flock -n "$RUNTIME_STATE/update.lock" \
     "$BB" flock -n "$RUNTIME_STATE/runtime.lock" "$BB" sh "$0" __locked recover "$runtime_request"
   ;;
+protect)
+  # Cleanup must not race a manual start that just installed its redirects.
+  exec "$BB" flock -n "$RUNTIME_STATE/runtime.lock" "$BB" sh "$0" __locked protect
+  ;;
 __locked)
   runtime_action=$2
   runtime_request=$3
-  [ -n "$runtime_request" ] && [ "$(cat "$RUNTIME_REQUEST" 2>/dev/null)" = "$runtime_request" ] || exit 75
+  if [ "$runtime_action" != protect ]; then
+    [ -n "$runtime_request" ] && [ "$(cat "$RUNTIME_REQUEST" 2>/dev/null)" = "$runtime_request" ] || exit 75
+  fi
   case "$runtime_action" in
     start) start_adguardhome ;;
     stop) stop_adguardhome ;;
+    protect)
+      if [ ! -f "$MOD_PATH/disable" ] && [ ! -f "$MOD_PATH/remove" ] &&
+        [ -r "$PID_FILE" ] && is_our_adguardhome "$(cat "$PID_FILE")"; then exit 75; fi
+      "$SCRIPT_DIR/iptables.sh" disable >/dev/null 2>&1
+      redirect_state=$("$SCRIPT_DIR/iptables.sh" status 2>/dev/null)
+      case "$redirect_state" in present|absent|unknown) ;; *) redirect_state=unknown ;; esac
+      printf '%s\n' "$redirect_state"
+      ;;
     recover)
       start_requested || exit 75
       if [ -r "$PID_FILE" ] && is_our_adguardhome "$(cat "$PID_FILE")"; then exit 75; fi
