@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
 
-function installFixture(t, family, preference, failWrite = false) {
+function installFixture(t, family, preference, failWrite = false, failPermission = false) {
   const root = rootFixture(t); root.addBusybox(family);
   const state = path.join(root.dir, 'state'), runtime = path.join(root.dir, 'runtime');
   const module = path.join(root.dir, 'module'), stage = path.join(root.dir, 'stage');
@@ -37,6 +37,7 @@ function installFixture(t, family, preference, failWrite = false) {
   assert.equal(packed.status, 0, packed.stderr);
   const script = path.join(root.dir, 'install.sh');
   writeFileSync(script, 'ui_print() { echo "$1"; }\nabort() { echo "$1" >&2; exit 1; }\ngetprop() { echo arm64-v8a; }\niptables() { return 0; }\nchown() { :; }\n' +
+    (failPermission ? `chmod() { if [ "$1" = 700 ] && [ "$2" = '${shellPath(runtime)}/bin' ]; then return 1; fi; command chmod "$@"; }\n` : '') +
     (failWrite ? 'mv() { case "$2" in */dns-takeover) return 1;; esac; command mv "$@"; }\n' : '') + remap(readFileSync(new URL('../customize.sh', import.meta.url), 'utf8')));
   const install = () => spawnSync('bash', [shellPath(script)], { timeout: 20000, encoding: 'utf8', env: {
     ...root.env(family), MODPATH: shellPath(module), TMPDIR: shellPath(root.dir), ZIPFILE: shellPath(zip),
@@ -48,6 +49,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
   test(family + ': first install enables takeover without bundling device-specific personal rules', t => {
     const f = installFixture(t, family);
     const installed = f.install(); assert.equal(installed.status, 0, installed.stderr + installed.stdout);
+    if (process.platform !== 'win32') assert.equal(statSync(path.join(f.runtime, 'bin')).mode & 0o777, 0o700);
     assert.equal(readFileSync(path.join(f.runtime, 'certs/cacert.pem'), 'utf8'), readFileSync(new URL('../certs/cacert.pem', import.meta.url), 'utf8'));
     assert.match(readFileSync(path.join(f.runtime, 'defaults/settings.conf'), 'utf8'), /enable_ipv6_dns=false/);
     assert.equal(existsSync(path.join(f.runtime, 'defaults/filters/10007.txt')), true);
@@ -75,7 +77,9 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     writeFileSync(path.join(f.state, 'whitelist.txt'), 'login.personal.example\n');
     writeFileSync(path.join(f.state, 'dns-takeover'), 'off\n');
     writeFileSync(path.join(f.state, 'vpn-compat'), 'on\n');
+    chmodSync(path.join(f.runtime, 'bin'), 0o755);
     const again = f.install(); assert.equal(again.status, 0, again.stderr + again.stdout);
+    if (process.platform !== 'win32') assert.equal(statSync(path.join(f.runtime, 'bin')).mode & 0o777, 0o700);
     assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), 'custom.personal.example\ncustom.personal.example\n');
     assert.equal(readFileSync(path.join(f.runtime, 'bin/userfilters/adblock-pro-shared-app-rules.txt'), 'utf8'), shared);
     assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'off\n');
@@ -104,4 +108,11 @@ test('failed preference persistence stops installation instead of claiming a wor
   const f = installFixture(t, 'Magisk', undefined, true);
   const result = f.install(); assert.notEqual(result.status, 0);
   assert.match(result.stdout, /Cannot initialize dns-takeover/);
+});
+
+test('failed DNS working directory protection stops installation explicitly', t => {
+  const f = installFixture(t, 'Magisk', undefined, false, true);
+  const result = f.install();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /Cannot protect local DNS working directory/);
 });

@@ -167,6 +167,17 @@ test('VPN compatibility is opt-in and explains whole-device bypass and restore b
   assert.doesNotMatch(markup, /data-toggle="vpn-compat" checked/);
 });
 
+for (const takeover of ['on', 'off']) test(`unknown firewall state is not displayed as absent or bypassed: ${takeover}`, () => {
+  const h = harness();
+  h.state.status = { state: 'degraded', dns_core_running: '1', dns_listener: '1', dns_health: 'takeover_state_unknown', dns_takeover: takeover, dns_redirect: 'unknown' };
+  assert.match(h.summaryText()[0], /接管状态未知/);
+  assert.match(h.homePage(), /DNS 重定向 状态未知/);
+  assert.doesNotMatch(h.summaryText().join(' '), /已关闭系统接管|接管未成功/);
+  h.syncStatusView();
+  assert.equal(h.serviceRows[1].tag.textContent, '重定向状态未知');
+  assert.equal(h.serviceRows[1].tag.classes.has('green'), false);
+});
+
 test('simultaneous status reads share one native call', async () => {
   const h = harness();
   const a = h.refreshStatus(true), b = h.refreshStatus(true);

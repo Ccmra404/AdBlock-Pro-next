@@ -4,6 +4,7 @@ MODDIR=${0%/*}
 . "$MODDIR/scripts/compat.sh" || exit 1
 REWARD=https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
 AWAVENUE=https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt
+GOODBYEADS=https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt
 LEGACY_REWARD=https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
 LEGACY_REWARD_CDN=https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
 LEGACY_REWARD_GCORE=https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
@@ -41,7 +42,7 @@ valid_custom_url() {
   case "$authority" in ''|*@*) return 1 ;; esac
 }
 is_builtin() {
-  case "$1" in "$REWARD"|"$AWAVENUE") return 0 ;; *) return 1 ;; esac
+  case "$1" in "$REWARD"|"$AWAVENUE"|"$GOODBYEADS") return 0 ;; *) return 1 ;; esac
 }
 valid_source_ref() {
   [ "$1" = "$SHARED_SOURCE" ] || valid_custom_url "$1"
@@ -64,6 +65,7 @@ source_label() {
   case "$1" in
     "$REWARD") printf '10007 基础广告规则' ;;
     "$AWAVENUE") printf '秋风 AdGuard 全规则' ;;
+    "$GOODBYEADS") printf 'GOODBYEADS DNS（含配套放行）' ;;
     "$ANTIAD") printf 'anti-AD EasyList（约 9.5 万条）' ;;
     "$ADRULES") printf 'AdRules DNS（约 20 万条 · 高内存）' ;;
     "$ADGUARD") printf 'AdGuard DNS' ;;
@@ -368,7 +370,7 @@ case "$1" in
   list-sources)
     init_sources || exit 1
     catalog="$DIR/.abp-catalog.$$"; selected="$DIR/.abp-selected.$$"; visible="$DIR/.abp-visible.$$"
-    printf '%s\n' "$REWARD" "$AWAVENUE" "$SHARED_SOURCE" > "$catalog"
+    printf '%s\n' "$REWARD" "$AWAVENUE" "$SHARED_SOURCE" "$GOODBYEADS" > "$catalog"
     [ ! -f "$DIR/custom-sources.txt" ] || cat "$DIR/custom-sources.txt" >> "$catalog"
     cat "$SOURCES_V2" >> "$catalog"
     cp "$SOURCES_V2" "$selected" || { rm -f "$catalog" "$selected"; exit 1; }
@@ -384,7 +386,7 @@ case "$1" in
     fi
     printf 'mode\tbalanced\n'
     "$BB" awk \
-      -v reward="$REWARD" -v awavenue="$AWAVENUE" \
+      -v reward="$REWARD" -v awavenue="$AWAVENUE" -v goodbye="$GOODBYEADS" \
       -v antiad="$ANTIAD" -v adrules="$ADRULES" -v adguard="$ADGUARD" -v shared="$SHARED_SOURCE" '
       FILENAME == ARGV[1] { if ($0 != "") selected[$0] = 1; next }
       $0 != "" {
@@ -395,6 +397,8 @@ case "$1" in
           id="10007"
         } else if (url == awavenue) {
           id="awa-full"
+        } else if (url == goodbye) {
+          id="goodbyeads"
         } else if (url == antiad) {
           id="antiad"
         } else if (url == adrules) {

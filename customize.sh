@@ -216,6 +216,7 @@ ABP_MODULE_DIR="$MODPATH" "$BB" sh "$DATA_DIR/scripts/rule-store.sh" init || fai
 "$BB" sh "$MODPATH/webui-config.sh" init-sources || fail "Cannot initialize editable rule source preferences."
 
 rm -f "$MODPATH/config-blacklist.txt" "$MODPATH/config-whitelist.txt"
+chmod 700 "$DATA_DIR/bin" || fail "Cannot protect local DNS working directory."
 chmod 700 "$DATA_DIR" "$DATA_DIR/scripts" "$DATA_DIR/bin/userfilters" 2>/dev/null
 chmod 600 "$DATA_DIR/admin.auth" "$DATA_DIR/settings.conf" "$STATE_DIR"/*.txt "$STATE_DIR"/blocking-mode "$STATE_DIR"/auto-update "$STATE_DIR"/autostart "$STATE_DIR"/dns-takeover "$STATE_DIR"/vpn-compat 2>/dev/null
 chmod 700 "$STATE_DIR/profiles" 2>/dev/null
