@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
 
-function statusFixture(t, { takeover = 'on', listener = true, redirect = true, running = true, api = true, filtering = '{"enabled":true,"filters":[]}' } = {}) {
+function statusFixture(t, { takeover = 'on', vpnCompat = 'off', vpnState = '', listener = true, redirect = true, running = true, api = true, filtering = '{"enabled":true,"filters":[]}' } = {}) {
   const root = rootFixture(t); root.addBusybox('Magisk');
   const runtime = path.join(root.dir, 'runtime'), state = path.join(root.dir, 'state'), proc = path.join(root.dir, 'proc');
   for (const dir of [path.join(runtime, 'bin'), path.join(runtime, 'scripts'), state, path.join(proc, 'net'), path.join(proc, '1234')]) mkdirSync(dir, { recursive: true });
@@ -18,6 +18,8 @@ function statusFixture(t, { takeover = 'on', listener = true, redirect = true, r
   writeFileSync(path.join(proc, 'net/udp'), 'header\n0: 0100007F:15D7 00000000:0000 07\n');
   writeFileSync(path.join(proc, 'net/tcp'), 'header\n' + (listener ? '0: 0100007F:15D7 00000000:0000 0A\n' : ''));
   writeFileSync(path.join(state, 'dns-takeover'), takeover + '\n');
+  writeFileSync(path.join(state, 'vpn-compat'), vpnCompat + '\n');
+  writeFileSync(path.join(state, 'vpn-compat-state'), vpnState ? vpnState + '\n' : '');
   writeFileSync(path.join(state, 'engine-version'), 'fixture-engine\n');
   writeFileSync(path.join(root.dir, 'module.prop'), 'version=v0.13.0-rc.3\n');
   for (const file of ['memory.sh', 'footprint.sh']) writeFileSync(path.join(runtime, 'scripts', file), readFileSync(new URL('../scripts/' + file, import.meta.url), 'utf8'));
@@ -68,6 +70,10 @@ for (const [title, options, health, state] of [
   ['unreadable management API', { api: false }, 'api_failed', 'degraded'],
   ['missing TCP listener even when takeover off', { listener: false, takeover: 'off', redirect: false }, 'listener_failed', 'degraded'],
   ['failed firewall takeover', { redirect: false }, 'takeover_failed', 'degraded'],
+  ['VPN TUN pause', { vpnCompat: 'on', vpnState: 'vpn', redirect: false }, 'vpn_paused', 'bypassed'],
+  ['unknown VPN state pause', { vpnCompat: 'on', vpnState: 'unknown', redirect: false }, 'vpn_state_unknown', 'bypassed'],
+  ['waiting to resume after VPN', { vpnCompat: 'on', vpnState: 'resume_wait', redirect: false }, 'vpn_resume_wait', 'bypassed'],
+  ['VPN pause with redirect still present', { vpnCompat: 'on', vpnState: 'vpn', redirect: true }, 'vpn_compat_error', 'degraded'],
   ['unknown saved preference', { takeover: '' }, 'takeover_unknown', 'degraded'],
   ['stopped core', { running: false }, 'stopped', 'paused'],
 ]) {

@@ -2,6 +2,12 @@
 . /data/adb/adblockpro/settings.conf
 . /data/adb/adblockpro/scripts/base.sh
 
+DNS_TRANSITION_LOCK=/data/adb/bindhosts_personal/dns-transition.lock
+if [ "${ABP_DNS_TRANSITION_LOCKED:-0}" != 1 ]; then
+  export ABP_DNS_TRANSITION_LOCKED=1
+  exec "$BB" flock "$DNS_TRANSITION_LOCK" "$BB" sh "$0" "$@"
+fi
+
 # An upgrade keeps the user's existing settings.conf, so a key added to that
 # file after the user installed is simply missing here and arrives empty.
 startup_timeout="${startup_timeout:-120}"
@@ -114,6 +120,19 @@ start_adguardhome() {
     log "DNS listener unavailable; takeover skipped" "DNS 监听尚未就绪，已跳过接管"
     update_description "🟡 DNS running (listener not ready)" "🟡 DNS 运行中（监听未就绪）"
     return 1
+  fi
+  if [ "$(cat /data/adb/bindhosts_personal/vpn-compat 2>/dev/null)" = on ]; then
+    vpn_guard=$("$BB" sh "$SCRIPT_DIR/vpn-compat.sh" start-guard) || {
+      log "Could not check VPN compatibility state" "无法检查 VPN 兼容状态"
+      return 1
+    }
+    case "$vpn_guard" in
+      paused-vpn) log "DNS redirection paused while VPN is active" "VPN 运行中，已暂停 DNS 重定向"; update_description "🟡 DNS running (VPN bypass)" "🟡 DNS 运行中（VPN 旁路）"; return 0 ;;
+      paused-unknown) log "DNS redirection paused because VPN state is unknown" "VPN 状态未知，已暂停 DNS 重定向"; update_description "🟡 DNS running (VPN state unknown)" "🟡 DNS 运行中（VPN 状态未知）"; return 0 ;;
+      resume-wait) log "Waiting for VPN interface to remain absent before restoring DNS redirection" "VPN 接口刚断开，等待稳定后恢复 DNS 重定向"; update_description "🟡 DNS running (waiting for VPN)" "🟡 DNS 运行中（等待 VPN 稳定断开）"; return 0 ;;
+      ready) ;;
+      *) log "VPN compatibility guard failed; DNS redirection skipped" "VPN 兼容检查失败，已跳过 DNS 重定向"; return 1 ;;
+    esac
   fi
   if "$SCRIPT_DIR/iptables.sh" enable; then
     log "AdGuardHome ready [PID: $adg_pid], DNS redirected" "AdGuardHome 已就绪 [PID: $adg_pid]，DNS 已接管"

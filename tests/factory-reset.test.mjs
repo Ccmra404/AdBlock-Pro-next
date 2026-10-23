@@ -27,6 +27,7 @@ function fixture(t, options = {}) {
   put(path.join(state, 'source-names.tsv'), 'https://private.example/rules.txt\tPrivate\n');
   put(path.join(state, 'custom-sources.txt'), 'https://private.example/rules.txt\n');
   put(path.join(state, 'dns-takeover'), 'off\n');
+  put(path.join(state, 'vpn-compat'), 'on\n');
   put(path.join(state, 'autostart'), 'off\n');
   put(path.join(state, 'auto-update'), 'off\n');
   put(path.join(state, 'blocking-mode'), 'strict\n');
@@ -81,6 +82,7 @@ test('factory reset keeps full recovery private and exports only lists/preferenc
   assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), 'default.personal.example\n');
   assert.equal(readFileSync(path.join(f.state, 'whitelist.txt'), 'utf8'), 'default-allow.example\n');
   assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'on\n');
+  assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'off\n');
   assert.equal(readFileSync(path.join(f.state, 'autostart'), 'utf8'), 'on\n');
   assert.equal(readFileSync(path.join(f.state, 'auto-update'), 'utf8'), 'on\n');
   assert.match(readFileSync(path.join(f.state, 'sources-v2.txt'), 'utf8'), /10007_auto/);
@@ -117,6 +119,7 @@ test('factory reset keeps full recovery private and exports only lists/preferenc
   assert.doesNotMatch(exportedText.stdout, /private-secret|old-password-hash|private\.example|old-user-config|old log/);
   const exportedList = spawnSync('bash', ['-c', 'tar -tzf "$1"', 'audit-tar', shellPath(path.join(f.exports, exported[0]))], { encoding: 'utf8' });
   assert.doesNotMatch(exportedList.stdout, /ai\/|admin\.auth|AdGuardHome\.yaml|sources|webui-jobs|dns-history/);
+  assert.match(exportedList.stdout, /vpn-compat/);
   assert.deepEqual(readFileSync(f.trace, 'utf8').trim().split('\n'), ['stop', 'start']);
 });
 

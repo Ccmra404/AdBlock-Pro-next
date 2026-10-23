@@ -94,6 +94,9 @@ fi
     # Leave a healthy enabled core alone, without polling firewall snapshots.
     if [ "$alive" = 1 ] && [ ! -f "$MODDIR/disable" ]; then
       cleanup_warning=0
+      if [ "$(cat /data/adb/bindhosts_personal/vpn-compat 2>/dev/null)" = on ]; then
+        "$BB" sh "$AGH/scripts/vpn-compat.sh" watch >/dev/null 2>&1 || true
+      fi
       auto_update_ticks=$((auto_update_ticks + 1))
       if [ "$auto_update_ticks" -ge 12 ]; then
         auto_update_ticks=0

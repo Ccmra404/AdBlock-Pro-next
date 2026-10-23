@@ -19,6 +19,7 @@ AdBlock Pro 在手机本地运行 [AdGuard Home](https://github.com/AdguardTeam/
 | Root WebUI | 总览、规则管理、个人名单、运行设置、日志及诊断 |
 | 更新与回滚 | 更新前保存规则快照，更新失败时尝试恢复上一套配置 |
 | DNS 接管控制 | 可单独关闭 DNS 重定向，不必同时卸载模块 |
+| 可选 VPN/TUN 兼容 | 开启后检测到 TUN/WireGuard 接口时自动旁路本模块的 DNS 接管 |
 | 故障保护 | 检查 DNS 核心运行及监听状态；异常时尝试解除本模块的 DNS 接管 |
 | 域名观察与 AI 分析 | 观察设备 DNS 请求；AI 可分析用户选中的域名，结果需人工确认 |
 
@@ -55,6 +56,10 @@ Android 应用 / 系统 DNS 请求
 ```
 
 AdBlock Pro 的默认设计**只接管 IPv4 明文 DNS**，并不尝试强制覆盖 Android 私人 DNS、VPN、应用内 DoH/DoT 或所有 IPv6 查询。这些流量可能绕过模块过滤，属于目前明确的功能边界。
+
+「系统设置 → VPN/TUN 自动兼容」是可选开关，默认关闭。开启后，模块每 5 秒检查 `/sys/class/net`：看到 `tun*` 或 `wg*` 接口时，会暂停本模块的 DNS 接管规则，AdGuard Home 核心继续运行；接口状态无法读取时也会暂时旁路。VPN 接口连续约 15 秒不可见，且 DNS 核心与 TCP/UDP 监听正常时，模块才按用户保存的 DNS 接管偏好恢复规则。用户手动关闭 DNS 接管后，自动恢复不会覆盖该选择。
+
+此模式会旁路**整台设备的模块 DNS 接管**，即使 VPN 只代理部分应用也是如此；由 VPN 自己处理的 DNS 仍取决于 VPN 客户端。若已启用模块的 IPv6 DNS 接管或阻断，暂停时相应规则也会移除，恢复时再按原配置重建。它按接口是否存在判断 VPN，不探测接口是否仍有流量；若客户端断开后保留 TUN/WireGuard 接口，模块会继续旁路，直到接口消失或用户关闭兼容开关。关闭兼容开关会立即按 DNS 接管开关恢复规则，即使 VPN 还连接着，因此仅应在确认此行为符合预期时关闭。此开关无法检测所有厂商自定义 VPN；私人 DNS 和应用内 DoH/DoT 仍可能绕过模块。可在设置页和诊断输出中查看兼容开关及暂停状态。
 
 域名过滤无法直接删除应用已经渲染出来的广告占位、贴片组件，也无法自动点击「跳过广告」。需要处理开屏跳过时，可独立搭配 [GKD](https://github.com/gkd-kit/gkd)；**GKD 不是本模块的内置引擎**。
 
@@ -149,6 +154,7 @@ AdBlock-Pro/
 ├── webroot/                # WebUI HTML / CSS / JavaScript
 ├── scripts/
 │   ├── tool.sh             # AdGuard Home 生命周期
+│   ├── vpn-compat.sh       # 可选 VPN/TUN 自动旁路与恢复
 │   └── iptables.sh         # DNS 重定向规则维护
 ├── bin/
 │   ├── AdGuardHome         # ARM64 过滤核心
