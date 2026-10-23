@@ -94,14 +94,15 @@ def exercise(engine, bootstrap):
             result = api('/filtering/check_host?name=' + urllib.parse.quote(domain))
             return result['reason'].startswith('Filtered')
 
-        def dns_query(domain):
+        def dns_query(domain, qtype=1):
             name = b''.join(bytes([len(label)]) + label.encode('ascii') for label in domain.split('.')) + b'\0'
-            packet = struct.pack('!6H', 0x4142, 0x0100, 1, 0, 0, 0) + name + struct.pack('!2H', 1, 1)
+            packet = struct.pack('!6H', 0x4142, 0x0100, 1, 0, 0, 0) + name + struct.pack('!2H', qtype, 1)
             with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client:
                 client.settimeout(5)
                 client.sendto(packet, ('127.0.0.1', dns_port))
                 reply, _ = client.recvfrom(4096)
             assert len(reply) >= 12 and reply[:2] == packet[:2] and reply[2] & 0x80, 'DNS probe did not receive a matching response'
+            return reply
 
         def wait_until(check, message='Local filter application timeout'):
             for _ in range(100):
@@ -123,6 +124,11 @@ def exercise(engine, bootstrap):
                         time.sleep(0.1)
                 else:
                     raise RuntimeError('AdGuard Home API readiness timeout')
+                reverse_dns = api('/dns_info')
+                assert reverse_dns['use_private_ptr_resolvers'] is False, 'private PTR resolver discovery enabled on first boot'
+                assert reverse_dns['resolve_clients'] is False, 'automatic client PTR probes enabled on first boot'
+                private_ptr = dns_query('252.253.254.10.in-addr.arpa', qtype=12)
+                assert private_ptr[3] & 0x0f == 3, 'disabled private PTR resolution must return NXDOMAIN locally'
                 assert api('/querylog_info')['enabled'] is False, 'fresh config migration re-enabled query logging'
                 persisted_querylog = config.read_text().split('querylog:\n', 1)[1].split('statistics:\n', 1)[0]
                 assert 'file_enabled: false' in persisted_querylog, 'fresh config migration re-enabled disk query logging'
@@ -243,7 +249,7 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-    print('Native ARM64: personal rules, DNS configuration API preservation, paired subscription exceptions and memory-only observation parsing passed.')
+    print('Native ARM64: reverse DNS defaults, personal rules, DNS configuration API preservation, paired subscription exceptions and memory-only observation parsing passed.')
 
 
 if __name__ == '__main__':

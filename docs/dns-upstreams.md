@@ -34,3 +34,13 @@
 模块会在保存前检测读取后发生的 DNS 配置变化，发现变化时要求重新读取。官方 API 不提供原子条件写入，请避免同时在原生后台和模块 WebUI 修改 DNS 设置。上次测试通过不保证更换网络后仍然可用。
 
 相关官方接口：[dns_info / test_upstream_dns / dns_config / cache_clear](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/openapi/openapi.yaml)。
+
+## 私网反向解析报错
+
+如果日志出现私网 PTR 查询访问 `127.0.0.1:53` 被拒绝，而核心监听在 `127.0.0.1:5591`，请检查原生 AdGuard Home 后台的 **设置 → DNS 设置**。PTR 用于根据 IP 查名称；这类错误本身不能证明普通域名解析或联网失败。
+
+从包含 [Issue #56 修复](https://github.com/Ccmra404/AdBlock-Pro-next/issues/56)的版本起，新安装及“恢复默认设置”会关闭“使用私有反向 DNS 解析器”和“启用客户端主机名解析”。覆盖升级保留原配置，包括自定义私网解析器，不自动关闭现有设置。
+
+已有安装若不需要局域网设备名称，可在原生后台关闭上述两个选项并保存，无需卸载模块或恢复默认设置。需要内网名称解析时，保留该功能并填写当前网络可用的私网反向 DNS 服务器；不要将本机 AGH 再填为自己的上游，也不要用公网 DNS 接收私网反查。
+
+参考：[AdGuard Home 私网反查与客户端名称解析](https://github.com/AdguardTeam/AdGuardHome/wiki/Configuration#specifying-upstreams-for-reverse-dns)。
