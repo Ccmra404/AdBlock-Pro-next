@@ -51,6 +51,28 @@ log_transition() {
   printf '%s [VPN 兼容] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$message" >> "$HISTORY" 2>/dev/null || true
 }
 
+# Reuse each Root family's description API, only on state changes. A cosmetic
+# failure must never affect DNS cleanup or automatic recovery.
+describe_state() (
+  . "$AGH_DIR/scripts/base.sh" || exit 1
+  if ! core_ready; then
+    update_description '🔴 DNS core/listeners not ready' '🔴 DNS 核心或监听未就绪'
+    exit
+  fi
+  case "$1" in
+    vpn) update_description '🟡 DNS running (VPN bypass)' '🟡 DNS 运行中（VPN 旁路）' ;;
+    unknown) update_description '🟡 DNS running (VPN state unknown)' '🟡 DNS 运行中（VPN 状态未知）' ;;
+    resume_wait) update_description '🟡 DNS running (waiting for VPN)' '🟡 DNS 运行中（等待 VPN 稳定断开）' ;;
+    off) update_description '🟡 DNS running (takeover OFF)' '🟡 DNS 运行中（接管关闭）' ;;
+    active)
+      pid=$(cat "$AGH_DIR/bin/agh.pid")
+      update_description "🟢 DNS filtering [PID: $pid]" "🟢 DNS 防护运行中 [PID: $pid]" ;;
+    error) update_description '🔴 DNS redirection error' '🔴 DNS 重定向错误' ;;
+  esac
+) >/dev/null 2>&1
+
+describe_safely() { describe_state "$1" || true; }
+
 # Android VpnService normally exposes a tun* interface; kernel WireGuard
 # exposes wg*. No VPN-specific address, package name or proxy is assumed.
 # Return codes: 0 active, 1 absent, 2 unknown (sysfs could not be read).
@@ -94,14 +116,17 @@ set_pause() {
   if ! write_atomic "$STATE_FILE" "$reason"; then
     log_transition '无法保存自动暂停状态；未确认 DNS 重定向状态。'
     "$BB" sh "$FIREWALL" disable >/dev/null 2>&1 || true
+    describe_safely error
     return 1
   fi
   if ! "$BB" sh "$FIREWALL" disable >/dev/null; then
     write_atomic "$STATE_FILE" error || true
     [ "$previous" = error ] || log_transition '移除 DNS 重定向失败；兼容状态异常，请检查防火墙。'
+    [ "$previous" = error ] || describe_safely error
     return 1
   fi
   if [ "$reason" != "$previous" ]; then
+    describe_safely "$reason"
     case "$reason" in
       vpn) log_transition '检测到 TUN/VPN 接口，已暂停本模块 DNS 重定向；过滤核心继续运行。' ;;
       unknown) log_transition '无法确认 VPN 接口状态，已暂时旁路 DNS 重定向以保持联网。' ;;
@@ -146,14 +171,16 @@ core_ready() {
 
 apply_redirect() {
   [ ! -f "$MOD_PATH/disable" ] && [ ! -f "$MOD_PATH/remove" ] || return 1
-  core_ready || return 1
+  core_ready || { describe_safely error; return 1; }
   "$BB" sh "$FIREWALL" enable || {
     "$BB" sh "$FIREWALL" disable >/dev/null 2>&1 || true
     write_atomic "$STATE_FILE" error || true
     log_transition '恢复 DNS 重定向失败；核心保持运行，等待后续重试。'
+    describe_safely error
     return 1
   }
   clear_pause "${1:-auto}"
+  describe_safely active
 }
 
 start_guard() {
@@ -169,6 +196,7 @@ start_guard() {
         vpn|unknown|resume_wait|error)
           write_atomic "$STATE_FILE" resume_wait || return 1
           write_atomic "$COUNT_FILE" 0 || return 1
+          describe_safely resume_wait
           echo resume-wait
           ;;
         *) echo ready ;;
@@ -182,8 +210,10 @@ watch() {
   local detected previous count
   [ "$(read_switch "$STATE_DIR/vpn-compat")" = on ] || exit 0
   [ "$(read_switch "$STATE_DIR/dns-takeover")" = on ] || {
-    "$BB" sh "$FIREWALL" disable >/dev/null 2>&1 || exit 1
+    previous=$(current_state)
+    "$BB" sh "$FIREWALL" disable >/dev/null 2>&1 || { describe_safely error; exit 1; }
     clear_pause takeover-off
+    [ "$previous" = none ] || describe_safely off
     exit 0
   }
   detect_tunnel; detected=$?
@@ -200,7 +230,8 @@ watch() {
         if [ "$count" -ge 3 ]; then
           apply_redirect || { printf '0\n' > "$COUNT_FILE"; }
         else
-          write_atomic "$STATE_FILE" resume_wait
+          write_atomic "$STATE_FILE" resume_wait || return 1
+          [ "$previous" = resume_wait ] || describe_safely resume_wait
         fi
         ;;
       esac
@@ -222,6 +253,7 @@ set_mode() {
       apply_redirect manual || { write_atomic "$STATE_DIR/vpn-compat" on; return 1; }
     else
       clear_pause manual
+      describe_safely off
     fi
   fi
   echo "[+] VPN/TUN compatibility $mode."
@@ -235,8 +267,9 @@ set_takeover() {
     # Persist explicit user intent first. If firewall cleanup transiently
     # fails, watch() will keep retrying cleanup and must never auto-resume.
     write_atomic "$STATE_DIR/dns-takeover" off || return 1
-    "$BB" sh "$FIREWALL" disable || { write_atomic "$STATE_FILE" error || true; return 1; }
+    "$BB" sh "$FIREWALL" disable || { write_atomic "$STATE_FILE" error || true; describe_safely error; return 1; }
     clear_pause takeover-off
+    describe_safely off
     echo '[+] DNS redirection disabled; AdGuard Home remains available.'
     return 0
   fi
@@ -246,13 +279,14 @@ set_takeover() {
   if [ "$(read_switch "$STATE_DIR/vpn-compat")" = on ]; then
     detect_tunnel; detected=$?
     case "$detected" in
-      0) set_pause vpn || return 1; write_atomic "$STATE_DIR/dns-takeover" on || return 1; echo '[+] DNS takeover preference saved; redirection is paused while VPN is active.'; return 0 ;;
-      2) set_pause unknown || return 1; write_atomic "$STATE_DIR/dns-takeover" on || return 1; echo '[+] DNS takeover preference saved; redirection is paused until VPN state is readable.'; return 0 ;;
+      0) set_pause vpn || return 1; write_atomic "$STATE_DIR/dns-takeover" on || return 1; describe_safely vpn; echo '[+] DNS takeover preference saved; redirection is paused while VPN is active.'; return 0 ;;
+      2) set_pause unknown || return 1; write_atomic "$STATE_DIR/dns-takeover" on || return 1; describe_safely unknown; echo '[+] DNS takeover preference saved; redirection is paused until VPN state is readable.'; return 0 ;;
     esac
   fi
-  "$BB" sh "$FIREWALL" enable || { "$BB" sh "$FIREWALL" disable >/dev/null 2>&1 || true; return 1; }
+  "$BB" sh "$FIREWALL" enable || { "$BB" sh "$FIREWALL" disable >/dev/null 2>&1 || true; describe_safely error; return 1; }
   write_atomic "$STATE_DIR/dns-takeover" on || { "$BB" sh "$FIREWALL" disable >/dev/null 2>&1 || true; write_atomic "$STATE_DIR/dns-takeover" "$previous" || true; return 1; }
   clear_pause manual
+  describe_safely active
   echo '[+] DNS redirection enabled after TCP and UDP listener checks.'
 }
 

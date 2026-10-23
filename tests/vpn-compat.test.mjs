@@ -5,10 +5,11 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { shellPath } from './shell-fixture.mjs';
+import { fileURLToPath } from 'node:url';
 
 const helper = new URL('../scripts/vpn-compat.sh', import.meta.url);
 
-function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on', redirect = true, core = true, netReadable = true, failDisable = false, interfaces = null } = {}) {
+function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on', redirect = true, core = true, netReadable = true, failDisable = false, failEnable = false, failDescription = false, interfaces = null } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'abp-vpn-compat-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const agh = path.join(root, 'agh');
@@ -39,6 +40,14 @@ function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on',
   writeFileSync(path.join(proc, 'net/tcp6'), 'sl local_address remote_address st\n');
   const fwState = path.join(root, 'redirect');
   const calls = path.join(root, 'firewall-calls');
+  const description = path.join(root, 'description');
+  const descriptionCalls = path.join(root, 'description-calls');
+  writeFileSync(path.join(agh, 'scripts/base.sh'), `update_description() {
+    [ "$FAIL_DESCRIPTION" != 1 ] || return 1
+    printf '%s\n' "$2" > "$DESCRIPTION_FILE"
+    printf '%s\n' "$2" >> "$DESCRIPTION_CALLS"
+  }
+`);
   writeFileSync(fwState, redirect ? '1\n' : '0\n');
   writeFileSync(path.join(agh, 'scripts/iptables.sh'), `#!/bin/sh
 printf '%s\n' "$1" >> "$FIREWALL_CALLS"
@@ -54,12 +63,13 @@ esac
   writeFileSync(bb, '#!/bin/sh\ncase "$1" in sh) shift; exec bash "$@" ;; *) exec "$@" ;; esac\n');
   chmodSync(bb, 0o755);
   function run(...args) {
-    return spawnSync('bash', [helper.pathname, ...args], {
+    return spawnSync('bash', [shellPath(fileURLToPath(helper)), ...args], {
       encoding: 'utf8', timeout: 10000,
       env: { ...process.env, BB: shellPath(bb), ABP_DNS_TRANSITION_LOCKED: '1',
         ABP_AGH_DIR: shellPath(agh), ABP_STATE_DIR: shellPath(state), ABP_MODULE_DIR: shellPath(mod),
         ABP_SYS_CLASS_NET: shellPath(sys), ABP_PROC_ROOT: shellPath(proc),
-        FIREWALL_STATE: shellPath(fwState), FIREWALL_CALLS: shellPath(calls), FAIL_DISABLE: failDisable ? '1' : '0' },
+        FIREWALL_STATE: shellPath(fwState), FIREWALL_CALLS: shellPath(calls), FAIL_DISABLE: failDisable ? '1' : '0', FAIL_ENABLE: failEnable ? '1' : '0',
+        DESCRIPTION_FILE: shellPath(description), DESCRIPTION_CALLS: shellPath(descriptionCalls), FAIL_DESCRIPTION: failDescription ? '1' : '0' },
     });
   }
   const readIfPresent = file => {
@@ -68,7 +78,7 @@ esac
       throw error;
     }
   };
-  return { run, state: name => readIfPresent(path.join(state, name)).trim(), firewall: () => readFileSync(fwState, 'utf8').trim(), calls: () => readIfPresent(calls), history: () => readIfPresent(path.join(agh, 'history.log')) };
+  return { run, state: name => readIfPresent(path.join(state, name)).trim(), firewall: () => readFileSync(fwState, 'utf8').trim(), calls: () => readIfPresent(calls), history: () => readIfPresent(path.join(agh, 'history.log')), description: () => readIfPresent(description), descriptionCalls: () => readIfPresent(descriptionCalls) };
 }
 
 test('startup pauses only module DNS redirection when a TUN interface is present', t => {
@@ -80,6 +90,7 @@ test('startup pauses only module DNS redirection when a TUN interface is present
   assert.equal(f.state('dns-takeover'), 'on');
   assert.equal(f.firewall(), '0');
   assert.match(f.history(), /过滤核心继续运行/);
+  assert.match(f.description(), /VPN 旁路/);
 });
 
 test('a down kernel tunl0 placeholder is not mistaken for an active VPN', t => {
@@ -103,6 +114,7 @@ test('an unreadable interface directory pauses rather than assuming VPN is absen
   assert.match(r.stdout, /paused-unknown/);
   assert.equal(f.state('vpn-compat-state'), 'unknown');
   assert.equal(f.firewall(), '0');
+  assert.match(f.description(), /VPN 状态未知/);
 });
 
 test('redirect resumes only after three consecutive confirmed VPN-absent checks', t => {
@@ -112,6 +124,7 @@ test('redirect resumes only after three consecutive confirmed VPN-absent checks'
     assert.equal(r.status, 0, r.stderr);
     assert.equal(f.firewall(), '0');
     assert.equal(f.state('vpn-compat-state'), 'resume_wait');
+    assert.match(f.description(), /等待 VPN 稳定断开/);
   }
   const last = f.run('watch');
   assert.equal(last.status, 0, last.stderr);
@@ -119,6 +132,8 @@ test('redirect resumes only after three consecutive confirmed VPN-absent checks'
   assert.equal(f.state('dns-takeover'), 'on');
   assert.equal(f.state('vpn-compat-state'), '');
   assert.match(f.history(), /连续稳定/);
+  assert.match(f.description(), /DNS 防护运行中/);
+  assert.doesNotMatch(f.description(), /VPN 旁路/);
 });
 
 test('manual takeover off wins over VPN auto-resume', t => {
@@ -129,6 +144,7 @@ test('manual takeover off wins over VPN auto-resume', t => {
   assert.equal(f.state('dns-takeover'), 'off');
   assert.equal(f.state('vpn-compat-state'), '');
   assert.doesNotMatch(f.calls(), /enable/);
+  assert.match(f.description(), /接管关闭/);
 });
 
 test('manual takeover on while VPN is active records intent without restoring redirect', t => {
@@ -139,6 +155,7 @@ test('manual takeover on while VPN is active records intent without restoring re
   assert.equal(f.state('dns-takeover'), 'on');
   assert.equal(f.state('vpn-compat-state'), 'vpn');
   assert.equal(f.firewall(), '0');
+  assert.match(f.description(), /VPN 旁路/);
 });
 
 test('manual takeover on requires the resolver to be ready before adding redirects', t => {
@@ -158,6 +175,7 @@ test('manual takeover off persists the choice if firewall cleanup needs retry', 
   assert.equal(f.state('dns-takeover'), 'off');
   assert.equal(f.state('vpn-compat-state'), 'error');
   assert.equal(f.firewall(), '1');
+  assert.match(f.description(), /重定向错误/);
   const retry = f.run('watch');
   assert.notEqual(retry.status, 0);
   assert.doesNotMatch(f.calls(), /enable/);
@@ -170,6 +188,7 @@ test('failed initial VPN bypass keeps compatibility enabled for watchdog retry',
   assert.equal(f.state('vpn-compat'), 'on');
   assert.equal(f.state('vpn-compat-state'), 'error');
   assert.equal(f.firewall(), '1');
+  assert.match(f.description(), /重定向错误/);
 });
 
 test('repeated VPN checks do not rebuild an already absent redirect chain', t => {
@@ -186,6 +205,7 @@ test('disabling compatibility restores the saved takeover preference after liste
   assert.equal(f.state('vpn-compat'), 'off');
   assert.equal(f.state('dns-takeover'), 'on');
   assert.equal(f.firewall(), '1');
+  assert.match(f.description(), /DNS 防护运行中/);
 });
 
 test('a dead or unready resolver is never reconnected after the stability window', t => {
@@ -194,6 +214,29 @@ test('a dead or unready resolver is never reconnected after the stability window
   assert.equal(f.firewall(), '0');
   assert.equal(f.state('vpn-compat-state'), 'resume_wait');
   assert.doesNotMatch(f.calls(), /enable/);
+  assert.match(f.description(), /未就绪/);
+});
+
+test('failed auto-resume never advertises active DNS protection', t => {
+  const f = fixture(t, { vpn: false, paused: true, redirect: false, failEnable: true });
+  for (let i = 0; i < 3; i += 1) f.run('watch');
+  assert.equal(f.firewall(), '0');
+  assert.equal(f.state('vpn-compat-state'), 'error');
+  assert.match(f.description(), /重定向错误/);
+});
+
+test('unchanged VPN polls do not rewrite the manager description', t => {
+  const f = fixture(t, { vpn: true, paused: false });
+  for (let i = 0; i < 3; i += 1) assert.equal(f.run('watch').status, 0);
+  assert.match(f.description(), /VPN 旁路/);
+  assert.equal(f.descriptionCalls().trim().split('\n').length, 1);
+});
+
+test('manager description failure never changes DNS transition success', t => {
+  const f = fixture(t, { vpn: false, paused: true, redirect: false, failDescription: true });
+  for (let i = 0; i < 3; i += 1) assert.equal(f.run('watch').status, 0);
+  assert.equal(f.firewall(), '1');
+  assert.equal(f.state('vpn-compat-state'), '');
 });
 
 test('missing compatibility setting preserves legacy behavior and never auto-mutates redirects', t => {
