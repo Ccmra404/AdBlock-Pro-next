@@ -46,7 +46,7 @@ def query(protocol, mark, name='normal.example'):
         sock.settimeout(2)
         # Use fresh tuples so prior NAT conntrack entries cannot mask a rule change.
         sock.bind(('127.0.0.1', QUERY_PORT))
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, mark)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_MARK, struct.pack('=I', mark))
         sock.connect(('127.0.0.2', 53))
         if protocol == 'tcp':
             sock.sendall(struct.pack('!H', len(wire)) + wire)
