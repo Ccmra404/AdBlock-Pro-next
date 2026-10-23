@@ -22,7 +22,7 @@ restore_state() {
       [ -e "$item" ] || [ -L "$item" ] || continue
       name=${item##*/}
       case "$name" in
-      webui-jobs|update.lock|root-family|backups) continue ;;
+      webui-jobs|update.lock|runtime.lock|root-family|backups) continue ;;
         ai)
           for ai_item in "$STATE/ai"/* "$STATE/ai"/.[!.]* "$STATE/ai"/..?*; do
             [ -e "$ai_item" ] || [ -L "$ai_item" ] || continue
@@ -239,7 +239,7 @@ reset_defaults() {
       done
       continue
     fi
-      case "$name" in webui-jobs|update.lock|root-family|backups) continue ;; esac
+      case "$name" in webui-jobs|update.lock|runtime.lock|root-family|backups) continue ;; esac
     mv "$item" "$old_state/" || fail_after_stop "Cannot stage existing module state."
   done
   state_moved=1

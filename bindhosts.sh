@@ -319,11 +319,24 @@ history_text() {
   done
 }
 
+read_redirect_state() {
+  local redirect_state redirect_rc
+  redirect_state=$("$BB" sh "$AGH/scripts/iptables.sh" status-ipv4 2>/dev/null)
+  redirect_rc=$?
+  # A generic shell/query failure can also exit 1: require both signals.
+  case "$redirect_state:$redirect_rc" in
+    present:0) redirected=1 ;;
+    absent:1) redirected=0 ;;
+    *) redirected=unknown ;;
+  esac
+}
+
 classify_dns_health() {
   state=degraded
   if [ "$running" != 1 ]; then health=stopped; state=paused
   elif [ "$listening" != 1 ]; then health=listener_failed
   elif [ "$api_ok" != 0 ]; then health=api_failed
+  elif [ "$redirected" = unknown ]; then health=takeover_state_unknown
   elif [ "$takeover" = off ] && [ "$redirected" = 0 ]; then health=takeover_off; state=bypassed
   elif [ "$takeover" = off ]; then health=takeover_cleanup_pending
   elif [ "$takeover" != on ]; then health=takeover_unknown
@@ -345,8 +358,7 @@ status() {
   listening_udp=0; is_protocol_listening '/proc/net/udp /proc/net/udp6' 07 && listening_udp=1
   listening_tcp=0; is_protocol_listening '/proc/net/tcp /proc/net/tcp6' 0A && listening_tcp=1
   listening=0; [ "$listening_udp" = 1 ] && [ "$listening_tcp" = 1 ] && listening=1
-  redirected=0
-  iptables -t nat -C OUTPUT -j ADGUARD_REDIRECT_DNS >/dev/null 2>&1 && redirected=1
+  read_redirect_state
   takeover=$(cat "$STATE/dns-takeover" 2>/dev/null); case "$takeover" in on|off) ;; *) takeover=unknown ;; esac
   classify_dns_health
   mode=$(cat "$STATE/blocking-mode" 2>/dev/null); case "$mode" in light|balanced|strict) ;; *) mode=balanced ;; esac
@@ -466,11 +478,16 @@ source_name() {
     https://adguardteam.github.io/HostlistsRegistry/assets/filter_29.txt) printf 'AdRules DNS' ;;
     https://adguardteam.github.io/AdGuardSDNSFilter/Filters/filter.txt) printf 'AdGuard DNS' ;;
     shared) printf '共享抓包规则' ;;
+    https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt) printf 'GOODBYEADS DNS（含配套放行）' ;;
     *) host=${1#https://}; host=${host%%/*}; printf '%s' "$host" ;;
   esac
 }
 source_mirror_urls() {
   case "$1" in
+    https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt)
+      printf '%s\n' "https://${1#https://ghfast.top/}" ;;
+    https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt)
+      printf '%s\n' "https://ghfast.top/${1#https://}" ;;
     https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward)
       printf '%s\n' 'https://lingeringsound.github.io/10007_auto/reward' 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
     https://lingeringsound.github.io/10007_auto/reward)
@@ -558,6 +575,32 @@ download_source() {
   rm -f "$output"
   return 1
 }
+download_rule_source() (
+  # A paired source stays one local filter, so existing removal/rollback covers both.
+  source_url=$1; target=$2; label=$3
+  download_source "$source_url" "$target" "$label" || return 1
+  case "$source_url" in
+    https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt) ;;
+    *) return 0 ;;
+  esac
+  allow_url=${source_url%/dns.txt}/allow.txt
+  allow_file="$target.allow"
+  download_source "$allow_url" "$allow_file" 'GOODBYEADS 配套放行' || { rm -f "$target" "$allow_file"; return 1; }
+  # Keep modifiers intact: removing a browser-only modifier can broaden an exception.
+  if ! "$BB" awk '
+    { sub(/\r$/, "") }
+    /^[[:space:]]*($|!|#)/ || /^\[Adblock[^]]*\]$/ { next }
+    substr($0,1,2) != "@@" { invalid=1 }
+    /^@@\|\|[a-zA-Z0-9][a-zA-Z0-9.*_-]*\^(\$important)?$/ { dns_allow=1 }
+    END { exit (invalid || !dns_allow) }
+  ' "$allow_file"; then
+    echo '[!] GOODBYEADS 放行文件格式异常；未应用本次订阅，现有规则保留。' >&2
+    rm -f "$target" "$allow_file"; return 1
+  fi
+  printf '\n! GOODBYEADS companion exceptions (unsupported DNS syntax is ignored by AdGuard Home)\n' >> "$target" &&
+    cat "$allow_file" >> "$target" || { rm -f "$target" "$allow_file"; return 1; }
+  rm -f "$allow_file"
+)
 sync_sources() {
   config="$MODDIR/webui-config.sh"
   desired="$STATE/.desired-sources.$$"
@@ -579,7 +622,7 @@ sync_sources() {
     if [ "$url" != shared ]; then
       key=$(source_cache_key "$url")
       temp="$work/$key.txt"
-      download_source "$url" "$temp" "$name" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 2; }
+      download_rule_source "$url" "$temp" "$name" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 2; }
     elif [ ! -s "$filter" ]; then
       echo '[!] 随包或本地共享规则文件缺失；现有规则保留。' >&2
       rm -rf "$work"; rm -f "$desired" "$entries"; return 1
@@ -848,7 +891,7 @@ diagnose() {
   listening_udp=0; is_protocol_listening '/proc/net/udp /proc/net/udp6' 07 && listening_udp=1
   listening_tcp=0; is_protocol_listening '/proc/net/tcp /proc/net/tcp6' 0A && listening_tcp=1
   listening=0; [ "$listening_udp" = 1 ] && [ "$listening_tcp" = 1 ] && listening=1
-  redirected=0; iptables -t nat -C OUTPUT -j ADGUARD_REDIRECT_DNS >/dev/null 2>&1 && redirected=1
+  read_redirect_state
   api GET /status 4 >/dev/null 2>&1; api_ok=$?
   filter_json=$(api GET /filtering/status 4 2>/dev/null); filter_ok=$?
   count=0; [ "$filter_ok" -ne 0 ] || count=$(rules_count "$filter_json")
@@ -859,7 +902,9 @@ diagnose() {
     "$root_uid" "$state" "$([ -x "$AGH/bin/AdGuardHome" ] && echo yes || echo no)" "$count"
   printf 'diag_dns_listener=%s\ndiag_dns_listener_udp=%s\ndiag_dns_listener_tcp=%s\ndiag_dns_api=%s\ndiag_dns_takeover=%s\ndiag_dns_redirect=%s\n' \
     "$listening" "$listening_udp" "$listening_tcp" "$([ "$api_ok" = 0 ] && echo yes || echo no)" "$takeover" "$redirected"
-  printf 'diag_ipv6_mode=passthrough\ndiag_private_dns=not-overridden\ndiag_vpn=may-bypass-or-intercept\n'
+  if [ -f "$AGH/scripts/network-diagnostics.sh" ]; then
+    "$BB" sh "$AGH/scripts/network-diagnostics.sh" || echo '[提醒] 网络诊断未完成，不能据此确认网络状态。'
+  else echo '[提醒] 网络诊断组件缺失，请完整更新模块。'; fi
   printf 'diag_root_family=%s\ndiag_busybox=%s\n' "$(abp_root_family)" "$BB"
   printf 'diag_dns_core_running=%s\ndiag_dns_health=%s\n' "$running" "$health"
   # Only during explicit diagnosis; no additional overhead in 30s status polls.

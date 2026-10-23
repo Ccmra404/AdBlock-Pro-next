@@ -80,8 +80,8 @@ function fixture(t, overrides = {}) {
     'adg_user=root',
     'adg_group=net_raw',
     'redir_port=5591',
-    'enable_ipv6_dns=false',
-    'block_ipv6_dns=false',
+    'enable_ipv6_dns=${TEST_IPV6_ENABLED:-false}',
+    'block_ipv6_dns=${TEST_IPV6_BLOCK:-false}',
     'ignore_dest_list=""',
     'ignore_src_list=""',
     'log() { :; }',
@@ -102,6 +102,50 @@ function fixture(t, overrides = {}) {
   };
 }
 const jump = '-j ADGUARD_REDIRECT_DNS';
+
+for (const [options, expected] of [[{}, 'disabled'], [{ TEST_IPV6_ENABLED: 'true' }, 'redirect'],
+  [{ TEST_IPV6_ENABLED: 'true', TEST_IPV6_BLOCK: 'true' }, 'block'], [{ TEST_IPV6_ENABLED: 'invalid' }, 'unknown']]) {
+  test('IPv6 diagnosis distinguishes preference from actual owned jumps: ' + expected, t => {
+    const f = fixture(t); f.write({ 'nat:OUTPUT': ['-j ADGUARD_REDIRECT_DNS6'], 'filter:OUTPUT': [] });
+    const before = f.read(), result = f.run('diagnose-ipv6', options);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, new RegExp('diag_ipv6_mode=' + expected + '\\n'));
+    assert.match(result.stdout, /diag_ipv6_nat_table=readable\ndiag_ipv6_redirect=present/);
+    assert.match(result.stdout, /diag_ipv6_filter_table=readable\ndiag_ipv6_block=absent/);
+    assert.deepEqual(f.read(), before);
+  });
+}
+
+for (const [env, expected] of [[{ FAIL_IP6_BACKEND: '1' }, 'unsupported'], [{ QUERY_RESULT: '2' }, 'unknown'],
+  [{ EMPTY_SNAPSHOT: '1' }, 'unknown'], [{ INVALID_SNAPSHOT: '1' }, 'unknown']]) {
+  test('IPv6 diagnosis distinguishes explicit table absence from query failure: ' + JSON.stringify(env), t => {
+    const f = fixture(t), before = f.read(), result = f.run('diagnose-ipv6', env);
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, new RegExp('diag_ipv6_nat_table=' + expected + '\\n'));
+    assert.match(result.stdout, new RegExp('diag_ipv6_redirect=' + expected + '\\n'));
+    assert.deepEqual(f.read(), before);
+  });
+}
+
+test('IPv4 status does not mistake a legacy IPv6 jump for IPv4 takeover', t => {
+  const f = fixture(t);
+  f.write({ 'nat:OUTPUT': ['-j ADGUARD_REDIRECT_DNS6'], 'filter:OUTPUT': [] });
+  assert.equal(f.run('status').stdout.trim(), 'present');
+  const before = f.read();
+  const result = f.run('status-ipv4', { QUERY_RESULT: '2', QUERY_IPV6_ONLY: '1' });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout.trim(), 'absent');
+  assert.deepEqual(f.read(), before);
+});
+
+for (const env of [{ QUERY_RESULT: '1' }, { QUERY_RESULT: '2' }, { EMPTY_SNAPSHOT: '1' }, { INVALID_SNAPSHOT: '1' }]) {
+  test('IPv4 status keeps failed or malformed queries unknown: ' + JSON.stringify(env), t => {
+    const f = fixture(t);
+    const result = f.run('status-ipv4', env);
+    assert.equal(result.status, 2);
+    assert.equal(result.stdout.trim(), 'unknown');
+  });
+}
 
 test('read-only status distinguishes present and confirmed absent without changing rules', t => {
   const f = fixture(t);

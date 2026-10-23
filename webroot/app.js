@@ -11,6 +11,8 @@ const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark
 Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', sharedUpdatedAt: 0, sharedError: '', sharedLoaded: false, sharedSearch: '', sharedPage: 0, apps: [], appsLoaded: false, appsLoading: false, appsError: '', appQuery: '', selectedApp: null, observeDuration: '10', observationResultsOpen: false, selectedObservationDomains: [] });
 Object.assign(state, { aiOpen: false, aiSettingsOpen: false, aiConfig: null, aiBusy: false, aiError: '', aiResults: [], aiSelected: [], aiPage: 0, personalApplyMessage: '', personalApplyError: false });
 Object.assign(state, { dnsOpen: false, dnsInfo: null, dnsDraft: null, dnsBusy: false, dnsError: '', dnsResults: [], dnsMessage: '' });
+Object.assign(state, { domainCheckInput: '', domainCheck: null });
+let domainCheckRequestId = 0;
 const AI_PENDING_KEY = 'abp-ai-job';
 const pages = { home: '总览', rules: '规则管理', lists: '名单', manage: '设置', logs: '运行日志' };
 const LOG_PAGE_SIZE = 10;
@@ -97,6 +99,7 @@ function summaryText() {
   if (s.dns_core_running === '0' || s.state === 'paused') return ['DNS 核心已停止', '系统 DNS 未接入本地过滤服务。'];
   if (s.dns_health === 'listener_failed' || s.dns_listener === '0') return ['DNS 监听异常', '核心进程存在，但 TCP/UDP DNS 监听未全部就绪。请查看环境检测。'];
   if (s.dns_health === 'api_failed') return ['DNS 管理接口异常', '核心进程存在，但无法读取 AdGuard Home API。请查看环境检测。'];
+  if (s.dns_health === 'takeover_state_unknown' || s.dns_redirect === 'unknown') return ['系统 DNS 接管状态未知', '无法可靠读取防火墙规则；尚不能确认接管已应用或已清理。请查看环境检测。'];
   if (s.dns_health === 'takeover_cleanup_pending') return ['系统接管尚未清理', '已保存关闭偏好，但仍检测到本模块重定向。请检查后再停止核心。'];
   if (s.dns_takeover === 'off') return ['已关闭系统接管，DNS 核心仍运行', '这是已保存的关闭偏好；系统 DNS 不会经过本模块过滤。可在设置中重新开启。'];
   if (s.dns_health === 'takeover_unknown') return ['系统接管偏好无法读取', '未确认已保存的接管设置，请查看环境检测。'];
@@ -108,6 +111,12 @@ function summaryText() {
 function coreRunning(s = state.status) {
   return s?.dns_core_running !== undefined ? s.dns_core_running === '1'
     : ['active', 'degraded', 'bypassed'].includes(s?.state);
+}
+function redirectText(s) {
+  return s?.dns_redirect === '1' ? '已应用' : s?.dns_redirect === '0' ? '未应用' : '状态未知';
+}
+function takeoverText(s) {
+  return s?.dns_redirect === '0' && s?.dns_takeover === 'off' ? '主动关闭' : `重定向${redirectText(s)}`;
 }
 function queryTotal(stats) {
   if (!stats) return null;
@@ -137,9 +146,9 @@ function homePage() {
   const headAction = `<button class="btn" data-action="diagnose">${icon('activity')} 环境诊断</button>`;
   return `${heading('总览', '查看过滤与 DNS 服务状态', headAction)}
     <div class="stack">
-      <section class="panel hero"><div class="hero-content"><span class="hero-symbol ${s?.state === 'active' ? '' : 'off'}">${icon(s?.state === 'active' ? 'shield' : 'power')}</span><div><div class="hero-title">${esc(title)}</div><div class="hero-sub">${esc(subtitle)}</div><div class="status-pills"><span class="mini-status"><i class="dot ${coreRunning(s) ? 'on' : 'warn'}"></i> DNS ${coreRunning(s) ? '运行中' : s ? '已停止' : '待检查'}</span><span class="mini-status"><i class="dot ${s?.dns_redirect === '1' ? 'on' : 'warn'}"></i> DNS 重定向 ${s?.dns_redirect === '1' ? '已应用' : '未应用'}</span></div></div></div>${toggle('filtering', s?.filtering_enabled === 'true', '广告规则过滤')}</section>
+      <section class="panel hero"><div class="hero-content"><span class="hero-symbol ${s?.state === 'active' ? '' : 'off'}">${icon(s?.state === 'active' ? 'shield' : 'power')}</span><div><div class="hero-title">${esc(title)}</div><div class="hero-sub">${esc(subtitle)}</div><div class="status-pills"><span class="mini-status"><i class="dot ${coreRunning(s) ? 'on' : 'warn'}"></i> DNS ${coreRunning(s) ? '运行中' : s ? '已停止' : '待检查'}</span><span class="mini-status"><i class="dot ${s?.dns_redirect === '1' ? 'on' : 'warn'}"></i> DNS 重定向 ${redirectText(s)}</span></div></div></div>${toggle('filtering', s?.filtering_enabled === 'true', '广告规则过滤')}</section>
       <section class="metrics" aria-label="设备实时统计"><div class="metric"><div class="metric-label">已加载规则条目</div><div class="metric-value">${s ? fmt(s.blocked) : '—'}</div><div class="metric-foot">不是广告命中次数</div></div><div class="metric"><div class="metric-label">DNS 查询统计</div><div class="metric-value">${queryCount === null ? '—' : fmt(queryCount)}</div><div class="metric-foot">AdGuard Home 统计接口</div></div><div class="metric"><div class="metric-label">DNS 核心内存</div><div class="metric-value">${memory.value} <span style="font-size:14px">MB</span></div><div class="metric-foot">${esc(memory.label)}</div></div></section>
-      <section class="panel" data-service-status><div class="panel-head"><div><h2 class="section-title">服务状态</h2><p class="section-sub">模块与独立应用状态</p></div></div><div class="rows">${row('server', 'AdGuard Home', '本地 DNS 过滤核心', tag(coreRunning(s) ? '运行中' : s ? '已停止' : '未知', coreRunning(s) ? 'green' : 'yellow'))}${row('globe', '系统 DNS 接管', '仅接管模块管理的 IPv4 DNS 规则', tag(s?.dns_redirect === '1' ? '重定向已应用' : s?.dns_takeover === 'off' ? '主动关闭' : '未重定向', s?.dns_redirect === '1' ? 'green' : 'yellow'))}${row('activity', 'GKD 开屏跳过', '由 GKD 独立管理', tag('独立应用'))}</div></section>
+      <section class="panel" data-service-status><div class="panel-head"><div><h2 class="section-title">服务状态</h2><p class="section-sub">模块与独立应用状态</p></div></div><div class="rows">${row('server', 'AdGuard Home', '本地 DNS 过滤核心', tag(coreRunning(s) ? '运行中' : s ? '已停止' : '未知', coreRunning(s) ? 'green' : 'yellow'))}${row('globe', '系统 DNS 接管', '仅接管模块管理的 IPv4 DNS 规则', tag(takeoverText(s), s?.dns_redirect === '1' ? 'green' : 'yellow'))}${row('activity', 'GKD 开屏跳过', '由 GKD 独立管理', tag('独立应用'))}</div></section>
       <section class="panel"><div class="panel-head"><div><h2 class="section-title">最近规则更新</h2><p class="section-sub">${esc(s ? when(s.last_update) : '读取中')}</p></div><button class="btn" data-nav="rules">规则管理</button></div><div class="notice">${icon('info')}<span>仅显示设备实际返回的数据。当前模块不采集每次 DNS 请求或广告命中日志。</span></div></section>
     </div>`;
 }
@@ -149,7 +158,7 @@ function sourceRows() {
     const enabled = source.enabled === 'enabled';
     const renaming = state.sourceRenameUrl === source.url;
     const editing = state.sourceEditUrl === source.url;
-    const detail = source.url === 'shared' ? '维护者审核的共享抓包规则' : source.url;
+    const detail = source.url === 'shared' ? '维护者审核的共享抓包规则' : source.id === 'goodbyeads' ? `${source.url} · 拦截与放行成对更新；与秋风部分重复，按需选择` : source.url;
     const shared = source.url === 'shared' ? state.status?.dns_filter_json?.filters?.find(x => x.url?.endsWith('/adblock-pro-shared-app-rules.txt')) : null;
     const actions = `<div class="source-actions"><button class="btn" data-action="source-toggle" data-url="${esc(source.url)}" data-enabled="${source.enabled}">${enabled ? '停用' : '导入'}</button>${source.url === 'shared' ? '' : `<button class="btn" data-action="source-url-open" data-url="${esc(source.url)}">修改链接</button>`}<button class="btn" data-action="source-rename-open" data-url="${esc(source.url)}">重命名</button><button class="btn btn-danger" data-action="source-delete" data-url="${esc(source.url)}">移除</button></div>`;
     const rename = renaming ? `<form class="source-rename-form btn-row" data-url="${esc(source.url)}"><input class="field" name="name" maxlength="64" value="${esc(source.label)}" aria-label="规则来源名称" required><button class="btn btn-primary" type="submit">保存名称</button><button class="btn" type="button" data-action="source-rename-cancel">取消</button></form>` : '';
@@ -187,13 +196,83 @@ function resetListView(kind) {
   state.listSearch[kind] = '';
   state.listPage[kind] = 0;
 }
+function parseDomainCheck(raw) {
+  let data;
+  try { data = JSON.parse(raw); } catch { throw new Error('本地服务返回的结果格式无效，请重试或查看运行日志。'); }
+  if (!data || typeof data !== 'object' || Array.isArray(data) || typeof data.reason !== 'string' || !data.reason.trim()) throw new Error('检查结果缺少判定状态，暂时无法确认是否拦截。');
+  return data;
+}
+function domainCheckMarkup() {
+  const check = state.domainCheck;
+  if (!check) return '<p class="field-help">输入域名，查看本地过滤规则的判定和命中内容。</p>';
+  const domain = `<strong class="domain-check-name">${esc(check.domain)}</strong>`;
+  if (check.pending) return `${domain}<p class="field-help">正在查询本地规则…</p>`;
+  if (check.stale && !check.data) return `${domain}<p class="field-help status-warn">规则状态可能已变化，请在后台任务结束后重新检查。</p>`;
+  if (check.error) return `${domain}<p class="field-help status-bad">检查失败：${esc(check.error)}</p><p class="field-help">请确认 DNS 核心正在运行，再点击“检查”重试。</p>`;
+  const data = check.data;
+  const reasons = {
+    NotFilteredNotFound: ['未命中过滤规则', '', '本地规则未拦截该域名；仍可能存在上游解析、网络或应用自身的问题。'],
+    NotFilteredWhiteList: ['已命中放行规则', 'status-good', '该域名已被本地过滤服务放行。'],
+    NotFilteredError: ['规则检查异常', 'status-bad', '过滤引擎未能完成判定，不能据此认定该域名已放行。'],
+    FilteredBlackList: ['已命中拦截规则', 'status-warn', '请查看命中规则，确认是否属于误拦截。'],
+    FilteredSafeBrowsing: ['安全浏览拦截', 'status-bad', '本地服务将该域名判定为安全风险。'],
+    FilteredParental: ['家长控制拦截', 'status-warn', '该域名被家长控制策略拦截。'],
+    FilteredInvalid: ['域名被判定为无效', 'status-warn', '本地服务未将该域名作为普通域名放行。'],
+    FilteredSafeSearch: ['安全搜索已改写', '', '安全搜索策略修改了解析结果。'],
+    FilteredBlockedService: ['服务策略拦截', 'status-warn', '该域名命中了服务拦截策略。'],
+    Rewrite: ['DNS 重写', '', '本地 DNS 重写修改了解析结果。'],
+    RewriteEtcHosts: ['Hosts 记录重写', '', '本地 Hosts 记录修改了解析结果。'],
+    RewriteRule: ['DNS 规则重写', '', 'DNS 重写规则修改了解析结果。']
+  };
+  const [title, tone, help] = Object.prototype.hasOwnProperty.call(reasons, data.reason) ? reasons[data.reason] : ['未识别的检查状态', 'status-warn', '本地服务返回了未识别的状态，暂时无法确认是否拦截。'];
+  const rules = Array.isArray(data.rules) ? data.rules.filter(rule => rule && typeof rule.text === 'string' && rule.text) : [];
+  if (!rules.length && typeof data.rule === 'string' && data.rule) rules.push({ text: data.rule, filter_list_id: data.filter_id });
+  const matches = rules.length ? `<div class="domain-check-rules"><b>命中规则</b>${rules.map(rule => `<div><code>${esc(rule.text)}</code>${Number.isSafeInteger(rule.filter_list_id) ? `<small>过滤器 ID：${rule.filter_list_id}</small>` : ''}</div>`).join('')}</div>` : '';
+  const rewritten = [typeof data.cname === 'string' ? data.cname : '', ...(Array.isArray(data.ip_addrs) ? data.ip_addrs.filter(ip => typeof ip === 'string') : [])].filter(Boolean);
+  const target = rewritten.length ? `<p class="field-help">重写目标：${esc(rewritten.join('、'))}</p>` : '';
+  const allow = data.reason === 'FilteredBlackList' && !check.stale ? `<div class="btn-row domain-check-actions"><button class="btn" data-action="observe-allow" data-domain="${esc(check.domain)}" ${state.busy ? 'disabled' : ''}>尝试加入个人放行名单</button></div><p class="field-help">仅在确认误拦截时放行；应用完成后请重新检查，重要订阅规则仍可能优先。</p>` : '';
+  return `${domain}<h3 class="domain-check-title ${tone}">${check.stale ? '上次结果：' : ''}${title}</h3><p class="field-help">${help}</p>${check.stale ? '<p class="field-help status-warn">规则状态可能已变化，请在后台任务结束后重新检查。</p>' : ''}${matches}${target}${allow}<details class="diagnostic-details"><summary>查看原始结果</summary><pre>${esc(JSON.stringify(data, null, 2))}</pre></details>`;
+}
+function syncDomainCheck(updateResult = true) {
+  if (updateResult) {
+    pageFragments.delete('rules');
+    const output = $('#domain-result');
+    if (output) { output.innerHTML = domainCheckMarkup(); output.setAttribute('aria-busy', String(Boolean(state.domainCheck?.pending))); }
+  }
+  const button = $('#domain-form button');
+  if (button) { button.disabled = state.busy || Boolean(state.domainCheck?.pending); button.textContent = state.domainCheck?.pending ? '检查中…' : '检查'; }
+  const allow = $('#domain-result [data-action="observe-allow"]');
+  if (allow) allow.disabled = state.busy;
+}
+function invalidateDomainCheck() {
+  domainCheckRequestId += 1;
+  if (state.domainCheck) { state.domainCheck.stale = true; state.domainCheck.pending = false; }
+  syncDomainCheck();
+}
+async function checkDomain(value) {
+  if (state.busy || jobStarting || state.domainCheck?.pending) return;
+  const domain = String(value || '').trim().toLowerCase().replace(/\.$/, '');
+  state.domainCheckInput = domain;
+  const requestId = ++domainCheckRequestId;
+  state.domainCheck = { domain, pending: false, stale: false, error: '' };
+  if (!validObservedDomain(domain)) { state.domainCheck.error = '请输入完整域名，例如 ads.example.com，不要包含网址协议或路径。'; syncDomainCheck(); return; }
+  state.domainCheck.pending = true;
+  syncDomainCheck();
+  try {
+    const result = await exec(`${COMMAND} --check-domain ${shellArg(domain)}`);
+    if (requestId !== domainCheckRequestId) return;
+    if (Number(result.errno) !== 0) throw new Error(textOf(result) || '本地规则服务未返回结果');
+    state.domainCheck.data = parseDomainCheck(result.stdout || '');
+  } catch (error) { if (requestId === domainCheckRequestId) state.domainCheck.error = error.message || '无法读取本地规则'; }
+  finally { if (requestId === domainCheckRequestId) { state.domainCheck.pending = false; syncDomainCheck(); } }
+}
 function rulesPage() {
   const s = state.status;
   const selectedCount = state.sources.filter(source => source.enabled === 'enabled').length;
   return `${heading('规则管理', '来源、更新与历史回滚')}
     <div class="stack"><section id="update-progress" class="panel progress-card hidden" aria-live="polite"><div class="panel-head"><b class="section-title">规则更新</b><span id="update-elapsed" class="small muted"></span></div><div id="update-stage" class="small">等待任务</div><div class="progress-track"><span class="progress-bar"></span></div><p id="update-help" class="field-help">下载期间本页面仍可切换；不要重复启动更新。</p></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">规则来源</h2><p class="section-sub">逐项导入、停用、移除或重命名；订阅内容先下载校验，再交给本地 DNS 核心加载</p></div><span class="tag" data-source-count>${state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : `${selectedCount} 个已启用`}</span></div><div id="source-list" class="source-list">${sourceRows()}</div><form id="source-form" class="btn-row"><input class="field" name="name" maxlength="64" placeholder="来源名称" required><input class="field" name="url" type="url" placeholder="HTTPS 订阅地址" autocapitalize="none" required><button class="btn" type="submit">导入来源</button></form><p id="rules-feedback" class="field-help" aria-live="polite">默认来源也可以停用或移除；移除内置来源只从当前订阅中移除，仍可随时重新导入。更新失败会保留上一版规则。</p><div class="divider"></div><div class="btn-row"><button class="btn btn-primary" data-action="update">立即检查并更新</button><select id="history-select" class="field" aria-label="选择要恢复的规则历史"><option value="">选择历史版本</option>${(s?.history || []).map(item => { const [key, count] = item.split(':'); return `<option value="${esc(key)}">${esc(key.slice(0,4)+'-'+key.slice(4,6)+'-'+key.slice(6,8)+' '+key.slice(8,10)+':'+key.slice(10,12))} · ${fmt(count)} 条</option>`; }).join('')}</select><button class="btn btn-danger" data-action="rollback">恢复</button></div></section>
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">域名检查</h2><p class="section-sub">查询域名当前是否命中 AdGuard Home 规则</p></div></div><form id="domain-form" class="btn-row"><input class="field" name="domain" placeholder="例如 ads.example.com" autocapitalize="none" required><button class="btn" type="submit">检查</button></form><p id="domain-result" class="field-help">检查结果由设备本地过滤服务返回。</p></section></div>`;
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">域名检查</h2><p class="section-sub">查看本地过滤规则的判定，排查疑似误拦截</p></div></div><label class="field-label" for="check-domain">要检查的域名</label><form id="domain-form" class="btn-row"><input id="check-domain" class="field" name="domain" value="${esc(state.domainCheckInput)}" placeholder="例如 ads.example.com" autocapitalize="none" spellcheck="false" required><button class="btn" type="submit" ${state.domainCheck?.pending ? 'disabled' : ''}>${state.domainCheck?.pending ? '检查中…' : '检查'}</button></form><div id="domain-result" class="domain-check-result" role="status" aria-live="polite" aria-atomic="true" aria-busy="${Boolean(state.domainCheck?.pending)}">${domainCheckMarkup()}</div><p class="field-help">此检查不测试网络速度或网站可达性，也不能证明应用广告已消失。</p></section></div>`;
 }
 function personalRulesPage() {
   if (state.rulesView === 'shared') return sharedRulesPage();
@@ -596,7 +675,7 @@ function syncStatusView() {
     if (pills[1]) {
       const dot = $('.dot', pills[1]);
       if (dot) dot.className = 'dot ' + (s?.dns_redirect === '1' ? 'on' : 'warn');
-      if (pills[1].lastChild?.nodeType === 3) pills[1].lastChild.textContent = ' DNS 重定向 ' + (s?.dns_redirect === '1' ? '已应用' : '未应用');
+      if (pills[1].lastChild?.nodeType === 3) pills[1].lastChild.textContent = ' DNS 重定向 ' + redirectText(s);
     }
     const filtering = $('[data-toggle="filtering"]');
     if (filtering && !state.busy && !filtering.disabled) filtering.checked = s?.filtering_enabled === 'true';
@@ -612,7 +691,7 @@ function syncStatusView() {
     if (metricFeet[2] && metricFeet[2].textContent !== memory.label) metricFeet[2].textContent = memory.label;
     const serviceRows = $$('#page-content [data-service-status] .rowitem');
     updateTag($('.tag', serviceRows[0]), coreRunning(s) ? '运行中' : s ? '已停止' : '未知', coreRunning(s));
-    updateTag($('.tag', serviceRows[1]), s?.dns_redirect === '1' ? '重定向已应用' : s?.dns_takeover === 'off' ? '主动关闭' : '未重定向', s?.dns_redirect === '1');
+    updateTag($('.tag', serviceRows[1]), takeoverText(s), s?.dns_redirect === '1');
     setText('#page-content .stack > .panel:last-child .panel-head .section-sub', s ? when(s.last_update) : '读取中');
   } else if (state.page === 'manage') {
     for (const [key, on] of [['takeover', s?.dns_takeover === 'on'], ['autostart', s?.autostart !== 'off'], ['auto-update', s?.auto_update !== 'off']]) {
@@ -850,6 +929,7 @@ function setBusy(busy) {
       delete control.dataset.jobDisabled;
     }
   }
+  syncDomainCheck(false);
 }
 function drawProgress() {
   const card = $('#update-progress');
@@ -963,6 +1043,7 @@ async function startJob(action, argument = '', metadata = {}) {
     localStorage.setItem(OBSERVE_SESSION_KEY, JSON.stringify(state.observation));
   }
   state.job = { id, action }; localStorage.setItem('abp-pending-job', `${id}:${action}`);
+  if (['--update', '--sync-shared', '--apply-personal', '--rollback', '--rollback-history', '--factory-reset', '--filtering', '--restart', '--resume', '--pause'].includes(action)) invalidateDomainCheck();
   setBusy(true);
   if (action === '--update') progress('任务已提交，等待下载进度', '正在启动');
   if (action === '--observe') render();
@@ -1541,8 +1622,7 @@ document.addEventListener('submit', async event => {
     event.preventDefault(); const kind = form.dataset.kind, domain = new FormData(form).get('domain')?.toString().trim();
     try { await savePersonalDomain(`add-${kind}`, domain, kind); form.reset(); } catch (e) { toast(e.message); }
   } else if (form.id === 'domain-form') {
-    event.preventDefault(); const domain = new FormData(form).get('domain')?.toString().trim(); const output = $('#domain-result'); output.textContent = '正在查询本地规则…';
-    try { const result = await exec(`${COMMAND} --check-domain ${shellArg(domain)}`); if (Number(result.errno)) throw new Error(textOf(result)); output.textContent = textOf(result) || '查询完成'; } catch (e) { output.textContent = `检查失败：${e.message}`; }
+    event.preventDefault(); await checkDomain(new FormData(form).get('domain'));
   }
 });
 document.addEventListener('input', event => {
@@ -1554,6 +1634,7 @@ document.addEventListener('input', event => {
       const feedback = $('#dns-feedback'); if (feedback) feedback.innerHTML = dnsFeedbackMarkup();
     }
   }
+  if (event.target.matches('#check-domain')) state.domainCheckInput = event.target.value;
   if (event.target.matches('#log-search')) filterLogs();
   if (event.target.matches('.list-search')) filterLists(event.target);
   if (event.target.matches('#shared-search')) { state.sharedSearch = event.target.value; state.sharedPage = 0; renderSharedResults(); }

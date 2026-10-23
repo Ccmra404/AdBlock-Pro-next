@@ -8,6 +8,9 @@ import { rootFixture, shellPath } from './shell-fixture.mjs';
 const bindhosts = readFileSync(new URL('../bindhosts.sh', import.meta.url), 'utf8');
 const helpers = bindhosts.slice(bindhosts.indexOf('source_name() {'), bindhosts.indexOf('\nwrite_personal_filter() {'));
 const feed = 'https://filters.example/list.txt';
+const goodbye = 'https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt';
+const goodbyeAllow = goodbye.replace('/dns.txt', '/allow.txt');
+const goodbyeRow = 'source\tgoodbyeads\tGOODBYEADS DNS\t' + goodbye + '\tenabled\tconfigured\tremovable\n';
 const nativePath = value => process.platform === 'win32' ? value.replace(/^\/([a-z])\//, (_, drive) => drive.toUpperCase() + ':/') : value;
 
 function fixture(t, { sources, oldApplied = '', marker = true, failDownload = false, failDownloadUrl = '', failRemove = false, statusUrl = '', existingShared = false } = {}) {
@@ -36,7 +39,7 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
     'while [ "$#" -gt 0 ]; do case "$1" in --connect-timeout|--max-time) printf "%s\\t%s\\n" "$1" "$2" >> "$CURL_OPTIONS"; shift 2;; -o) output=$2; shift 2;; https://*) url=$1; shift;; *) shift;; esac; done',
     'printf "%s\\n" "$url" >> "$CURL_CALLS"',
     'printf "%s\\n" "$FAIL_URL" | grep -Fxq "$url" && { echo "curl: (${FAIL_CURL_CODE:-28}) simulated download failure" >&2; exit "${FAIL_CURL_CODE:-28}"; }',
-    'printf "||ads.example^\\n" > "$output"',
+    'case "$url" in */GOODBYEADS/master/data/rules/allow.txt) printf "%s\\n" "${ALLOW_CONTENT:-@@||allowed.example^}" > "$output" ;; *) printf "||ads.example^\\n" > "$output" ;; esac',
   ].join('\n'));
   chmodSync(curl, 0o755);
 
@@ -102,6 +105,57 @@ test('subscriptions download through system curl and AdGuard Home receives only 
   assert.ok(localPath.includes('adblock-pro-source-'));
   assert.match(readFileSync(nativePath(localPath), 'utf8'), /ads\.example/);
   assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), feed + '\n');
+});
+
+test('GOODBYEADS downloads both lists into one removable filter and keeps other sources independent', t => {
+  const f = fixture(t, { sources: 'mode\tbalanced\n' + goodbyeRow + 'source\tcustom\tOther Feed\t' + feed + '\tenabled\tconfigured\tremovable\n' });
+  f.env.ALLOW_CONTENT = '! original header\n@@||allowed.example^\n@@||browser.example^$domain=site.example';
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(readFileSync(f.curlCalls, 'utf8').trim().split('\n'), [goodbye, goodbyeAllow, feed]);
+  const adds = readFileSync(f.calls, 'utf8').trim().split('\n').filter(x => x.startsWith('POST\t/filtering/add_url\t')).map(x => JSON.parse(x.split('\t')[2]));
+  assert.equal(adds.length, 2);
+  const paired = adds.find(x => x.name === 'GOODBYEADS DNS').url;
+  assert.match(readFileSync(nativePath(paired), 'utf8'), /\|\|ads\.example\^[\s\S]*@@\|\|allowed\.example\^/);
+  assert.match(readFileSync(nativePath(paired), 'utf8'), /@@\|\|browser\.example\^\$domain=site\.example/, 'browser scope is never removed or widened');
+  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), goodbye + '\n' + feed + '\n');
+  writeFileSync(nativePath(f.env.SOURCE_LIST), 'mode\tbalanced\nsource\tcustom\tOther Feed\t' + feed + '\tenabled\tconfigured\tremovable\n');
+  assert.equal(f.run().status, 0);
+  assert.equal(existsSync(nativePath(paired)), false, 'removing the source removes the block and companion exceptions together');
+  assert.match(readFileSync(f.calls, 'utf8'), /POST\t\/filtering\/remove_url/);
+});
+
+test('GOODBYEADS uses HTTPS fallback independently for the block and companion list', t => {
+  const raw = url => url.replace('https://ghfast.top/', 'https://');
+  const f = fixture(t, { sources: 'mode\tbalanced\n' + goodbyeRow, failDownloadUrl: goodbye + '\n' + goodbyeAllow });
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(readFileSync(f.curlCalls, 'utf8').trim().split('\n'), [goodbye, raw(goodbye), goodbyeAllow, raw(goodbyeAllow)]);
+});
+
+test('a failed companion download preserves the complete previous filter and never mutates the running core', t => {
+  const f = fixture(t, { sources: 'mode\tbalanced\n' + goodbyeRow });
+  assert.equal(f.run().status, 0);
+  const beforeCalls = readFileSync(f.calls, 'utf8');
+  const paired = JSON.parse(beforeCalls.split('\n').find(x => x.startsWith('POST\t/filtering/add_url\t')).split('\t')[2]).url;
+  const beforeFilter = readFileSync(nativePath(paired), 'utf8');
+  f.env.FAIL_URL = goodbyeAllow + '\n' + goodbyeAllow.replace('https://ghfast.top/', 'https://');
+  const result = f.run();
+  assert.equal(result.status, 2, result.stderr + result.stdout);
+  assert.equal(readFileSync(f.calls, 'utf8'), beforeCalls);
+  assert.equal(readFileSync(nativePath(paired), 'utf8'), beforeFilter);
+  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), goodbye + '\n');
+});
+
+test('GOODBYEADS rejects a companion file containing block rules or no DNS exceptions', t => {
+  for (const body of ['||not-an-allow-list.example^', '@@||browser.example^$domain=site.example']) {
+    const f = fixture(t, { sources: 'mode\tbalanced\n' + goodbyeRow });
+    f.env.ALLOW_CONTENT = body;
+    const result = f.run();
+    assert.equal(result.status, 2, result.stderr + result.stdout);
+    assert.match(result.stderr, /放行文件格式异常/);
+    assert.equal(existsSync(f.calls), false);
+  }
 });
 
 test('a failed subscription download keeps the previous applied source record and never mutates AdGuard Home', t => {
