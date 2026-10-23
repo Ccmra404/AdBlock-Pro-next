@@ -934,6 +934,20 @@ case "$1" in
     ;;
   --status) status ;;
   --pause) "$AGH/scripts/tool.sh" stop ;;
+  --dns-save|--dns-restore)
+    if [ "${ABP_UPDATE_LOCKED:-0}" != 1 ]; then
+      export ABP_UPDATE_LOCKED=1
+      exec "$BB" flock -n "$STATE/update.lock" "$BB" sh "$0" "$@"
+    fi
+    case "$2" in ''|*[!A-Za-z0-9+/=]*) exit 1;; esac
+    [ ${#2} -le 24000 ] || exit 1
+    printf '%s' "$2" | "$BB" base64 -d | "$AGH/bin/adblock-bootstrap" dns "${1#--dns-}"
+    dns_result=$?
+    if [ "$dns_result" = 3 ]; then
+      "$AGH/scripts/iptables.sh" disable || echo '[!] 本模块 DNS 接管清理未确认，请查看环境诊断。' >&2
+    fi
+    exit "$dns_result"
+    ;;
   --resume)
     # start now reconciles a running resolver's listener and firewall state;
     # avoid an unnecessary DNS interruption when merely resuming.

@@ -56,7 +56,9 @@ def exercise(engine, bootstrap):
         config.write_text(text)
         credential = base64.b64encode(auth.read_text().strip().encode()).decode()
 
-        def api(route, body=None, *, parse_json=True):
+        def api(route, body=None, *, parse_json=True, expect_json=None):
+            if expect_json is not None:
+                parse_json = expect_json
             request = urllib.request.Request(f'http://127.0.0.1:{http_port}/control' + route,
                 data=None if body is None else json.dumps(body).encode(),
                 headers={'Authorization': 'Basic ' + credential, 'Content-Type': 'application/json'})
@@ -197,6 +199,25 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                 assert blocked('native-regression.example') and blocked('shared-refresh-regression.example')
                 apply_personal(['readded-personal.example'], [])
                 wait_until(lambda: blocked('readded-personal.example'))
+                # Verify the real bundled API accepts only our four editable
+                # DNS fields without altering filters or query-log preferences.
+                dns_before = api('/dns_info')
+                keys = ('upstream_dns', 'bootstrap_dns', 'fallback_dns', 'upstream_mode')
+                original_dns = {key: dns_before[key] for key in keys}
+                candidate_dns = {**original_dns, 'upstream_mode': 'parallel'}
+                filter_urls = [item['url'] for item in api('/filtering/status')['filters']]
+                try:
+                    api('/dns_config', candidate_dns)
+                    assert api('/dns_info')['upstream_mode'] == 'parallel', 'DNS mode did not apply'
+                    assert process.poll() is None, 'DNS settings stopped the core'
+                    assert api('/querylog_info')['enabled'] is False, 'DNS settings changed observation privacy'
+                    assert [item['url'] for item in api('/filtering/status')['filters']] == filter_urls, 'DNS settings replaced filters'
+                    api('/cache_clear', {}, expect_json=False)
+                finally:
+                    api('/dns_config', original_dns)
+                dns_restored = api('/dns_info')
+                assert all(dns_restored[key] == original_dns[key] for key in keys), 'DNS API rollback lost original settings'
+
                 # The optional GOODBYEADS source combines unchanged @@ exceptions
                 # with its DNS blocklist in one ordinary local filter.
                 paired = personal.with_name('paired-regression.txt')
@@ -222,7 +243,7 @@ if (!result.some(item => item.domain === process.argv[2])) throw new Error('Live
                 except subprocess.TimeoutExpired:
                     process.kill()
                     process.wait()
-    print('Native ARM64: personal-only apply, repeat edits, empty/re-add, whitelist, native user_rules, paired subscription exceptions and memory-only observation parsing passed.')
+    print('Native ARM64: personal rules, DNS configuration API preservation, paired subscription exceptions and memory-only observation parsing passed.')
 
 
 if __name__ == '__main__':
