@@ -53,8 +53,9 @@ class ModuleZipTests(unittest.TestCase):
                 validator.validate(self.fixture(missing=name), VERSION, 45)
 
     def test_missing_compat_layer_is_rejected(self):
-        with self.assertRaisesRegex(ValueError, 'missing installer'):
-            validator.validate(self.fixture(missing='scripts/compat.sh'), VERSION, 45)
+        for name in ['scripts/compat.sh', 'scripts/network-diagnostics.sh']:
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'missing installer'):
+                validator.validate(self.fixture(missing=name), VERSION, 45)
 
     def test_debug_interface_is_included_in_installable_archives(self):
         with self.assertRaisesRegex(ValueError, 'missing installer'):

@@ -61,6 +61,20 @@ ipv4_redirect_status() {
   return 1
 }
 
+ipv6_table_diagnostic() {
+  local table=$1 chain=$2 field=$3 count table_state=unknown jump_state=unknown
+  check_ipv6_table_support "$table"
+  case "$?" in
+    0)
+      if count=$(count_chain_jumps "$ip6tables_w" "$table" "$chain"); then
+        table_state=readable; jump_state=absent
+        [ "$count" -eq 0 ] || jump_state=present
+      fi ;;
+    1) table_state=unsupported; jump_state=unsupported ;;
+  esac
+  printf 'diag_ipv6_%s_table=%s\ndiag_ipv6_%s=%s\n' "$table" "$table_state" "$field" "$jump_state"
+}
+
 # Read-only: 0 = an owned jump exists, 1 = confirmed absent, 2 = unknown.
 # A visible jump takes precedence over an unreadable table so cleanup is tried.
 redirect_status() {
@@ -203,6 +217,19 @@ rollback_failed_enable() {
 }
 
 case "$1" in
+diagnose-ipv6)
+  # Read-only and bounded; a readable table does not prove REDIRECT can be installed.
+  ip6tables_w="ip6tables -w 1"
+  case "$enable_ipv6_dns:$block_ipv6_dns" in
+    false:*) mode=disabled ;;
+    true:true) mode=block ;;
+    true:false) mode=redirect ;;
+    *) mode=unknown ;;
+  esac
+  printf 'diag_ipv6_mode=%s\n' "$mode"
+  ipv6_table_diagnostic nat ADGUARD_REDIRECT_DNS6 redirect
+  ipv6_table_diagnostic filter ADGUARD_BLOCK_DNS block
+  ;;
 status|status-ipv4)
   if [ "$1" = status-ipv4 ]; then
     # UI reads must not wait through a long-running firewall writer.
@@ -244,7 +271,7 @@ disable)
   disable_ipv6_iptables || exit 1
   ;;
 *)
-  echo "Usage: $0 {enable|disable|status|status-ipv4}"
+  echo "Usage: $0 {enable|disable|status|status-ipv4|diagnose-ipv6}"
   exit 1
   ;;
 esac
