@@ -8,7 +8,7 @@ import { shellPath } from './shell-fixture.mjs';
 
 const helper = new URL('../scripts/vpn-compat.sh', import.meta.url);
 
-function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on', redirect = true, core = true, netReadable = true, failDisable = false } = {}) {
+function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on', redirect = true, core = true, netReadable = true, failDisable = false, interfaces = null } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'abp-vpn-compat-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const agh = path.join(root, 'agh');
@@ -24,7 +24,12 @@ function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on',
   writeFileSync(path.join(agh, 'settings.conf'), 'redir_port=5591\n');
   writeFileSync(path.join(agh, 'bin/agh.pid'), '777\n');
   if (core) writeFileSync(path.join(proc, '777/cmdline'), Buffer.from(shellPath(agh) + '/bin/AdGuardHome\0'));
-  if (vpn) mkdirSync(path.join(sys, 'tun0'));
+  const netInterfaces = interfaces ?? (vpn ? [['tun0', '0x1001']] : []);
+  for (const [name, flags] of netInterfaces) {
+    const interfaceDir = path.join(sys, name);
+    mkdirSync(interfaceDir, { recursive: true });
+    if (flags !== null) writeFileSync(path.join(interfaceDir, 'flags'), flags + '\n');
+  }
   if (!netReadable) rmSync(sys, { recursive: true, force: true });
   writeFileSync(path.join(proc, 'net/udp'), 'sl local_address rem_address st\n 0: 0100007F:15D7 00000000:0000 07 00000000:00000000 00:00000000 00000000 1000 0 1 00000000\n');
   writeFileSync(path.join(proc, 'net/tcp'), 'sl local_address rem_address st\n 0: 0100007F:15D7 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 1 00000000\n');
@@ -75,6 +80,20 @@ test('startup pauses only module DNS redirection when a TUN interface is present
   assert.equal(f.state('dns-takeover'), 'on');
   assert.equal(f.firewall(), '0');
   assert.match(f.history(), /过滤核心继续运行/);
+});
+
+test('a down kernel tunl0 placeholder is not mistaken for an active VPN', t => {
+  const f = fixture(t, { interfaces: [['tunl0', '0x80']] });
+  const r = f.run('detect');
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), 'absent');
+});
+
+test('an unreadable matching tunnel state remains unknown', t => {
+  const f = fixture(t, { interfaces: [['tun0', null]] });
+  const r = f.run('detect');
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), 'unknown');
 });
 
 test('an unreadable interface directory pauses rather than assuming VPN is absent', t => {

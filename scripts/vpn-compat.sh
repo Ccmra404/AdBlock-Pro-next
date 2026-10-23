@@ -55,12 +55,23 @@ log_transition() {
 # exposes wg*. No VPN-specific address, package name or proxy is assumed.
 # Return codes: 0 active, 1 absent, 2 unknown (sysfs could not be read).
 detect_tunnel() {
-  local names name
+  local names name flags unknown
   [ -d "$SYS_CLASS_NET" ] || return 2
   names=$(ls -1 "$SYS_CLASS_NET" 2>/dev/null) || return 2
+  unknown=0
   for name in $names; do
-    case "$name" in tun*|wg*) return 0 ;; esac
+    case "$name" in
+      tun*|wg*)
+        # The kernel exposes tunl0 even when no VPN is running. Only treat a
+        # tunnel as active when its sysfs flags include IFF_UP; if the state
+        # cannot be read, fail open instead of assuming the VPN is absent.
+        flags=$(cat "$SYS_CLASS_NET/$name/flags" 2>/dev/null) || { unknown=1; continue; }
+        case "$flags" in 0x[0-9a-fA-F]*|0X[0-9a-fA-F]*) ;; *) unknown=1; continue ;; esac
+        [ $((flags & 1)) -ne 0 ] && return 0
+        ;;
+    esac
   done
+  [ "$unknown" -eq 1 ] && return 2
   return 1
 }
 
