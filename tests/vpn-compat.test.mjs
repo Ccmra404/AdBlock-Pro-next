@@ -28,6 +28,10 @@ function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on',
   if (!netReadable) rmSync(sys, { recursive: true, force: true });
   writeFileSync(path.join(proc, 'net/udp'), 'sl local_address rem_address st\n 0: 0100007F:15D7 00000000:0000 07 00000000:00000000 00:00000000 00000000 1000 0 1 00000000\n');
   writeFileSync(path.join(proc, 'net/tcp'), 'sl local_address rem_address st\n 0: 0100007F:15D7 00000000:0000 0A 00000000:00000000 00:00000000 00000000 1000 0 1 00000000\n');
+  // Android exposes both IPv4 and IPv6 proc tables; keep the fixture aligned
+  // so listener checks can prove readiness from either family.
+  writeFileSync(path.join(proc, 'net/udp6'), 'sl local_address remote_address st\n');
+  writeFileSync(path.join(proc, 'net/tcp6'), 'sl local_address remote_address st\n');
   const fwState = path.join(root, 'redirect');
   const calls = path.join(root, 'firewall-calls');
   writeFileSync(fwState, redirect ? '1\n' : '0\n');
@@ -53,11 +57,17 @@ esac
         FIREWALL_STATE: shellPath(fwState), FIREWALL_CALLS: shellPath(calls), FAIL_DISABLE: failDisable ? '1' : '0' },
     });
   }
-  return { run, state: name => readFileSync(path.join(state, name), 'utf8').trim(), firewall: () => readFileSync(fwState, 'utf8').trim(), calls: () => readFileSync(calls, 'utf8'), history: () => readFileSync(path.join(agh, 'history.log'), 'utf8') };
+  const readIfPresent = file => {
+    try { return readFileSync(file, 'utf8'); } catch (error) {
+      if (error.code === 'ENOENT') return '';
+      throw error;
+    }
+  };
+  return { run, state: name => readIfPresent(path.join(state, name)).trim(), firewall: () => readFileSync(fwState, 'utf8').trim(), calls: () => readIfPresent(calls), history: () => readIfPresent(path.join(agh, 'history.log')) };
 }
 
 test('startup pauses only module DNS redirection when a TUN interface is present', t => {
-  const f = fixture(t, { vpn: true });
+  const f = fixture(t, { vpn: true, paused: false });
   const r = f.run('start-guard');
   assert.equal(r.status, 0, r.stderr);
   assert.equal(r.stdout.trim(), 'paused-vpn', 'firewall log output must not pollute the start guard result');
