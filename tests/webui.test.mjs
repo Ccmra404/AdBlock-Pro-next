@@ -46,7 +46,7 @@ function harness() {
   });
   vm.runInContext(source, context);
   const methods = vm.runInContext(
-    '({ state, refreshStatus, syncStatusView, loadSources, loadList, loadLogs, monitorJob, summaryText, memoryView, homePage, setBusy, nextJobId, progress, startJob, startObservation })', context);
+    '({ state, refreshStatus, syncStatusView, loadSources, loadList, loadLogs, monitorJob, summaryText, memoryView, homePage, managePage, setBusy, nextJobId, progress, startJob, startObservation })', context);
   return { ...methods, pending, controls, timers, serviceRows, context };
 }
 const status = (state, mode = 'balanced') =>
@@ -148,6 +148,23 @@ test('home service status rows refresh after the initial unknown render', () => 
   assert.equal(h.serviceRows[1].tag.textContent, '重定向已应用');
   assert.equal(h.serviceRows[0].tag.classes.has('green'), true);
   assert.equal(h.serviceRows[1].tag.classes.has('green'), true);
+  h.state.status = { state: 'bypassed', dns_core_running: '1', dns_listener: '1', dns_health: 'vpn_paused', dns_takeover: 'on', dns_redirect: '0' };
+  h.syncStatusView();
+  assert.equal(h.serviceRows[1].tag.textContent, 'VPN 下暂停');
+  assert.equal(h.serviceRows[1].tag.classes.has('green'), false);
+});
+
+test('VPN compatibility is opt-in and explains whole-device bypass and restore behavior', () => {
+  const h = harness();
+  h.state.status = { vpn_compat: 'off', dns_takeover: 'on' };
+  const markup = h.managePage();
+  assert.match(markup, /VPN\/TUN 自动兼容/);
+  assert.match(markup, /VPN\/TUN 自动兼容默认关闭/);
+  assert.match(markup, /旁路整机的模块 DNS 接管/);
+  assert.match(markup, /IPv6 DNS 接管\/阻断/);
+  assert.match(markup, /即使 VPN 仍连接/);
+  assert.match(markup, /data-toggle="vpn-compat"/);
+  assert.doesNotMatch(markup, /data-toggle="vpn-compat" checked/);
 });
 
 for (const takeover of ['on', 'off']) test(`unknown firewall state is not displayed as absent or bypassed: ${takeover}`, () => {

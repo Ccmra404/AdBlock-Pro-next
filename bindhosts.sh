@@ -340,6 +340,12 @@ classify_dns_health() {
   elif [ "$takeover" = off ] && [ "$redirected" = 0 ]; then health=takeover_off; state=bypassed
   elif [ "$takeover" = off ]; then health=takeover_cleanup_pending
   elif [ "$takeover" != on ]; then health=takeover_unknown
+  elif [ "$vpn_compat_state" = vpn ] && [ "$redirected" = 0 ]; then health=vpn_paused; state=bypassed
+  elif [ "$vpn_compat_state" = vpn ] && [ "$redirected" != 0 ]; then health=vpn_compat_error
+  elif [ "$vpn_compat_state" = unknown ] && [ "$redirected" = 0 ]; then health=vpn_state_unknown; state=bypassed
+  elif [ "$vpn_compat_state" = unknown ] && [ "$redirected" != 0 ]; then health=vpn_compat_error
+  elif [ "$vpn_compat_state" = resume_wait ] && [ "$redirected" = 0 ]; then health=vpn_resume_wait; state=bypassed
+  elif [ "$vpn_compat_state" = error ]; then health=vpn_compat_error
   elif [ "$redirected" != 1 ]; then health=takeover_failed
   else health=active; state=active
   fi
@@ -360,6 +366,8 @@ status() {
   listening=0; [ "$listening_udp" = 1 ] && [ "$listening_tcp" = 1 ] && listening=1
   read_redirect_state
   takeover=$(cat "$STATE/dns-takeover" 2>/dev/null); case "$takeover" in on|off) ;; *) takeover=unknown ;; esac
+  vpn_compat=$(cat "$STATE/vpn-compat" 2>/dev/null); case "$vpn_compat" in on|off) ;; *) vpn_compat=off ;; esac
+  vpn_compat_state=$(cat "$STATE/vpn-compat-state" 2>/dev/null); case "$vpn_compat_state" in vpn|unknown|resume_wait|error) ;; *) vpn_compat_state=none ;; esac
   classify_dns_health
   mode=$(cat "$STATE/blocking-mode" 2>/dev/null); case "$mode" in light|balanced|strict) ;; *) mode=balanced ;; esac
   auto=$(cat "$STATE/auto-update" 2>/dev/null); case "$auto" in on|off) ;; *) auto=on ;; esac
@@ -385,7 +393,7 @@ status() {
   case "$filtering_enabled" in true|false) ;; *) filtering_enabled=unknown ;; esac
   autostart=$(cat "$STATE/autostart" 2>/dev/null); case "$autostart" in on|off) ;; *) autostart=on ;; esac
   printf 'state=%s blocked=%s mode=%s\n' "$state" "$count" "$mode"
-  printf 'filtering_enabled=%s\ndns_takeover=%s\nautostart=%s\n' "$filtering_enabled" "$takeover" "$autostart"
+  printf 'filtering_enabled=%s\ndns_takeover=%s\nvpn_compat=%s\nvpn_compat_state=%s\nautostart=%s\n' "$filtering_enabled" "$takeover" "$vpn_compat" "$vpn_compat_state" "$autostart"
   printf 'dns_core_running=%s\ndns_health=%s\n' "$running" "$health"
   [ "$running" = 1 ] || pid=''
   "$BB" sh "$AGH/scripts/memory.sh" quick "$pid" | "$BB" sed 's/^mem_rss/dns_rss/;s/^mem_pss/dns_pss/;s/^mem_/dns_mem_/'
@@ -896,12 +904,14 @@ diagnose() {
   filter_json=$(api GET /filtering/status 4 2>/dev/null); filter_ok=$?
   count=0; [ "$filter_ok" -ne 0 ] || count=$(rules_count "$filter_json")
   takeover=$(cat "$STATE/dns-takeover" 2>/dev/null); case "$takeover" in on|off) ;; *) takeover=unknown ;; esac
+  vpn_compat=$(cat "$STATE/vpn-compat" 2>/dev/null); case "$vpn_compat" in on|off) ;; *) vpn_compat=off ;; esac
+  vpn_compat_state=$(cat "$STATE/vpn-compat-state" 2>/dev/null); case "$vpn_compat_state" in vpn|unknown|resume_wait|error) ;; *) vpn_compat_state=none ;; esac
   classify_dns_health
   case "$state" in active) state=ready ;; paused) state=stopped ;; esac
   printf 'diag_root_uid=%s\ndiag_service_state=%s\ndiag_agh_binary_readable=%s\ndiag_loaded_rule_count=%s\n' \
     "$root_uid" "$state" "$([ -x "$AGH/bin/AdGuardHome" ] && echo yes || echo no)" "$count"
-  printf 'diag_dns_listener=%s\ndiag_dns_listener_udp=%s\ndiag_dns_listener_tcp=%s\ndiag_dns_api=%s\ndiag_dns_takeover=%s\ndiag_dns_redirect=%s\n' \
-    "$listening" "$listening_udp" "$listening_tcp" "$([ "$api_ok" = 0 ] && echo yes || echo no)" "$takeover" "$redirected"
+  printf 'diag_dns_listener=%s\ndiag_dns_listener_udp=%s\ndiag_dns_listener_tcp=%s\ndiag_dns_api=%s\ndiag_dns_takeover=%s\ndiag_dns_redirect=%s\ndiag_vpn_compat=%s\ndiag_vpn_compat_state=%s\n' \
+    "$listening" "$listening_udp" "$listening_tcp" "$([ "$api_ok" = 0 ] && echo yes || echo no)" "$takeover" "$redirected" "$vpn_compat" "$vpn_compat_state"
   if [ -f "$AGH/scripts/network-diagnostics.sh" ]; then
     "$BB" sh "$AGH/scripts/network-diagnostics.sh" || echo '[提醒] 网络诊断未完成，不能据此确认网络状态。'
   else echo '[提醒] 网络诊断组件缺失，请完整更新模块。'; fi
@@ -993,20 +1003,15 @@ case "$1" in
     ;;
   --takeover)
     case "$2" in
-      off)
-        "$AGH/scripts/iptables.sh" disable || exit 1
-        printf 'off\n' > "$STATE/dns-takeover.tmp" && chmod 600 "$STATE/dns-takeover.tmp" && mv "$STATE/dns-takeover.tmp" "$STATE/dns-takeover" || exit 1
-        echo '[+] DNS redirection disabled; AdGuard Home remains available.'
-        ;;
       on)
         pid=''; [ ! -r "$AGH/bin/agh.pid" ] || pid=$(cat "$AGH/bin/agh.pid")
         is_our_process "$pid" || { echo '[!] AdGuard Home is not running.' >&2; exit 1; }
         is_dns_listening || { echo '[!] Both TCP and UDP DNS listeners must be ready before redirecting.' >&2; exit 1; }
-        "$AGH/scripts/iptables.sh" enable || { "$AGH/scripts/iptables.sh" disable >/dev/null 2>&1; exit 1; }
-        printf 'on\n' > "$STATE/dns-takeover.tmp" && chmod 600 "$STATE/dns-takeover.tmp" && mv "$STATE/dns-takeover.tmp" "$STATE/dns-takeover" || { "$AGH/scripts/iptables.sh" disable >/dev/null 2>&1; exit 1; }
-        echo '[+] DNS redirection enabled after TCP and UDP listener checks.'
         ;;
+      off) ;;
+      *) echo '[!] Expected on or off.' >&2; exit 1 ;;
     esac
+    "$BB" sh "$AGH/scripts/vpn-compat.sh" set-takeover "$2" || exit 1
     ;;
   --restart)
     "$AGH/scripts/tool.sh" stop || exit 1

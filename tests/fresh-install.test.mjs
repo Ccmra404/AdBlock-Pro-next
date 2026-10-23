@@ -55,6 +55,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     assert.equal(existsSync(path.join(f.runtime, 'defaults/filters/10007.txt')), true);
     assert.equal(existsSync(path.join(f.runtime, 'bin/adblock-bootstrap')), true);
     assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'on\n');
+    assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'off\n');
     assert.match(installed.stdout, /DNS takeover: on \(initialized\)/);
     assert.match(readFileSync(path.join(f.runtime, 'bin/adblock-ai'), 'utf8'), /AI-fixture/);
     mkdirSync(path.join(f.state, 'ai'), { recursive: true });
@@ -75,12 +76,14 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     writeFileSync(path.join(f.state, 'blacklist.txt'), 'custom.personal.example\ncustom.personal.example\n');
     writeFileSync(path.join(f.state, 'whitelist.txt'), 'login.personal.example\n');
     writeFileSync(path.join(f.state, 'dns-takeover'), 'off\n');
+    writeFileSync(path.join(f.state, 'vpn-compat'), 'on\n');
     chmodSync(path.join(f.runtime, 'bin'), 0o755);
     const again = f.install(); assert.equal(again.status, 0, again.stderr + again.stdout);
     if (process.platform !== 'win32') assert.equal(statSync(path.join(f.runtime, 'bin')).mode & 0o777, 0o700);
     assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), 'custom.personal.example\ncustom.personal.example\n');
     assert.equal(readFileSync(path.join(f.runtime, 'bin/userfilters/adblock-pro-shared-app-rules.txt'), 'utf8'), shared);
     assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'off\n');
+    assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'on\n');
     assert.equal(readFileSync(path.join(f.state, 'ai/config.json'), 'utf8'), 'fixture-private-config');
     assert.match(again.stdout, /DNS takeover: off \(preserved\)/);
     assert.equal(readFileSync(personal, 'utf8').split('||custom.personal.example^').length, 2);

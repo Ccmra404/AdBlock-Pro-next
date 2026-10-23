@@ -101,6 +101,10 @@ function summaryText() {
   if (s.dns_health === 'api_failed') return ['DNS 管理接口异常', '核心进程存在，但无法读取 AdGuard Home API。请查看环境检测。'];
   if (s.dns_health === 'takeover_state_unknown' || s.dns_redirect === 'unknown') return ['系统 DNS 接管状态未知', '无法可靠读取防火墙规则；尚不能确认接管已应用或已清理。请查看环境检测。'];
   if (s.dns_health === 'takeover_cleanup_pending') return ['系统接管尚未清理', '已保存关闭偏好，但仍检测到本模块重定向。请检查后再停止核心。'];
+  if (s.dns_health === 'vpn_paused') return ['检测到 VPN 接口，DNS 暂时旁路', '过滤核心继续运行；接口连续约 15 秒不可见后自动恢复 DNS 接管。'];
+  if (s.dns_health === 'vpn_state_unknown') return ['VPN 状态暂不可读', '为避免影响联网，DNS 重定向已暂时旁路；状态可确认并稳定后会自动恢复。'];
+  if (s.dns_health === 'vpn_resume_wait') return ['正在等待 VPN 状态稳定', 'VPN 接口刚消失，连续确认约 15 秒后才恢复 DNS 接管。'];
+  if (s.dns_health === 'vpn_compat_error') return ['VPN 自动兼容状态异常', '未能确认 DNS 重定向切换结果，请查看运行日志与环境诊断。'];
   if (s.dns_takeover === 'off') return ['已关闭系统接管，DNS 核心仍运行', '这是已保存的关闭偏好；系统 DNS 不会经过本模块过滤。可在设置中重新开启。'];
   if (s.dns_health === 'takeover_unknown') return ['系统接管偏好无法读取', '未确认已保存的接管设置，请查看环境检测。'];
   if (s.dns_redirect === '0') return ['系统 DNS 接管未成功', 'DNS 核心正在运行，但本模块重定向尚未应用。请查看环境检测。'];
@@ -116,6 +120,11 @@ function redirectText(s) {
   return s?.dns_redirect === '1' ? '已应用' : s?.dns_redirect === '0' ? '未应用' : '状态未知';
 }
 function takeoverText(s) {
+  if (s?.dns_redirect === '1') return '重定向已应用';
+  if (s?.dns_health === 'vpn_paused') return 'VPN 下暂停';
+  if (s?.dns_health === 'vpn_state_unknown') return '状态未知，已旁路';
+  if (s?.dns_health === 'vpn_resume_wait') return '等待恢复';
+  if (s?.dns_health === 'vpn_compat_error') return '自动旁路状态异常';
   return s?.dns_redirect === '0' && s?.dns_takeover === 'off' ? '主动关闭' : `重定向${redirectText(s)}`;
 }
 function queryTotal(stats) {
@@ -368,7 +377,7 @@ async function saveDNS(restore = false) {
 function managePage() {
   const s = state.status;
   return `${heading('系统设置', '管理 DNS 接管、自动运行与维护')}
-    <div class="stack"><section class="panel"><div class="panel-head"><div><h2 class="section-title">运行设置</h2><p class="section-sub">过滤暂停不会关闭 DNS 核心；DNS 接管可单独撤销</p></div></div><div class="rows">${row('globe','DNS 接管','控制本模块的 DNS 重定向规则',toggle('takeover',s?.dns_takeover === 'on','DNS 接管'))}${row('power','开机自动运行','关闭后下次开机不自动启动核心',toggle('autostart',s?.autostart !== 'off','开机自动运行'))}${row('refresh','每日自动更新','由模块每日下载已启用的规则；失败后间隔重试',toggle('auto-update',s?.auto_update !== 'off','每日自动更新'))}</div><div class="notice warn" style="margin-top:14px">${icon('info')}<span>此模块只接管 IPv4 明文 DNS。私人 DNS、VPN、应用内 DoH/DoT 可能绕过过滤；IPv6 DNS 不接管。</span></div></section>
+    <div class="stack"><section class="panel"><div class="panel-head"><div><h2 class="section-title">运行设置</h2><p class="section-sub">过滤暂停不会关闭 DNS 核心；DNS 接管可单独撤销</p></div></div><div class="rows">${row('globe','DNS 接管','控制本模块的 DNS 重定向规则',toggle('takeover',s?.dns_takeover === 'on','DNS 接管'))}${row('shield','VPN/TUN 自动兼容','检测到 TUN 或 WireGuard 接口时自动暂停 DNS 接管',toggle('vpn-compat',s?.vpn_compat === 'on','VPN/TUN 自动兼容'))}${row('power','开机自动运行','关闭后下次开机不自动启动核心',toggle('autostart',s?.autostart !== 'off','开机自动运行'))}${row('refresh','每日自动更新','由模块每日下载已启用的规则；失败后间隔重试',toggle('auto-update',s?.auto_update !== 'off','每日自动更新'))}</div><div class="notice warn" style="margin-top:14px">${icon('info')}<span>VPN/TUN 自动兼容默认关闭。开启后检测到 TUN/WireGuard 接口会旁路整机的模块 DNS 接管，AdGuard Home 核心继续运行；VPN 断开并稳定约 15 秒后按原设置恢复。分应用 VPN 期间也会旁路整机 DNS。若启用了模块的 IPv6 DNS 接管/阻断，对应规则也会临时移除并在恢复时重建。关闭此选项会立即按 DNS 接管开关恢复重定向，即使 VPN 仍连接。私人 DNS、应用内 DoH/DoT 仍可能绕过本模块。</span></div></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">运行维护</h2><p class="section-sub">诊断结果统一保存在运行日志中</p></div></div><div class="btn-row"><button class="btn" data-action="diagnose">${icon('activity')} 运行诊断</button><button class="btn" data-action="dns-settings">${icon('globe')} DNS 上游设置</button><button class="btn" data-action="restart">${icon('refresh')} 重启 DNS 核心</button><button class="btn btn-danger" data-action="disable-takeover">${icon('power')} 紧急解除接管</button><button class="btn" data-nav="logs">查看运行日志</button></div></section><div id="dns-settings-panel">${dnsSettingsMarkup()}</div>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">恢复默认设置</h2><p class="section-sub">按当前安装包的默认状态重新初始化模块</p></div></div><p class="field-help">会重置订阅源及名称、个人黑白名单、AI 接口密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享快照、日志和历史。DNS 接管恢复为 IPv4 默认开启，IPv6 接管仍关闭。操作前将个人名单及基础偏好备份到 Download/AdBlock Pro；含凭据的完整备份仅保存在 Root 私有目录。</p><button class="btn btn-danger" data-action="restore-defaults">${icon('refresh')} 恢复默认设置</button></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">管理入口</h2><p class="section-sub">规则高级配置由 AdGuard Home 原生后台提供</p></div></div><div class="action-grid"><a class="action-card" href="http://127.0.0.1:3000/" target="_blank" rel="noopener">${icon('external')}<span class="action-text"><strong>AdGuard Home 后台</strong><small>订阅、上游 DNS 与查询日志</small></span></a><button type="button" class="action-card" data-action="copy-gkd-link">${icon('activity')}<span class="action-text"><strong>GKD 项目</strong><small>复制项目链接，在浏览器中查看</small></span></button><button type="button" class="action-card" data-action="ai-settings">${icon('settings')}<span class="action-text"><strong>AI 域名分析</strong><small>DeepSeek 或自定义兼容接口</small></span></button></div><p class="field-help">WebUI 不保存或展示 AdGuard Home 管理密码；首次登录凭据由安装包单独提供。</p></section><div id="ai-settings-panel">${aiSettingsMarkup()}</div></div>`;
@@ -694,7 +703,7 @@ function syncStatusView() {
     updateTag($('.tag', serviceRows[1]), takeoverText(s), s?.dns_redirect === '1');
     setText('#page-content .stack > .panel:last-child .panel-head .section-sub', s ? when(s.last_update) : '读取中');
   } else if (state.page === 'manage') {
-    for (const [key, on] of [['takeover', s?.dns_takeover === 'on'], ['autostart', s?.autostart !== 'off'], ['auto-update', s?.auto_update !== 'off']]) {
+    for (const [key, on] of [['takeover', s?.dns_takeover === 'on'], ['vpn-compat', s?.vpn_compat === 'on'], ['autostart', s?.autostart !== 'off'], ['auto-update', s?.auto_update !== 'off']]) {
       const input = $('[data-toggle="' + key + '"]');
       if (input && !state.busy && !input.disabled) input.checked = Boolean(s && on);
     }

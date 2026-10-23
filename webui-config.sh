@@ -272,6 +272,10 @@ case "$1" in
     printf '%s\n' "$2" > "$DIR/autostart.tmp" && chmod 600 "$DIR/autostart.tmp" && mv "$DIR/autostart.tmp" "$DIR/autostart" || exit 1
     echo "[+] Automatic startup $2."
     ;;
+  vpn-compat)
+    case "$2" in on|off) ;; *) echo '[!] Expected on or off.' >&2; exit 1 ;; esac
+    "$BB" sh /data/adb/adblockpro/scripts/vpn-compat.sh set-mode "$2"
+    ;;
   set-mode)
     case "$2" in light|balanced|strict) ;; *) echo '[!] Invalid blocking profile.' >&2; exit 1 ;; esac
     printf '%s\n' "$2" > "$DIR/blocking-mode.tmp" && mv "$DIR/blocking-mode.tmp" "$DIR/blocking-mode" || exit 1

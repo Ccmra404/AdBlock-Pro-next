@@ -75,10 +75,11 @@ chmod 600 "$DATA_DIR/defaults/settings.conf" "$DATA_DIR/defaults/config-blacklis
 
 initialize_switch() {
   file="$STATE_DIR/$1"
+  default=${2:-on}
   origin=preserved
   if [ ! -e "$file" ]; then
     tmp="$file.tmp.$$"
-    printf 'on\n' > "$tmp" && chmod 600 "$tmp" && mv "$tmp" "$file" ||
+    printf '%s\n' "$default" > "$tmp" && chmod 600 "$tmp" && mv "$tmp" "$file" ||
       fail "Cannot initialize $1."
     origin=initialized
   fi
@@ -88,6 +89,7 @@ initialize_switch() {
 }
 initialize_switch autostart
 initialize_switch dns-takeover
+initialize_switch vpn-compat off
 
 for file in action.sh module.prop service.sh uninstall.sh; do
   unzip -oq "$ZIPFILE" "$file" -d "$MODPATH" || fail "Cannot extract $file."
@@ -216,7 +218,7 @@ ABP_MODULE_DIR="$MODPATH" "$BB" sh "$DATA_DIR/scripts/rule-store.sh" init || fai
 rm -f "$MODPATH/config-blacklist.txt" "$MODPATH/config-whitelist.txt"
 chmod 700 "$DATA_DIR/bin" || fail "Cannot protect local DNS working directory."
 chmod 700 "$DATA_DIR" "$DATA_DIR/scripts" "$DATA_DIR/bin/userfilters" 2>/dev/null
-chmod 600 "$DATA_DIR/admin.auth" "$DATA_DIR/settings.conf" "$STATE_DIR"/*.txt "$STATE_DIR"/blocking-mode "$STATE_DIR"/auto-update "$STATE_DIR"/autostart "$STATE_DIR"/dns-takeover 2>/dev/null
+chmod 600 "$DATA_DIR/admin.auth" "$DATA_DIR/settings.conf" "$STATE_DIR"/*.txt "$STATE_DIR"/blocking-mode "$STATE_DIR"/auto-update "$STATE_DIR"/autostart "$STATE_DIR"/dns-takeover "$STATE_DIR"/vpn-compat 2>/dev/null
 chmod 700 "$STATE_DIR/profiles" 2>/dev/null
 chmod 600 "$STATE_DIR"/profiles/*.txt "$STATE_DIR"/profiles-initialized 2>/dev/null
 chmod 755 "$DATA_DIR/bin/AdGuardHome" "$DATA_DIR/bin/curl" "$DATA_DIR/scripts"/*.sh "$MODPATH"/*.sh

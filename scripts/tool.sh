@@ -2,6 +2,8 @@
 . /data/adb/adblockpro/settings.conf
 . /data/adb/adblockpro/scripts/base.sh
 
+DNS_TRANSITION_LOCK=/data/adb/bindhosts_personal/dns-transition.lock
+
 # An upgrade keeps the user's existing settings.conf, so a key added to that
 # file after the user installed is simply missing here and arrives empty.
 startup_timeout="${startup_timeout:-120}"
@@ -33,6 +35,19 @@ move_to_system_cgroup() {
 }
 
 move_to_system_cgroup
+
+# Serialize firewall transitions, but let lifecycle requests publish their
+# intent before waiting for this lock. A queued stop must be able to cancel a
+# slow start while the resolver is still loading its DNS listeners.
+if [ "${ABP_DNS_TRANSITION_LOCKED:-0}" != 1 ]; then
+  case "$1" in
+    start|stop|toggle) ;;
+    *)
+      export ABP_DNS_TRANSITION_LOCKED=1
+      exec "$BB" flock "$DNS_TRANSITION_LOCK" "$BB" sh "$0" "$@"
+      ;;
+  esac
+fi
 
 # Whether AdGuardHome accepts both UDP and TCP DNS queries on $redir_port.
 # Parse /proc/net directly so startup checks need neither netstat nor ss.
@@ -137,6 +152,19 @@ start_adguardhome() {
     return 1
   fi
   start_requested || return 75
+  if [ "$(cat /data/adb/bindhosts_personal/vpn-compat 2>/dev/null)" = on ]; then
+    vpn_guard=$("$BB" sh "$SCRIPT_DIR/vpn-compat.sh" start-guard) || {
+      log "Could not check VPN compatibility state" "无法检查 VPN 兼容状态"
+      return 1
+    }
+    case "$vpn_guard" in
+      paused-vpn) log "DNS redirection paused while VPN is active" "VPN 运行中，已暂停 DNS 重定向"; update_description "🟡 DNS running (VPN bypass)" "🟡 DNS 运行中（VPN 旁路）"; return 0 ;;
+      paused-unknown) log "DNS redirection paused because VPN state is unknown" "VPN 状态未知，已暂停 DNS 重定向"; update_description "🟡 DNS running (VPN state unknown)" "🟡 DNS 运行中（VPN 状态未知）"; return 0 ;;
+      resume-wait) log "Waiting for VPN interface to remain absent before restoring DNS redirection" "VPN 接口刚断开，等待稳定后恢复 DNS 重定向"; update_description "🟡 DNS running (waiting for VPN)" "🟡 DNS 运行中（等待 VPN 稳定断开）"; return 0 ;;
+      ready) ;;
+      *) log "VPN compatibility guard failed; DNS redirection skipped" "VPN 兼容检查失败，已跳过 DNS 重定向"; return 1 ;;
+    esac
+  fi
   if "$SCRIPT_DIR/iptables.sh" enable; then
     if ! start_requested; then
       "$SCRIPT_DIR/iptables.sh" disable >/dev/null 2>&1
@@ -205,6 +233,14 @@ start|stop|toggle)
   request_mode=stop
   [ "$runtime_action" != start ] || request_mode=run
   record_runtime_request "$request_mode" || exit 1
+  if [ "${ABP_DNS_TRANSITION_LOCKED:-0}" != 1 ]; then
+    export ABP_DNS_TRANSITION_LOCKED=1
+    exec "$BB" flock "$DNS_TRANSITION_LOCK" "$BB" sh "$0" __transition_locked "$runtime_action" "$runtime_request"
+  fi
+  ;;
+__transition_locked)
+  runtime_action=$2
+  runtime_request=$3
   exec "$BB" flock "$RUNTIME_STATE/runtime.lock" "$BB" sh "$0" __locked "$runtime_action" "$runtime_request"
   ;;
 recover)

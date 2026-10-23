@@ -80,7 +80,7 @@ case "$1" in
    export-file) case "$3" in operation-logs|observed-domains) ;; *) exit 1 ;; esac; case "$4" in ''|*[!0-9]*) exit 1 ;; esac; [ ${#4} -le 20 ] || exit 1; case "$5" in ''|*[!A-Za-z0-9+/=]*) exit 1 ;; esac; [ ${#5} -le 90000 ] || exit 1 ;;
    list-sources) case "$3" in ''|light|balanced|strict) ;; *) exit 1;; esac ;;
    add-whitelist|add-blacklist|remove-whitelist|remove-blacklist) echo "$3" | "$BB" grep -Eq '^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$' || exit 1 ;;
-   auto-update|autostart) case "$3" in on|off) ;; *) exit 1;; esac ;;
+   auto-update|autostart|vpn-compat) case "$3" in on|off) ;; *) exit 1;; esac ;;
    set-mode) case "$3" in light|balanced|strict) ;; *) exit 1;; esac ;;
    set-source) case "$4" in on|off) ;; *) exit 1;; esac; case "$5" in ''|light|balanced|strict) ;; *[!0-9]*) exit 1;; esac; [ ${#5} -le 20 ] || exit 1; case "$3" in shared) ;; https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac ;;
    add-source) case "$3" in https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac; name_bytes=$(printf '%s' "$4" | wc -c | tr -d '[:space:]'); [ "$name_bytes" -ge 1 ] && [ "$name_bytes" -le 192 ] || exit 1; name_lines=$(printf '%s' "$4" | wc -l | tr -d '[:space:]'); [ "$name_lines" -eq 0 ] || exit 1; clean_bytes=$(printf '%s' "$4" | "$BB" tr -d '[:cntrl:]' | wc -c | tr -d '[:space:]'); [ "$clean_bytes" -eq "$name_bytes" ] || exit 1 ;;
@@ -117,7 +117,7 @@ case "$1" in
   code=$?
   printf '%s\n' "$result"
   case "$2" in
-   add-whitelist|add-blacklist|remove-whitelist|remove-blacklist|import-lists|export-rules|auto-update|autostart|set-mode|set-source|add-source|remove-source|rename-source|edit-source) loggable=1 ;;
+   add-whitelist|add-blacklist|remove-whitelist|remove-blacklist|import-lists|export-rules|auto-update|autostart|vpn-compat|set-mode|set-source|add-source|remove-source|rename-source|edit-source) loggable=1 ;;
    *) loggable=0 ;;
   esac
   case "$event_id" in ''|*[!0-9]*) loggable=0 ;; esac

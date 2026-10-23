@@ -159,6 +159,7 @@ reset_defaults() {
   printf 'on\n' > "$new_state/auto-update"
   printf 'on\n' > "$new_state/autostart"
   printf 'on\n' > "$new_state/dns-takeover"
+  printf 'off\n' > "$new_state/vpn-compat"
   : > "$new_state/sources.txt"
   : > "$new_state/custom-sources.txt"
   : > "$new_state/disabled-sources.txt"
@@ -210,7 +211,7 @@ reset_defaults() {
   # rule lists/preferences; credentials, subscription URLs and logs stay private.
   export_stage="$stage/rules-export"
   mkdir -p "$export_stage" || { rm -rf "$stage"; return 1; }
-  for name in blacklist.txt whitelist.txt auto-update autostart dns-takeover; do
+  for name in blacklist.txt whitelist.txt auto-update autostart dns-takeover vpn-compat; do
     [ ! -f "$STATE/$name" ] || cp "$STATE/$name" "$export_stage/$name" || { rm -rf "$stage"; return 1; }
   done
   printf '%s\n' 'This archive contains personal lists and basic preferences only.' \

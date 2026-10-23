@@ -109,6 +109,9 @@ fi
     # Leave a healthy enabled core alone, without polling firewall snapshots.
     if [ "$alive" = 1 ] && [ ! -f "$MODDIR/disable" ] && [ ! -f "$MODDIR/remove" ]; then
       cleanup_warning=0
+      if [ "$(cat /data/adb/bindhosts_personal/vpn-compat 2>/dev/null)" = on ]; then
+        "$BB" sh "$AGH/scripts/vpn-compat.sh" watch >/dev/null 2>&1 || true
+      fi
       # A short-lived successful launch must not reset a crash-loop budget.
       recovery_stable=$((recovery_stable + 1))
       if [ "$recovery_stable" -eq 60 ]; then
