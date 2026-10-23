@@ -77,8 +77,18 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     writeFileSync(path.join(f.state, 'whitelist.txt'), 'login.personal.example\n');
     writeFileSync(path.join(f.state, 'dns-takeover'), 'off\n');
     writeFileSync(path.join(f.state, 'vpn-compat'), 'on\n');
+    const yaml = path.join(f.runtime, 'bin/AdGuardHome.yaml');
+    const customDns = readFileSync(yaml, 'utf8')
+      .replace('use_private_ptr_resolvers: false', 'use_private_ptr_resolvers: true')
+      .replace('local_ptr_upstreams: []', 'local_ptr_upstreams:\n    - 192.0.2.53')
+      .replace('    rdns: false', '    rdns: true');
+    assert.match(customDns, /use_private_ptr_resolvers: true/);
+    assert.match(customDns, /local_ptr_upstreams:\n    - 192\.0\.2\.53/);
+    assert.match(customDns, /    rdns: true/);
+    writeFileSync(yaml, customDns);
     chmodSync(path.join(f.runtime, 'bin'), 0o755);
     const again = f.install(); assert.equal(again.status, 0, again.stderr + again.stdout);
+    assert.equal(readFileSync(yaml, 'utf8'), customDns, 'upgrade replaced custom reverse DNS settings');
     if (process.platform !== 'win32') assert.equal(statSync(path.join(f.runtime, 'bin')).mode & 0o777, 0o700);
     assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), 'custom.personal.example\ncustom.personal.example\n');
     assert.equal(readFileSync(path.join(f.runtime, 'bin/userfilters/adblock-pro-shared-app-rules.txt'), 'utf8'), shared);

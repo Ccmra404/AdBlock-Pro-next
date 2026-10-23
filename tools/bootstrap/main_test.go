@@ -85,3 +85,16 @@ func TestFreshConfigUsesBundledSchemaWithoutLegacyQueryLogReset(t *testing.T) {
  query := strings.Split(strings.Split(initialConfig, "querylog:\n")[1], "statistics:\n")[0]
  if !strings.Contains(query, "  enabled: false\n") || !strings.Contains(query, "  file_enabled: false\n") { t.Fatal("temporary observation requires disk query logging disabled on fresh installs") }
 }
+
+func TestFreshConfigDisablesAutomaticReverseDNS(t *testing.T) {
+ dir := t.TempDir()
+ yaml := filepath.Join(dir, "AdGuardHome.yaml")
+ if err := createConfig(yaml, filepath.Join(dir, "auth")); err != nil { t.Fatal(err) }
+ data, err := os.ReadFile(yaml); if err != nil { t.Fatal(err) }
+ for _, want := range []string{
+  "  use_private_ptr_resolvers: false\n  local_ptr_upstreams: []\n",
+  "clients:\n  runtime_sources:\n    rdns: false\n",
+ } {
+  if !strings.Contains(string(data), want) { t.Errorf("fresh config is missing %q", want) }
+ }
+}

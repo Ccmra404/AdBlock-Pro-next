@@ -28,6 +28,9 @@ dns:
   upstream_dns:
     - 223.5.5.5
     - 119.29.29.29
+  # Standalone Android installs have no default private PTR resolver on port 53.
+  use_private_ptr_resolvers: false
+  local_ptr_upstreams: []
 filtering:
   protection_enabled: true
   filtering_enabled: true
@@ -50,6 +53,9 @@ filters:
     url: /data/adb/adblockpro/bin/userfilters/adblock-pro-user-rules.txt
     name: AdBlock Pro Personal Rules
     id: 1791638913
+clients:
+  runtime_sources:
+    rdns: false
 querylog:
   enabled: false
   file_enabled: false
