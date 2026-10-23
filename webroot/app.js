@@ -10,6 +10,7 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], sourceRenameUrl: '', sourceEditUrl: '', logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', observationTruncated: false, debugSaveError: '', logFilter: 'all' };
 Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', sharedUpdatedAt: 0, sharedError: '', sharedLoaded: false, sharedSearch: '', sharedPage: 0, apps: [], appsLoaded: false, appsLoading: false, appsError: '', appQuery: '', selectedApp: null, observeDuration: '10', observationResultsOpen: false, selectedObservationDomains: [] });
 Object.assign(state, { aiOpen: false, aiSettingsOpen: false, aiConfig: null, aiBusy: false, aiError: '', aiResults: [], aiSelected: [], aiPage: 0, personalApplyMessage: '', personalApplyError: false });
+Object.assign(state, { dnsOpen: false, dnsInfo: null, dnsDraft: null, dnsBusy: false, dnsError: '', dnsResults: [], dnsMessage: '' });
 Object.assign(state, { domainCheckInput: '', domainCheck: null });
 let domainCheckRequestId = 0;
 const AI_PENDING_KEY = 'abp-ai-job';
@@ -306,11 +307,78 @@ function sharedRulesPage() {
   return `${heading('共享抓包规则库', '维护者确认后发布，各设备使用同一份公开名单', '<button class="btn" data-action="shared-back">返回个人规则</button>')}
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">共享规则</h2><p class="section-sub">10007、秋风 AdGuard 全规则和本规则库共同构成模块基础</p></div>${tag(`${state.sharedRules.length} 条`)}</div><p class="field-help">修订 ${esc(state.sharedRevision || '—')} · ${state.sharedUpdatedAt ? new Date(state.sharedUpdatedAt * 1000).toLocaleString('zh-CN') : '随模块预置'}。同步会读取 GitHub 上已确认的规则，保留本机个人黑白名单；放行名单可以覆盖共享规则。</p><div class="btn-row"><button class="btn btn-primary" data-action="shared-sync" ${syncing ? 'disabled' : ''}>${syncing ? '正在同步…' : '同步并应用'}</button><button class="btn" data-action="shared-source-add">加入规则来源</button><button class="btn" data-action="shared-submit-candidate">提交候选${selectedObservationDomains().length ? `（${fmt(selectedObservationDomains().length)}）` : ''}</button></div><p class="field-help">候选只包含你在域名观察中勾选的域名。按钮会复制 GitHub 草稿链接；检查内容后由你手动提交，维护者审核通过后才会进入共享规则。</p>${state.sharedError ? `<div class="notice warn">${esc(state.sharedError)}</div>` : ''}<input id="shared-search" class="field" type="search" value="${esc(state.sharedSearch)}" placeholder="搜索共享域名" aria-label="搜索共享域名"><div id="shared-results">${sharedResultsMarkup()}</div></section>`;
 }
+function dnsFeedbackMarkup() {
+  return `${state.dnsBusy ? '<p class="field-help" role="status">正在读取或测试 DNS，请稍候…</p>' : ''}${state.dnsError ? `<p class="notice warn" role="alert">${esc(state.dnsError)}</p>` : ''}${state.dnsMessage ? `<p class="field-help" role="status">${esc(state.dnsMessage)}</p>` : ''}${state.dnsResults.length ? `<div class="dns-test-results">${state.dnsResults.map(row => `<div><code>${esc(row.server)}</code><strong class="${row.ok ? 'status-good' : 'status-bad'}">${row.ok ? '测试通过' : '测试失败'}</strong></div>`).join('')}</div><p class="field-help">这里只验证所填 DNS 的测试查询；通过不代表所有域名都能访问或广告一定消失。</p>` : ''}`;
+}
+function dnsSettingsMarkup() {
+  if (!state.dnsOpen) return '';
+  const info = state.dnsInfo, c = state.dnsDraft;
+  const fields = c ? `<fieldset ${state.dnsBusy || !info?.editable ? 'disabled' : ''}><div class="btn-row"><button type="button" class="btn" data-action="dns-preset" data-preset="plain">填入国内普通 DNS</button><button type="button" class="btn" data-action="dns-preset" data-preset="doh">填入阿里 + 腾讯 DoH</button></div><p class="field-help">预设只填入草稿，保留当前查询模式及备用 DNS；测试并保存后才生效。</p><div class="dns-fields">${[['upstream_dns','上游 DNS','用于日常解析，每行一个地址。'],['bootstrap_dns','引导 DNS','用于解析加密 DNS 的主机名，填写 IP 地址，每行一个。'],['fallback_dns','备用 DNS','可留空。填写普通 IP 时，回退查询使用明文 DNS。']].map(([key,label,help]) => `<label class="${key === 'upstream_dns' ? 'dns-wide' : ''}">${label}<textarea class="field" data-dns-field="${key}" spellcheck="false" autocapitalize="none" rows="3">${esc(c[key].join('\n'))}</textarea><span class="field-help">${help}</span></label>`).join('')}<label class="dns-wide">查询模式<select class="field" data-dns-field="upstream_mode">${[['load_balance','负载均衡'],['parallel','并行查询'],['fastest_addr','最快地址（额外探测）']].map(([value,label])=>`<option value="${value}" ${c.upstream_mode === value ? 'selected' : ''}>${label}</option>`).join('')}</select></label></div><div class="btn-row"><button type="button" class="btn" data-action="dns-test">测试草稿</button><button type="submit" class="btn btn-primary">测试并保存</button><button type="button" class="btn" data-action="dns-restore" ${info?.backup_available ? '' : 'disabled'}>恢复上次配置</button></div></fieldset>` : '';
+  return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">DNS 上游设置</h2><p class="section-sub">通过本地核心管理解析服务，不修改系统私人 DNS 或 VPN</p></div><button type="button" class="btn" data-action="dns-close">收起</button></div><p class="field-help">保存前会重新测试并保留私有恢复点；仅修改上游、引导、备用 DNS 和查询模式。</p>${info && !info.editable ? '<p class="notice warn">当前使用高级 DNS 配置，此处只读；请在 AdGuard Home 后台管理，避免覆盖复杂规则。</p>' : ''}<form id="dns-settings-form">${fields}</form><div id="dns-feedback" aria-live="polite">${dnsFeedbackMarkup()}</div><button type="button" class="btn btn-plain" data-action="dns-reload" ${state.dnsBusy ? 'disabled' : ''}>重新读取当前配置（放弃草稿）</button></section>`;
+}
+function renderDNSSettings() {
+  pageFragments.delete('manage');
+  const node = $('#dns-settings-panel'); if (node) node.innerHTML = dnsSettingsMarkup();
+  if (state.busy) setBusy(true);
+}
+async function loadDNS(preserveDraft = false) {
+  if (state.dnsBusy) return;
+  state.dnsBusy = true; state.dnsError = ''; state.dnsResults = []; renderDNSSettings();
+  try {
+    const result = await exec(`${JOB} dns-info`);
+    if (Number(result.errno) !== 0) throw new Error(textOf(result) || '无法读取 DNS 设置');
+    const info = JSON.parse(result.stdout), c = info?.config;
+    if (!c || !['upstream_dns','bootstrap_dns','fallback_dns'].every(key => Array.isArray(c[key]) && c[key].every(value => typeof value === 'string')) || typeof c.upstream_mode !== 'string' || !/^[a-f0-9]{64}$/.test(info.revision) || typeof info.editable !== 'boolean' || typeof info.backup_available !== 'boolean') throw new Error('DNS 组件返回格式无效，请升级模块后重试');
+    state.dnsInfo = info;
+    if (!preserveDraft || !state.dnsDraft) state.dnsDraft = JSON.parse(JSON.stringify(c));
+  } catch (error) { state.dnsInfo = null; state.dnsError = `${error.message || '读取失败'}；草稿未写入，请重新读取后再操作。`; }
+  finally { state.dnsBusy = false; renderDNSSettings(); }
+}
+function fillDNSPreset(preset) {
+  if (state.busy || state.dnsBusy || !state.dnsInfo?.editable || !state.dnsDraft) return;
+  if (!['plain','doh'].includes(preset)) return;
+  state.dnsDraft.upstream_dns = preset === 'doh' ? ['https://dns.alidns.com/dns-query','https://doh.pub/dns-query'] : ['223.5.5.5','119.29.29.29'];
+  state.dnsDraft.bootstrap_dns = ['223.5.5.5','119.29.29.29'];
+  state.dnsResults = []; state.dnsError = ''; state.dnsMessage = '预设已填入草稿，尚未修改当前 DNS。'; renderDNSSettings();
+}
+function dnsEditPayload() {
+  if (!state.dnsInfo?.editable || !state.dnsDraft) throw new Error('请先读取可编辑的 DNS 配置');
+  if (!state.dnsDraft.upstream_dns.length) throw new Error('至少填写一个上游 DNS');
+  const encoded = aiPayload({ config: state.dnsDraft, revision: state.dnsInfo.revision });
+  if (encoded.length > 24000) throw new Error('DNS 设置过长，请减少地址或使用原生后台');
+  return encoded;
+}
+async function testDNS() {
+  if (state.busy || state.dnsBusy) return;
+  let payload;
+  try { payload = dnsEditPayload(); } catch (error) { state.dnsError = error.message; renderDNSSettings(); return; }
+  state.dnsBusy = true; state.dnsError = ''; state.dnsResults = []; state.dnsMessage = ''; renderDNSSettings();
+  try {
+    const result = await exec(`${JOB} dns-test ${shellArg(payload)}`);
+    if (Number(result.errno) !== 0) throw new Error(textOf(result) || 'DNS 测试未完成');
+    const rows = JSON.parse(result.stdout);
+    if (!Array.isArray(rows) || !rows.length || rows.some(row => typeof row?.server !== 'string' || typeof row.ok !== 'boolean')) throw new Error('DNS 测试结果格式无效');
+    state.dnsResults = rows;
+    state.dnsMessage = rows.every(row => row.ok) ? '测试查询全部通过；当前 DNS 配置尚未更改。' : '存在测试失败的地址；当前 DNS 配置尚未更改，请调整后重试。';
+  } catch (error) { state.dnsError = error.message || 'DNS 测试失败'; }
+  finally { state.dnsBusy = false; renderDNSSettings(); }
+}
+async function saveDNS(restore = false) {
+  if (state.busy || state.dnsBusy) return;
+  try {
+    const payload = restore ? aiPayload({ revision: state.dnsInfo?.revision }) : dnsEditPayload();
+    if (restore && !state.dnsInfo.backup_available) throw new Error('尚无 DNS 恢复点');
+    confirm(restore ? '恢复上次 DNS 配置？' : '测试并保存 DNS 设置？', restore ? '恢复上次保存前的 DNS 设置，不要求外网测试通过。只恢复 DNS 字段，不覆盖名单或账号。' : '会在设备当前网络测试所填地址，通过后保存，并保留操作前的私有恢复点。DNS 设置变化可能影响解析。', restore ? '恢复配置' : '测试并保存', async () => {
+      try { state.dnsError = ''; state.dnsMessage = '后台正在处理 DNS 设置，可在运行日志查看结果。'; await startJob(restore ? '--dns-restore' : '--dns-save', payload); renderDNSSettings(); }
+      catch (error) { state.dnsError = error.message; renderDNSSettings(); }
+    });
+  } catch (error) { state.dnsError = error.message; renderDNSSettings(); }
+}
 function managePage() {
   const s = state.status;
   return `${heading('系统设置', '管理 DNS 接管、自动运行与维护')}
     <div class="stack"><section class="panel"><div class="panel-head"><div><h2 class="section-title">运行设置</h2><p class="section-sub">过滤暂停不会关闭 DNS 核心；DNS 接管可单独撤销</p></div></div><div class="rows">${row('globe','DNS 接管','控制本模块的 DNS 重定向规则',toggle('takeover',s?.dns_takeover === 'on','DNS 接管'))}${row('shield','VPN/TUN 自动兼容','检测到 TUN 或 WireGuard 接口时自动暂停 DNS 接管',toggle('vpn-compat',s?.vpn_compat === 'on','VPN/TUN 自动兼容'))}${row('power','开机自动运行','关闭后下次开机不自动启动核心',toggle('autostart',s?.autostart !== 'off','开机自动运行'))}${row('refresh','每日自动更新','由模块每日下载已启用的规则；失败后间隔重试',toggle('auto-update',s?.auto_update !== 'off','每日自动更新'))}</div><div class="notice warn" style="margin-top:14px">${icon('info')}<span>VPN/TUN 自动兼容默认关闭。开启后检测到 TUN/WireGuard 接口会旁路整机的模块 DNS 接管，AdGuard Home 核心继续运行；VPN 断开并稳定约 15 秒后按原设置恢复。分应用 VPN 期间也会旁路整机 DNS。若启用了模块的 IPv6 DNS 接管/阻断，对应规则也会临时移除并在恢复时重建。关闭此选项会立即按 DNS 接管开关恢复重定向，即使 VPN 仍连接。私人 DNS、应用内 DoH/DoT 仍可能绕过本模块。</span></div></section>
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">运行维护</h2><p class="section-sub">诊断结果统一保存在运行日志中</p></div></div><div class="btn-row"><button class="btn" data-action="diagnose">${icon('activity')} 运行诊断</button><button class="btn" data-action="restart">${icon('refresh')} 重启 DNS 核心</button><button class="btn btn-danger" data-action="disable-takeover">${icon('power')} 紧急解除接管</button><button class="btn" data-nav="logs">查看运行日志</button></div></section>
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">运行维护</h2><p class="section-sub">诊断结果统一保存在运行日志中</p></div></div><div class="btn-row"><button class="btn" data-action="diagnose">${icon('activity')} 运行诊断</button><button class="btn" data-action="dns-settings">${icon('globe')} DNS 上游设置</button><button class="btn" data-action="restart">${icon('refresh')} 重启 DNS 核心</button><button class="btn btn-danger" data-action="disable-takeover">${icon('power')} 紧急解除接管</button><button class="btn" data-nav="logs">查看运行日志</button></div></section><div id="dns-settings-panel">${dnsSettingsMarkup()}</div>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">恢复默认设置</h2><p class="section-sub">按当前安装包的默认状态重新初始化模块</p></div></div><p class="field-help">会重置订阅源及名称、个人黑白名单、AI 接口密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享快照、日志和历史。DNS 接管恢复为 IPv4 默认开启，IPv6 接管仍关闭。操作前将个人名单及基础偏好备份到 Download/AdBlock Pro；含凭据的完整备份仅保存在 Root 私有目录。</p><button class="btn btn-danger" data-action="restore-defaults">${icon('refresh')} 恢复默认设置</button></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">管理入口</h2><p class="section-sub">规则高级配置由 AdGuard Home 原生后台提供</p></div></div><div class="action-grid"><a class="action-card" href="http://127.0.0.1:3000/" target="_blank" rel="noopener">${icon('external')}<span class="action-text"><strong>AdGuard Home 后台</strong><small>订阅、上游 DNS 与查询日志</small></span></a><button type="button" class="action-card" data-action="copy-gkd-link">${icon('activity')}<span class="action-text"><strong>GKD 项目</strong><small>复制项目链接，在浏览器中查看</small></span></button><button type="button" class="action-card" data-action="ai-settings">${icon('settings')}<span class="action-text"><strong>AI 域名分析</strong><small>DeepSeek 或自定义兼容接口</small></span></button></div><p class="field-help">WebUI 不保存或展示 AdGuard Home 管理密码；首次登录凭据由安装包单独提供。</p></section><div id="ai-settings-panel">${aiSettingsMarkup()}</div></div>`;
 }
@@ -858,7 +926,7 @@ async function withButtonPending(button, action) {
 }
 function setBusy(busy) {
   state.busy = busy;
-  const controls = $$('.btn, .choice, .source-actions button, [data-toggle], form input, form select, form button');
+  const controls = $$('.btn, .choice, .source-actions button, [data-toggle], form input, form textarea, form select, form button');
   for (const control of controls) {
     if (busy) {
       if (!control.disabled) {
@@ -945,6 +1013,10 @@ async function monitorJob(id, action) {
         pageFragments.delete('lists');
       }
       state.job = null; setBusy(false);
+      if (action === '--dns-save' || action === '--dns-restore') {
+        state.dnsMessage = code === 0 ? (action === '--dns-save' ? 'DNS 设置已保存，已保留操作前恢复点。' : '已恢复上次 DNS 配置。') : 'DNS 操作未完成，请查看运行日志；当前配置将重新读取。';
+        await loadDNS(code !== 0);
+      }
       syncStatusView();
       if (action === '--observe' || action === '--factory-reset' || (action === '--apply-personal' && state.page === 'lists') || (state.page === 'lists' && state.rulesView === 'shared')) render();
       toast(action === '--apply-personal' ? state.personalApplyMessage : action === '--observe' ? (code !== 0 ? '域名观察失败' : state.observationError ? '观察已结束，但结果读取失败；请重试读取' : `观察完成，记录 ${fmt(state.observationDomains.length)} 个域名`) : action === '--factory-reset' ? (code === 0 ? '已恢复默认设置；备份位置见运行日志' : '恢复默认设置失败；请查看运行日志') : (code === 0 ? '操作已完成' : '操作失败，请查看运行日志'));
@@ -1459,6 +1531,12 @@ document.addEventListener('click', async event => {
       });
       break;
     }
+    case 'dns-settings': state.dnsOpen = true; await loadDNS(); $('#dns-settings-panel')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); break;
+    case 'dns-close': state.dnsOpen = false; renderDNSSettings(); break;
+    case 'dns-reload': state.dnsMessage = ''; await loadDNS(); break;
+    case 'dns-preset': fillDNSPreset(button.dataset.preset); break;
+    case 'dns-test': await testDNS(); break;
+    case 'dns-restore': await saveDNS(true); break;
     case 'update': perform('--update'); break;
     case 'restart': confirm('重启 DNS 核心', '会重启本模块的 AdGuard Home 服务，可能短暂中断 DNS 解析。', '重启', () => perform('--restart')); break;
     case 'restore-defaults': confirm('恢复默认设置？', '这会按当前安装包恢复模块默认状态：清除自定义订阅和名称、个人黑白名单、AI 密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享同步状态、观察结果、日志和历史；过滤及自动运行恢复默认开启，DNS 接管恢复为 IPv4 默认开启，IPv6 仍关闭。执行前在 Download/AdBlock Pro 导出个人名单及基础偏好；含账号和密钥的完整备份仅保存在 /data/adb/adblockpro/backups，请勿分享。完成后会重启 DNS 核心。', '备份并恢复', () => perform('--factory-reset')); break;
@@ -1537,6 +1615,7 @@ document.addEventListener('change', async event => {
 document.addEventListener('submit', async event => {
   if (state.busy) { event.preventDefault(); return; }
   const form = event.target;
+  if (form.id === 'dns-settings-form') { event.preventDefault(); await saveDNS(); return; }
   if (form.id === 'ai-config-form') {
     event.preventDefault(); if (!state.aiBusy) { try { await saveAIConfig(form); } catch (e) { toast(e.message); } }
   } else if (form.id === 'source-form') {
@@ -1556,6 +1635,14 @@ document.addEventListener('submit', async event => {
   }
 });
 document.addEventListener('input', event => {
+  if (event.target.matches('[data-dns-field]') && state.dnsDraft && !state.dnsBusy && !state.busy) {
+    const key = event.target.dataset.dnsField;
+    if (['upstream_dns','bootstrap_dns','fallback_dns','upstream_mode'].includes(key)) {
+      state.dnsDraft[key] = key === 'upstream_mode' ? event.target.value : event.target.value.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+      state.dnsResults = []; state.dnsMessage = ''; state.dnsError = '';
+      const feedback = $('#dns-feedback'); if (feedback) feedback.innerHTML = dnsFeedbackMarkup();
+    }
+  }
   if (event.target.matches('#check-domain')) state.domainCheckInput = event.target.value;
   if (event.target.matches('#log-search')) filterLogs();
   if (event.target.matches('.list-search')) filterLists(event.target);
@@ -1580,7 +1667,7 @@ async function init() {
   const pending = localStorage.getItem('abp-pending-job');
   if (pending) {
     const [id, action] = pending.split(':');
-    if (/^\d{1,20}$/.test(id) && ['--update','--sync-shared','--apply-personal','--pause','--resume','--rollback','--rollback-history','--filtering','--takeover','--restart','--factory-reset','--diagnose','--observe'].includes(action)) {
+    if (/^\d{1,20}$/.test(id) && ['--update','--sync-shared','--apply-personal','--pause','--resume','--rollback','--rollback-history','--filtering','--takeover','--restart','--factory-reset','--diagnose','--observe','--dns-save','--dns-restore'].includes(action)) {
       if (action === '--observe') {
         try { state.observation = JSON.parse(localStorage.getItem(OBSERVE_SESSION_KEY) || 'null'); } catch { state.observation = null; }
         if (!state.observation || state.observation.id !== id) state.observation = { id, startedAt: Date.now(), duration: 60, appLabel: '', active: true };

@@ -3,10 +3,6 @@
 . /data/adb/adblockpro/scripts/base.sh
 
 DNS_TRANSITION_LOCK=/data/adb/bindhosts_personal/dns-transition.lock
-if [ "${ABP_DNS_TRANSITION_LOCKED:-0}" != 1 ]; then
-  export ABP_DNS_TRANSITION_LOCKED=1
-  exec "$BB" flock "$DNS_TRANSITION_LOCK" "$BB" sh "$0" "$@"
-fi
 
 # An upgrade keeps the user's existing settings.conf, so a key added to that
 # file after the user installed is simply missing here and arrives empty.
@@ -39,6 +35,19 @@ move_to_system_cgroup() {
 }
 
 move_to_system_cgroup
+
+# Serialize firewall transitions, but let lifecycle requests publish their
+# intent before waiting for this lock. A queued stop must be able to cancel a
+# slow start while the resolver is still loading its DNS listeners.
+if [ "${ABP_DNS_TRANSITION_LOCKED:-0}" != 1 ]; then
+  case "$1" in
+    start|stop|toggle) ;;
+    *)
+      export ABP_DNS_TRANSITION_LOCKED=1
+      exec "$BB" flock "$DNS_TRANSITION_LOCK" "$BB" sh "$0" "$@"
+      ;;
+  esac
+fi
 
 # Whether AdGuardHome accepts both UDP and TCP DNS queries on $redir_port.
 # Parse /proc/net directly so startup checks need neither netstat nor ss.
@@ -224,6 +233,14 @@ start|stop|toggle)
   request_mode=stop
   [ "$runtime_action" != start ] || request_mode=run
   record_runtime_request "$request_mode" || exit 1
+  if [ "${ABP_DNS_TRANSITION_LOCKED:-0}" != 1 ]; then
+    export ABP_DNS_TRANSITION_LOCKED=1
+    exec "$BB" flock "$DNS_TRANSITION_LOCK" "$BB" sh "$0" __transition_locked "$runtime_action" "$runtime_request"
+  fi
+  ;;
+__transition_locked)
+  runtime_action=$2
+  runtime_request=$3
   exec "$BB" flock "$RUNTIME_STATE/runtime.lock" "$BB" sh "$0" __locked "$runtime_action" "$runtime_request"
   ;;
 recover)

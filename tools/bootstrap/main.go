@@ -61,6 +61,14 @@ statistics:
 `
 
 func main() {
+ if len(os.Args) == 3 && os.Args[1] == "dns" {
+  if err := runDNS(os.Args[2], os.Stdin, os.Stdout); err != nil {
+   fmt.Fprintln(os.Stderr, err)
+   if errors.Is(err, errDNSRollback) { os.Exit(3) }
+   os.Exit(1)
+  }
+  return
+ }
  if len(os.Args) != 3 {
   fmt.Fprintln(os.Stderr, "usage: adblock-bootstrap CONFIG_PATH AUTH_PATH")
   os.Exit(2)

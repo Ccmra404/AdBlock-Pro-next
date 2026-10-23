@@ -33,6 +33,15 @@ prune_jobs() {
 }
 
 case "$1" in
+ dns-info|dns-test)
+  dns_helper="$AGH/bin/adblock-bootstrap"
+  [ -x "$dns_helper" ] || { echo '[!] DNS 管理组件不可用。' >&2; exit 1; }
+  if [ "$1" = dns-info ]; then exec "$dns_helper" dns info; fi
+  case "$2" in ''|*[!A-Za-z0-9+/=]*) exit 1;; esac
+  [ ${#2} -le 24000 ] || exit 1
+  printf '%s' "$2" | "$BB" base64 -d | "$dns_helper" dns test
+  exit "$?"
+  ;;
  ai-status|ai-config|ai-clear|ai-start|ai-poll)
   if [ -e "$AGH/factory-reset.active" ]; then
    reset_pid=$(cat "$AGH/factory-reset.active" 2>/dev/null)
@@ -195,14 +204,17 @@ case "$1" in
  start)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--factory-reset|--diagnose|--observe) ;; *) exit 1;; esac
+  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--factory-reset|--diagnose|--observe|--dns-save|--dns-restore) ;; *) exit 1;; esac
+  case "$3" in --dns-save|--dns-restore) case "$4" in ''|*[!A-Za-z0-9+/=]*) exit 1;; esac; [ ${#4} -le 24000 ] || exit 1;; esac
   case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
   if [ "$3" = --observe ]; then case "$4" in 5|10|15|30|60|90) ;; *) exit 1;; esac; fi
   if [ "$3" = --rollback-history ]; then echo "$4" | "$BB" grep -Eq '^[0-9]{14}-[0-9]+$' || exit 1; fi
   mkdir -p "$DIR" || exit 1
   # Atomic exclusive creation rejects a duplicate job ID.
   ( set -C; : > "$DIR/$2.log" ) 2>/dev/null || exit 1
-  printf '%s\n%s\n' "$3" "$4" > "$DIR/$2.action.tmp" && mv "$DIR/$2.action.tmp" "$DIR/$2.action" || exit 1
+  log_argument=$4
+  case "$3" in --dns-save|--dns-restore) log_argument='' ;; esac
+  printf '%s\n%s\n' "$3" "$log_argument" > "$DIR/$2.action.tmp" && mv "$DIR/$2.action.tmp" "$DIR/$2.action" || exit 1
   case "$3" in --apply-personal) echo "正在应用个人名单，无需下载订阅…" > "$DIR/$2.log" ;; --observe) echo "准备临时观察 $4 秒 DNS 域名…" > "$DIR/$2.log" ;; *) echo '任务已提交，正在等待下载或校验结果…' > "$DIR/$2.log" ;; esac
   "$BB" nohup "$BB" sh "$0" worker "$2" "$3" "$4" "${5:-}" </dev/null >/dev/null 2>&1 &
   echo started
@@ -210,7 +222,8 @@ case "$1" in
  worker)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--factory-reset|--diagnose|--observe) ;; *) exit 1;; esac
+  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--factory-reset|--diagnose|--observe|--dns-save|--dns-restore) ;; *) exit 1;; esac
+  case "$3" in --dns-save|--dns-restore) case "$4" in ''|*[!A-Za-z0-9+/=]*) exit 1;; esac; [ ${#4} -le 24000 ] || exit 1;; esac
   case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
   if [ "$3" = --observe ]; then case "$4" in 5|10|15|30|60|90) ;; *) exit 1;; esac; fi
   # Serialize privileged mutations from multiple WebUI sessions.
@@ -234,7 +247,8 @@ case "$1" in
  execute)
   case "$2" in ''|*[!0-9]* ) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--factory-reset|--diagnose|--observe) ;; *) exit 1 ;; esac
+  case "$3" in --update|--sync-shared|--apply-personal|--pause|--resume|--rollback|--rollback-history|--filtering|--takeover|--restart|--factory-reset|--diagnose|--observe|--dns-save|--dns-restore) ;; *) exit 1 ;; esac
+  case "$3" in --dns-save|--dns-restore) case "$4" in ''|*[!A-Za-z0-9+/=]*) exit 1;; esac; [ ${#4} -le 24000 ] || exit 1;; esac
   if [ "$3" = --observe ]; then
     exec /system/bin/sh "$MODDIR/bindhosts.sh" "$3" "$4" "$2" "${5:-}"
   elif [ "$3" = --factory-reset ]; then
