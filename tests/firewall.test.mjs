@@ -103,6 +103,26 @@ function fixture(t, overrides = {}) {
 }
 const jump = '-j ADGUARD_REDIRECT_DNS';
 
+test('IPv4 status does not mistake a legacy IPv6 jump for IPv4 takeover', t => {
+  const f = fixture(t);
+  f.write({ 'nat:OUTPUT': ['-j ADGUARD_REDIRECT_DNS6'], 'filter:OUTPUT': [] });
+  assert.equal(f.run('status').stdout.trim(), 'present');
+  const before = f.read();
+  const result = f.run('status-ipv4', { QUERY_RESULT: '2', QUERY_IPV6_ONLY: '1' });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout.trim(), 'absent');
+  assert.deepEqual(f.read(), before);
+});
+
+for (const env of [{ QUERY_RESULT: '1' }, { QUERY_RESULT: '2' }, { EMPTY_SNAPSHOT: '1' }, { INVALID_SNAPSHOT: '1' }]) {
+  test('IPv4 status keeps failed or malformed queries unknown: ' + JSON.stringify(env), t => {
+    const f = fixture(t);
+    const result = f.run('status-ipv4', env);
+    assert.equal(result.status, 2);
+    assert.equal(result.stdout.trim(), 'unknown');
+  });
+}
+
 test('read-only status distinguishes present and confirmed absent without changing rules', t => {
   const f = fixture(t);
   const absent = f.run('status');
