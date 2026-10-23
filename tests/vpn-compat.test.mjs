@@ -17,7 +17,7 @@ function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on',
   const sys = path.join(root, 'net');
   const proc = path.join(root, 'proc');
   for (const dir of [path.join(agh, 'scripts'), path.join(agh, 'bin'), state, mod, sys, proc, path.join(proc, '777'), path.join(proc, 'net')]) mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(state, 'vpn-compat'), compat + '\n');
+  if (compat !== null) writeFileSync(path.join(state, 'vpn-compat'), compat + '\n');
   writeFileSync(path.join(state, 'dns-takeover'), takeover + '\n');
   writeFileSync(path.join(state, 'vpn-compat-state'), paused ? 'vpn\n' : '');
   writeFileSync(path.join(state, 'vpn-clear-count'), '0\n');
@@ -99,7 +99,7 @@ test('redirect resumes only after three consecutive confirmed VPN-absent checks'
   assert.equal(f.firewall(), '1');
   assert.equal(f.state('dns-takeover'), 'on');
   assert.equal(f.state('vpn-compat-state'), '');
-  assert.match(f.history(), /稳定断开/);
+  assert.match(f.history(), /连续稳定/);
 });
 
 test('manual takeover off wins over VPN auto-resume', t => {
@@ -178,7 +178,7 @@ test('a dead or unready resolver is never reconnected after the stability window
 });
 
 test('missing compatibility setting preserves legacy behavior and never auto-mutates redirects', t => {
-  const f = fixture(t, { vpn: true, compat: 'off', redirect: true });
+  const f = fixture(t, { vpn: true, paused: false, compat: null, redirect: true });
   const r = f.run('watch');
   assert.equal(r.status, 0, r.stderr);
   assert.equal(f.firewall(), '1');
