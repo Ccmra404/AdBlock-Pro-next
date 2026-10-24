@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const helper = new URL('../scripts/vpn-compat.sh', import.meta.url);
 
-function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on', redirect = true, core = true, netReadable = true, failDisable = false, failEnable = false, failDescription = false, interfaces = null } = {}) {
+function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on', redirect = true, core = true, netReadable = true, failDisable = false, failEnable = false, failDescription = false, interfaces = null, firewallEnabled = 'true', disabled = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'abp-vpn-compat-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const agh = path.join(root, 'agh');
@@ -22,7 +22,8 @@ function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on',
   writeFileSync(path.join(state, 'dns-takeover'), takeover + '\n');
   writeFileSync(path.join(state, 'vpn-compat-state'), paused ? 'vpn\n' : '');
   writeFileSync(path.join(state, 'vpn-clear-count'), '0\n');
-  writeFileSync(path.join(agh, 'settings.conf'), 'redir_port=5591\n');
+  writeFileSync(path.join(agh, 'settings.conf'), 'redir_port=5591\nenable_iptables=' + firewallEnabled + '\nreadonly VPN_TEST_SETTING=fixed\n');
+  if (disabled) writeFileSync(path.join(mod, 'disable'), '');
   writeFileSync(path.join(agh, 'bin/agh.pid'), '777\n');
   if (core) writeFileSync(path.join(proc, '777/cmdline'), Buffer.from(shellPath(agh) + '/bin/AdGuardHome\0'));
   const netInterfaces = interfaces ?? (vpn ? [['tun0', '0x1001']] : []);
@@ -246,4 +247,69 @@ test('missing compatibility setting preserves legacy behavior and never auto-mut
   assert.equal(f.firewall(), '1');
   assert.equal(f.state('vpn-compat-state'), '');
   assert.equal(f.calls(), '');
+});
+
+test('scope refresh rebuilds active redirects without changing saved preferences', t => {
+  const f = fixture(t), result = f.run('refresh');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(f.calls(), 'enable\n');
+  assert.equal(f.state('dns-takeover'), 'on');
+  assert.equal(f.state('vpn-compat'), 'on');
+  assert.equal(result.stderr, '', 'readonly settings must not be sourced repeatedly');
+  assert.match(result.stdout, /无需更新订阅规则/);
+});
+
+for (const options of [{ takeover: 'off' }, { firewallEnabled: 'false' }, { disabled: true }, { core: false }]) {
+  test('scope refresh saves settings without resuming inactive DNS: ' + JSON.stringify(options), t => {
+    const f = fixture(t, options), result = f.run('refresh');
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(f.firewall(), '0');
+    assert.equal(f.calls(), 'disable\n');
+    assert.equal(f.state('dns-takeover'), options.takeover || 'on');
+    assert.match(result.stdout, /当前未启用 DNS 重定向/);
+  });
+}
+
+for (const options of [{ takeover: 'invalid' }, { firewallEnabled: 'invalid' }, { takeover: 'off', failDisable: true }]) {
+  test('scope refresh does not treat invalid intent or failed cleanup as success: ' + JSON.stringify(options), t => {
+    const f = fixture(t, options), result = f.run('refresh');
+    assert.notEqual(result.status, 0);
+    assert.doesNotMatch(f.calls(), /enable/);
+    assert.match(f.description(), /重定向错误/);
+  });
+}
+
+for (const [options, expected] of [[{ vpn: true }, 'vpn'], [{ netReadable: false }, 'unknown'],
+  [{ paused: true, redirect: false }, 'resume_wait'], [{ paused: true, redirect: true }, 'resume_wait']]) {
+  test('scope refresh respects VPN bypass/recovery: ' + expected, t => {
+    const f = fixture(t, options), result = f.run('refresh');
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(f.firewall(), '0');
+    assert.doesNotMatch(f.calls(), /enable/);
+    assert.equal(f.state('vpn-compat-state'), expected);
+    assert.equal(f.state('dns-takeover'), 'on');
+    assert.equal(f.state('vpn-compat'), 'on');
+    assert.match(result.stdout, /暂不接管 DNS/);
+  });
+}
+
+test('scope refresh leaves redirects off when installing the new rules fails', t => {
+  const f = fixture(t, { failEnable: true }), result = f.run('refresh');
+  assert.notEqual(result.status, 0);
+  assert.equal(f.firewall(), '0');
+  assert.equal(f.calls(), 'enable\ndisable\n');
+  assert.equal(f.state('vpn-compat-state'), 'error');
+  assert.equal(f.state('dns-takeover'), 'on');
+  assert.match(f.description(), /重定向错误/);
+});
+
+for (const firewallEnabled of ['false', 'invalid']) test('VPN disconnect does not override disabled/invalid firewall settings: ' + firewallEnabled, t => {
+  const f = fixture(t, { paused: true, redirect: false, firewallEnabled });
+  for (let i = 0; i < 3; i += 1) assert.equal(f.run('watch').status, 0);
+  assert.equal(f.firewall(), '0');
+  assert.doesNotMatch(f.calls(), /enable/);
+  assert.equal(f.state('dns-takeover'), 'on');
+  assert.equal(f.state('vpn-compat'), 'on');
+  if (firewallEnabled === 'false') assert.match(f.description(), /接管关闭/);
+  else assert.match(f.description(), /重定向错误/);
 });

@@ -4,6 +4,32 @@
 
 iptables_w="iptables -w 64"
 ip6tables_w="ip6tables -w 64"
+APP_FILTER=${ABP_APP_FILTER:-/data/adb/adblockpro/scripts/app-filter.sh}
+APP_EXCLUSIONS=${ABP_APP_EXCLUSIONS:-/data/adb/bindhosts_personal/app-exclusions.txt}
+
+load_app_exclusions() {
+  local uid
+  app_excluded_uids=
+  [ -e "$APP_EXCLUSIONS" ] || return 0
+  [ -f "$APP_EXCLUSIONS" ] && [ -r "$APP_EXCLUSIONS" ] || return 1
+  [ -s "$APP_EXCLUSIONS" ] || return 0
+  [ -x "$APP_FILTER" ] || return 1
+  app_excluded_uids=$("$BB" sh "$APP_FILTER" uids) || return 1
+  [ -n "$app_excluded_uids" ] || return 0
+  while IFS= read -r uid; do
+    case "$uid" in ''|*[!0-9]*) return 1 ;; esac
+    [ ${#uid} -le 10 ] && [ "$uid" -le 4294967294 ] || return 1
+  done <<EOF
+$app_excluded_uids
+EOF
+}
+
+add_app_exclusions() {
+  local command=$1 table=$2 chain=$3 uid
+  for uid in $app_excluded_uids; do
+    $command -t "$table" -A "$chain" -m owner --uid-owner "$uid" -j RETURN || return 1
+  done
+}
 
 check_ipv6_table_support() {
   # 0: readable, 1: explicitly unsupported, 2: unknown (including missing tools).
@@ -139,6 +165,9 @@ enable_iptables_chain() {
   if ! $command -t nat -A "$chain" -m owner --uid-owner "$adg_user" --gid-owner "$adg_group" -j RETURN; then
     disable_iptables_chain "$command" "$chain"; return 1
   fi
+  if ! add_app_exclusions "$command" nat "$chain"; then
+    disable_iptables_chain "$command" "$chain"; return 1
+  fi
 
   for subnet in $ignore_dest_list; do
     if ! $command -t nat -A "$chain" -d "$subnet" -j RETURN >/dev/null 2>&1; then
@@ -171,6 +200,9 @@ add_block_ipv6_dns() {
     $ip6tables_w -t filter -F "$chain" >/dev/null 2>&1 || return 1
   else
     $ip6tables_w -t filter -N "$chain" >/dev/null 2>&1 || return 1
+  fi
+  if ! add_app_exclusions "$ip6tables_w" filter "$chain"; then
+    disable_iptables_chain "$ip6tables_w" "$chain" filter; return 1
   fi
   # Reject immediately rather than silently waiting for a DROP timeout.
   if ! $ip6tables_w -t filter -A "$chain" -p udp --dport 53 -j REJECT --reject-with icmp6-port-unreachable ||
@@ -243,6 +275,8 @@ status|status-ipv4)
   esac
   ;;
 enable)
+  # Resolve packages before detaching a working firewall; never guess UIDs.
+  load_app_exclusions || { echo '[!] 无法读取应用排除名单；保留当前 DNS 规则。' >&2; exit 1; }
   log "Enabling IPv4 DNS redirection" "启用 IPv4 DNS 重定向"
   enable_iptables_chain "$iptables_w" "ADGUARD_REDIRECT_DNS" || { rollback_failed_enable; exit 1; }
 

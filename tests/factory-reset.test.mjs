@@ -28,6 +28,7 @@ function fixture(t, options = {}) {
   put(path.join(state, 'custom-sources.txt'), 'https://private.example/rules.txt\n');
   put(path.join(state, 'dns-takeover'), 'off\n');
   put(path.join(state, 'vpn-compat'), 'on\n');
+  put(path.join(state, 'app-exclusions.txt'), '0:com.example.excluded\n');
   put(path.join(state, 'autostart'), 'off\n');
   put(path.join(state, 'auto-update'), 'off\n');
   put(path.join(state, 'blocking-mode'), 'strict\n');
@@ -80,6 +81,7 @@ test('factory reset keeps full recovery private and exports only lists/preferenc
   assert.match(result.stdout, /IPv6 DNS 接管仍关闭/);
   assert.match(readFileSync(path.join(f.agh, 'settings.conf'), 'utf8'), /enable_ipv6_dns=false/);
   assert.equal(readFileSync(path.join(f.agh, 'admin.auth'), 'utf8'), 'admin:password\n');
+  assert.equal(readFileSync(path.join(f.state, 'app-exclusions.txt'), 'utf8'), '');
   assert.match(readFileSync(path.join(f.agh, 'bin/AdGuardHome.yaml'), 'utf8'), /filtering_enabled: true/);
   assert.equal(readFileSync(path.join(f.agh, 'bin/data/filters/10007.txt'), 'utf8'), '||default-10007.example^\n');
   assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), 'default.personal.example\n');

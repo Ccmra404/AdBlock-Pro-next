@@ -11,6 +11,7 @@ This project includes or redistributes the following upstream components and rul
 
 - **go-openai v1.43.0**: OpenAI-compatible API client linked into the optional `bin/adblock-ai` helper. Source: https://github.com/sashabaranov/go-openai/tree/v1.43.0. Apache-2.0 license: `licenses/go-openai-Apache-2.0.txt`.
 - **Go runtime and standard library**: linked into the Go helpers. BSD-3-Clause license: `licenses/go-BSD-3-Clause.txt`, from https://github.com/golang/go/blob/go1.27.3/LICENSE.
+- **AndroidTProxyShell**: package/user-to-UID lookup and application bypass design adapted in `scripts/app-filter.sh` and the module-owned DNS chains. Source: https://github.com/CHIZI-0618/AndroidTProxyShell/tree/4b6ddd8779651a9a8316c96c04a79c7fb2157c64. License: GPL-3.0; the GPL-3.0 text is included in this project's `LICENSE`. The full transparent-proxy engine is not bundled or run.
 - **golang.org/x/crypto v0.31.0**: bcrypt/blowfish used by `bin/adblock-bootstrap` to create local credentials. BSD-3-Clause license: `licenses/go-crypto-BSD-3-Clause.txt`, from https://github.com/golang/crypto/blob/v0.31.0/LICENSE.
 
 See each upstream repository for its complete license and current source. The original AdBlock Pro code is licensed under GPL-3.0-only. The maintainer-approved public app-domain snapshot is included at `rules/shared-app-domains.txt`; local personal lists, credentials and device query logs are not included.

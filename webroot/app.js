@@ -12,7 +12,9 @@ Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', 
 Object.assign(state, { aiOpen: false, aiSettingsOpen: false, aiConfig: null, aiBusy: false, aiError: '', aiResults: [], aiSelected: [], aiPage: 0, personalApplyMessage: '', personalApplyError: false });
 Object.assign(state, { dnsOpen: false, dnsInfo: null, dnsDraft: null, dnsBusy: false, dnsError: '', dnsResults: [], dnsMessage: '' });
 Object.assign(state, { domainCheckInput: '', domainCheck: null });
+Object.assign(state, { appFilterOpen: false, appFilterExcluded: [], appFilterLoaded: false, appFilterLoading: false, appFilterBusy: false, appFilterError: '', appFilterMessage: '', appFilterQuery: '', appFilterPage: 0 });
 let domainCheckRequestId = 0;
+let appFilterRequestId = 0;
 const AI_PENDING_KEY = 'abp-ai-job';
 const pages = { home: '总览', rules: '规则管理', lists: '名单', manage: '设置', logs: '运行日志' };
 const LOG_PAGE_SIZE = 10;
@@ -374,15 +376,83 @@ async function saveDNS(restore = false) {
     });
   } catch (error) { state.dnsError = error.message; renderDNSSettings(); }
 }
+function validAppFilterKey(key) { return typeof key === 'string' && key.length <= 265 && /^(0|[1-9][0-9]{0,4}):[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/.test(key) && Number(key.split(':')[0]) <= 21473; }
+function appFilterEntries() {
+  const entries = new Map(state.apps.map(app => [`0:${app.packageName}`, { ...app, key: `0:${app.packageName}`, listed: true }]));
+  for (const key of state.appFilterExcluded) {
+    if (!entries.has(key)) entries.set(key, { key, packageName: key.split(':')[1], label: key.split(':')[1], listed: false });
+  }
+  const excluded = new Set(state.appFilterExcluded);
+  const query = state.appFilterQuery.trim().normalize('NFKC').toLowerCase();
+  return [...entries.values()].filter(app => !query || `${app.label} ${app.key}`.normalize('NFKC').toLowerCase().includes(query))
+    .sort((a, b) => Number(excluded.has(b.key)) - Number(excluded.has(a.key)) || a.label.localeCompare(b.label, 'zh-CN'));
+}
+function appFilterResultsMarkup() {
+  const entries = appFilterEntries(), count = Math.max(1, Math.ceil(entries.length / LIST_PAGE_SIZE));
+  state.appFilterPage = Math.min(Math.max(0, state.appFilterPage), count - 1);
+  const disabled = state.busy || state.appFilterBusy || state.appFilterLoading || !state.appFilterLoaded;
+  const rows = entries.slice(state.appFilterPage * LIST_PAGE_SIZE, (state.appFilterPage + 1) * LIST_PAGE_SIZE).map(app => {
+    const excluded = state.appFilterExcluded.includes(app.key);
+    const detail = `${app.packageName}${app.key.startsWith('0:') ? '' : ` · 用户 ${app.key.split(':')[0]}`}${app.listed ? '' : ' · 当前应用列表不可见，可恢复参与过滤'}`;
+    return `<div class="app-filter-row"><div class="app-filter-copy"><strong>${esc(app.label)}</strong><small>${esc(detail)}</small><span class="${excluded ? 'status-warn' : 'status-good'}">${excluded ? '已排除' : '参与过滤'}</span></div><label class="switch" aria-label="${esc(`${app.label} 参与模块 DNS 过滤`)}"><input type="checkbox" data-app-filter="${esc(app.key)}" ${excluded ? '' : 'checked'} ${disabled ? 'disabled' : ''}><span class="track"></span></label></div>`;
+  }).join('');
+  return `${state.appFilterLoading || state.appsLoading ? '<p class="field-help" role="status">正在读取应用与过滤范围…</p>' : ''}${state.appFilterError ? `<p class="notice warn" role="alert">${esc(state.appFilterError)}</p>` : ''}${state.appsError ? `<p class="notice warn" role="alert">应用列表读取失败：${esc(state.appsError)}。已保存的排除项仍可管理，请点刷新重试。</p>` : ''}${state.appFilterMessage ? `<p class="field-help" role="status">${esc(state.appFilterMessage)}</p>` : ''}<div class="app-filter-list" aria-busy="${state.appFilterBusy || state.appFilterLoading}">${rows || `<p class="empty-state">${state.appFilterLoading || state.appsLoading ? '正在加载…' : state.appFilterQuery.trim() ? '没有匹配的应用' : '当前列表没有应用或排除项，可刷新重试'}</p>`}</div>${entries.length > LIST_PAGE_SIZE ? `<nav class="logs-pagination" aria-label="应用过滤分页"><button type="button" class="btn" data-action="app-filter-page" data-page="${state.appFilterPage - 1}" ${state.appFilterPage === 0 || disabled ? 'disabled' : ''}>上一页</button><span>${state.appFilterPage + 1} / ${count} 页 · ${entries.length} 项</span><button type="button" class="btn" data-action="app-filter-page" data-page="${state.appFilterPage + 1}" ${state.appFilterPage >= count - 1 || disabled ? 'disabled' : ''}>下一页</button></nav>` : ''}`;
+}
+function appFilterMarkup() {
+  return `<section class="panel"><div class="panel-head"><div><h2 class="section-title">应用过滤</h2><p class="section-sub">默认全部应用参与；关闭开关可将应用排除在模块 DNS 接管之外</p></div><button type="button" class="btn" data-action="app-filter-open" aria-expanded="${state.appFilterOpen}" aria-controls="app-filter-editor">${state.appFilterOpen ? '收起' : '选择应用'}</button></div>${state.appFilterOpen ? `<div id="app-filter-editor"><p class="field-help">列表显示主用户的应用，已保存但当前列表不可见的排除项也会保留。修改后直接应用，无需更新订阅。</p><div class="app-filter-tools"><input id="app-filter-search" class="field" type="search" value="${esc(state.appFilterQuery)}" placeholder="搜索应用名称或包名" aria-label="搜索应用名称或包名"><button type="button" class="btn" data-action="app-filter-reload" ${state.appFilterLoading || state.appFilterBusy || state.appsLoading ? 'disabled' : ''}>刷新 / 重试</button></div><div id="app-filter-results" aria-live="polite">${appFilterResultsMarkup()}</div><p class="field-help">开关表示模块 DNS 接管范围；接管关闭或 VPN 旁路时不接管流量。系统 DNS 缓存和已有连接可能延后效果；共享 UID 的应用会一起受影响，应用自带加密 DNS 可能绕过模块。开关不代表应用广告已消失。</p></div>` : ''}</section>`;
+}
+function renderAppFilter() {
+  pageFragments.delete('manage');
+  const node = $('#app-filter-panel'); if (node) node.innerHTML = appFilterMarkup();
+  if (state.busy) setBusy(true);
+}
+function renderAppFilterResults() {
+  pageFragments.delete('manage');
+  const node = $('#app-filter-results'); if (node) node.innerHTML = appFilterResultsMarkup();
+}
+async function loadAppFilter() {
+  if (state.appFilterLoading || state.appFilterBusy) return;
+  const requestId = ++appFilterRequestId;
+  state.appFilterLoading = true; state.appFilterError = ''; state.appFilterMessage = ''; renderAppFilter();
+  try {
+    const result = await exec(`${JOB} config app-filter-list`);
+    if (requestId !== appFilterRequestId) return;
+    if (Number(result.errno) !== 0) throw new Error(textOf(result) || '无法读取应用过滤范围');
+    const keys = String(result.stdout || '').split(/\r?\n/).filter(Boolean).map(line => {
+      const [kind, key, extra] = line.split('\t');
+      if (kind !== 'excluded' || !validAppFilterKey(key) || extra !== undefined) throw new Error('应用过滤返回格式无效，请升级模块后重试');
+      return key;
+    });
+    state.appFilterExcluded = [...new Set(keys)]; state.appFilterLoaded = true;
+  } catch (error) { if (requestId === appFilterRequestId) { state.appFilterLoaded = false; state.appFilterError = `${error.message || '读取失败'}；未修改过滤范围，请刷新重试。`; } }
+  finally { if (requestId === appFilterRequestId) { state.appFilterLoading = false; renderAppFilter(); } }
+}
+function resetAppFilter() {
+  ++appFilterRequestId;
+  Object.assign(state, { appFilterExcluded: [], appFilterLoaded: false, appFilterLoading: false, appFilterBusy: false, appFilterError: '', appFilterMessage: '', appFilterQuery: '', appFilterPage: 0 });
+  renderAppFilter();
+}
+async function setAppFilter(key, enabled) {
+  if (state.busy || state.appFilterBusy || state.appFilterLoading || !state.appFilterLoaded || !validAppFilterKey(key)) return;
+  state.appFilterBusy = true; state.appFilterError = ''; state.appFilterMessage = ''; setBusy(true); renderAppFilter();
+  try {
+    const result = await runConfig('app-filter-set', key, enabled ? 'on' : 'off');
+    state.appFilterExcluded = enabled ? state.appFilterExcluded.filter(value => value !== key) : [...new Set([...state.appFilterExcluded, key])];
+    state.appFilterMessage = textOf(result) || '应用过滤设置已保存；无需更新订阅。';
+  } catch (error) { state.appFilterLoaded = false; state.appFilterError = `${error.message || '应用失败'}；请刷新确认当前过滤范围后重试。`; }
+  finally { state.appFilterBusy = false; setBusy(false); renderAppFilter(); }
+}
 function managePage() {
   const s = state.status;
   return `${heading('系统设置', '管理 DNS 接管、自动运行与维护')}
     <div class="stack"><section class="panel"><div class="panel-head"><div><h2 class="section-title">运行设置</h2><p class="section-sub">过滤暂停不会关闭 DNS 核心；DNS 接管可单独撤销</p></div></div><div class="rows">${row('globe','DNS 接管','控制本模块的 DNS 重定向规则',toggle('takeover',s?.dns_takeover === 'on','DNS 接管'))}${row('shield','VPN/TUN 自动兼容','检测到 TUN 或 WireGuard 接口时自动暂停 DNS 接管',toggle('vpn-compat',s?.vpn_compat === 'on','VPN/TUN 自动兼容'))}${row('power','开机自动运行','关闭后下次开机不自动启动核心',toggle('autostart',s?.autostart !== 'off','开机自动运行'))}${row('refresh','每日自动更新','由模块每日下载已启用的规则；失败后间隔重试',toggle('auto-update',s?.auto_update !== 'off','每日自动更新'))}</div><div class="notice warn" style="margin-top:14px">${icon('info')}<span>VPN/TUN 自动兼容默认关闭。开启后检测到 TUN/WireGuard 接口会旁路整机的模块 DNS 接管，AdGuard Home 核心继续运行；VPN 断开并稳定约 15 秒后按原设置恢复。分应用 VPN 期间也会旁路整机 DNS。若启用了模块的 IPv6 DNS 接管/阻断，对应规则也会临时移除并在恢复时重建。关闭此选项会立即按 DNS 接管开关恢复重定向，即使 VPN 仍连接。私人 DNS、应用内 DoH/DoT 仍可能绕过本模块。</span></div></section>
+    <div id="app-filter-panel">${appFilterMarkup()}</div>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">运行维护</h2><p class="section-sub">诊断结果统一保存在运行日志中</p></div></div><div class="btn-row"><button class="btn" data-action="diagnose">${icon('activity')} 运行诊断</button><button class="btn" data-action="dns-settings">${icon('globe')} DNS 上游设置</button><button class="btn" data-action="restart">${icon('refresh')} 重启 DNS 核心</button><button class="btn btn-danger" data-action="disable-takeover">${icon('power')} 紧急解除接管</button><button class="btn" data-nav="logs">查看运行日志</button></div></section><div id="dns-settings-panel">${dnsSettingsMarkup()}</div>
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">恢复默认设置</h2><p class="section-sub">按当前安装包的默认状态重新初始化模块</p></div></div><p class="field-help">会重置订阅源及名称、个人黑白名单、AI 接口密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享快照、日志和历史。DNS 接管恢复为 IPv4 默认开启，IPv6 接管仍关闭。操作前将个人名单及基础偏好备份到 Download/AdBlock Pro；含凭据的完整备份仅保存在 Root 私有目录。</p><button class="btn btn-danger" data-action="restore-defaults">${icon('refresh')} 恢复默认设置</button></section>
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">恢复默认设置</h2><p class="section-sub">按当前安装包的默认状态重新初始化模块</p></div></div><p class="field-help">会重置订阅源及名称、个人黑白名单、应用排除名单、AI 接口密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享快照、日志和历史。DNS 接管恢复为 IPv4 默认开启，IPv6 接管仍关闭。操作前将个人名单及基础偏好备份到 Download/AdBlock Pro；含凭据的完整备份仅保存在 Root 私有目录。</p><button class="btn btn-danger" data-action="restore-defaults">${icon('refresh')} 恢复默认设置</button></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">管理入口</h2><p class="section-sub">规则高级配置由 AdGuard Home 原生后台提供</p></div></div><div class="action-grid"><a class="action-card" href="http://127.0.0.1:3000/" target="_blank" rel="noopener">${icon('external')}<span class="action-text"><strong>AdGuard Home 后台</strong><small>订阅、上游 DNS 与查询日志</small></span></a><button type="button" class="action-card" data-action="copy-gkd-link">${icon('activity')}<span class="action-text"><strong>GKD 项目</strong><small>复制项目链接，在浏览器中查看</small></span></button><button type="button" class="action-card" data-action="ai-settings">${icon('settings')}<span class="action-text"><strong>AI 域名分析</strong><small>DeepSeek 或自定义兼容接口</small></span></button></div><p class="field-help">WebUI 不保存或展示 AdGuard Home 管理密码；首次登录凭据由安装包单独提供。</p></section><div id="ai-settings-panel">${aiSettingsMarkup()}</div></div>`;
 }
 const actionNames = { '--apply-personal': '应用个人名单', '--sync-shared': '同步共享规则', 'import-lists': '导入个人名单', 'export-rules': '导出规则', '--update': '规则更新', '--pause': '暂停过滤核心', '--resume': '启动过滤核心', '--rollback': '恢复规则', '--rollback-history': '恢复历史规则', '--filtering': '过滤开关', '--takeover': 'DNS 接管', '--restart': '重启 DNS 核心', '--factory-reset': '恢复默认设置', '--diagnose': '环境诊断', '--observe': '域名观察', diagnose: '环境诊断', 'set-mode': '切换过滤模式', 'set-source': '切换规则来源', 'add-source': '导入规则来源', 'remove-source': '删除规则来源', 'add-whitelist': '添加白名单', 'remove-whitelist': '删除白名单', 'add-blacklist': '添加黑名单', 'remove-blacklist': '删除黑名单', 'auto-update': '自动更新设置', autostart: '开机运行设置' };
+actionNames['app-filter-set'] = '应用过滤设置';
 function logRow(line) {
   const [id, status, action, argument, summary] = line.split('\t');
   if (!/^\d{1,20}$/.test(id || '')) return '';
@@ -926,7 +996,7 @@ async function withButtonPending(button, action) {
 }
 function setBusy(busy) {
   state.busy = busy;
-  const controls = $$('.btn, .choice, .source-actions button, [data-toggle], form input, form textarea, form select, form button');
+  const controls = $$('.btn, .choice, .source-actions button, [data-toggle], [data-app-filter], form input, form textarea, form select, form button');
   for (const control of controls) {
     if (busy) {
       if (!control.disabled) {
@@ -984,6 +1054,8 @@ async function monitorJob(id, action) {
         if (state.page === 'lists' && state.rulesView === 'shared') await loadSharedRules(true);
       }
       if (action === '--factory-reset' && code === 0) {
+        resetAppFilter();
+        if (state.appFilterOpen) await loadAppFilter();
         invalidateSources();
         resetListView('blacklist'); resetListView('whitelist');
         await Promise.allSettled([loadSources(), loadList('blacklist', true), loadList('whitelist', true)]);
@@ -1336,11 +1408,11 @@ let applicationsPending = null;
 async function loadApplications(force = false) {
   if (applicationsPending) return applicationsPending;
   if (state.appsLoaded && !force) return;
-  state.appsLoading = true; updateApplicationResults();
+  state.appsLoading = true; updateApplicationResults(); if (state.appFilterOpen) renderAppFilter();
   applicationsPending = (async () => {
     try { state.apps = await listApplications(); state.appsLoaded = true; state.appsError = ''; }
     catch (error) { state.appsError = error.message || '无法读取应用，请检查宿主权限'; }
-    finally { state.appsLoading = false; resolveApplication(); updateApplicationResults(); }
+    finally { state.appsLoading = false; resolveApplication(); updateApplicationResults(); if (state.appFilterOpen) renderAppFilter(); }
   })();
   try { await applicationsPending; } finally { applicationsPending = null; }
 }
@@ -1438,6 +1510,12 @@ document.addEventListener('click', async event => {
   if (!button || (state.busy && button.dataset.action !== 'theme' && !button.dataset.filter)) return;
   if (button.dataset.filter) { state.logFilter = button.dataset.filter; state.logPage = 0; $$('.log-filter').forEach(x => x.classList.toggle('selected', x === button)); renderLogList(); return; }
   switch (button.dataset.action) {
+    case 'app-filter-open':
+      state.appFilterOpen = !state.appFilterOpen; renderAppFilter();
+      if (state.appFilterOpen) await Promise.allSettled([loadAppFilter(), loadApplications()]);
+      break;
+    case 'app-filter-reload': await Promise.allSettled([loadAppFilter(), loadApplications(true)]); break;
+    case 'app-filter-page': if (Number.isInteger(Number(button.dataset.page))) { state.appFilterPage = Number(button.dataset.page); renderAppFilterResults(); } break;
     case 'ai-open': void openAI(); break;
     case 'ai-settings': void openAI(true); break;
     case 'ai-view-results': state.aiOpen = true; renderAI(); revealAI(); break;
@@ -1539,7 +1617,7 @@ document.addEventListener('click', async event => {
     case 'dns-restore': await saveDNS(true); break;
     case 'update': perform('--update'); break;
     case 'restart': confirm('重启 DNS 核心', '会重启本模块的 AdGuard Home 服务，可能短暂中断 DNS 解析。', '重启', () => perform('--restart')); break;
-    case 'restore-defaults': confirm('恢复默认设置？', '这会按当前安装包恢复模块默认状态：清除自定义订阅和名称、个人黑白名单、AI 密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享同步状态、观察结果、日志和历史；过滤及自动运行恢复默认开启，DNS 接管恢复为 IPv4 默认开启，IPv6 仍关闭。执行前在 Download/AdBlock Pro 导出个人名单及基础偏好；含账号和密钥的完整备份仅保存在 /data/adb/adblockpro/backups，请勿分享。完成后会重启 DNS 核心。', '备份并恢复', () => perform('--factory-reset')); break;
+    case 'restore-defaults': confirm('恢复默认设置？', '这会按当前安装包恢复模块默认状态：清除自定义订阅和名称、个人黑白名单、应用排除名单、AI 密钥、AdGuard Home 账号与设置（后台恢复为 admin/password）、规则缓存、共享同步状态、观察结果、日志和历史；过滤及自动运行恢复默认开启，DNS 接管恢复为 IPv4 默认开启，IPv6 仍关闭。执行前在 Download/AdBlock Pro 导出个人名单及基础偏好；含账号和密钥的完整备份仅保存在 /data/adb/adblockpro/backups，请勿分享。完成后会重启 DNS 核心。', '备份并恢复', () => perform('--factory-reset')); break;
     case 'disable-takeover': confirm('紧急解除 DNS 接管', '只会移除本模块创建的 DNS 重定向规则，AdGuard Home 服务会继续运行。', '解除接管', () => perform('--takeover', 'off')); break;
     case 'rollback': { const key = $('#history-select')?.value; if (!key) { toast('请先选择一个历史版本'); break; } confirm('恢复历史规则', '将替换当前规则来源和缓存。恢复后会重启 DNS 核心。', '恢复', () => perform('--rollback-history', key)); break; }
     case 'source-toggle': {
@@ -1570,6 +1648,7 @@ document.addEventListener('click', async event => {
 
 document.addEventListener('change', async event => {
   const input = event.target;
+  if (input.matches('[data-app-filter]')) { await setAppFilter(input.dataset.appFilter, input.checked); return; }
   if (input.matches('[data-ai-domain]')) {
     const domain = input.dataset.aiDomain;
     state.aiSelected = input.checked ? [...new Set([...selectedAIResults(), domain])] : selectedAIResults().filter(d => d !== domain);
@@ -1635,6 +1714,7 @@ document.addEventListener('submit', async event => {
   }
 });
 document.addEventListener('input', event => {
+  if (event.target.matches('#app-filter-search')) { state.appFilterQuery = event.target.value; state.appFilterPage = 0; renderAppFilterResults(); }
   if (event.target.matches('[data-dns-field]') && state.dnsDraft && !state.dnsBusy && !state.busy) {
     const key = event.target.dataset.dnsField;
     if (['upstream_dns','bootstrap_dns','fallback_dns','upstream_mode'].includes(key)) {
