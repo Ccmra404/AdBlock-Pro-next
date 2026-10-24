@@ -93,6 +93,14 @@ test('confirmed removed profiles are inactive, while failed user queries remain 
   }
 });
 
+test('an exclusion for an uninstalled application is valid and can be removed', t => {
+  const f = fixture(t);
+  const saved = f.run(['set', '0:com.example.uninstalled', 'off']);
+  assert.equal(saved.status, 0, saved.stderr);
+  assert.equal(f.run(['uids']).stdout, '');
+  assert.equal(f.run(['set', '0:com.example.uninstalled', 'on']).status, 0);
+});
+
 for (const key of ['com.example.one', '0:com.example;id', '00:com.example.one', '99999:com.example.one', '0:com.example.$(id)']) {
   test('rejects invalid application selection: ' + key, t => {
     const f = fixture(t); assert.notEqual(f.run(['set', key, 'off']).status, 0);

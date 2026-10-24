@@ -70,6 +70,8 @@ resolve_uids() {
     ') || { echo '[!] 系统应用 UID 查询结果无效；原设置保留。' >&2; return 1; }
     [ -z "$resolved" ] || printf '%s\n' "$resolved"
   done
+  # BusyBox ash can retain a failed conditional status in this nested call.
+  return 0
 }
 
 set_filter() {
