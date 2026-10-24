@@ -103,7 +103,7 @@ set_filter() {
     return 1
   fi
   rm -f "$before"
-  echo '[+] 应用过滤设置已保存并应用；已有 DNS 缓存或连接可能稍后更新。'
+  echo '[+] 应用过滤设置已保存；接管状态见上方结果。已有 DNS 缓存或连接可能稍后更新。'
 }
 
 case "$1" in
