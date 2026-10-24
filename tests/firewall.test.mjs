@@ -46,6 +46,7 @@ const mock = [
   "if (action === '-A' || action === '-I') {",
   "  if (!data[key]) fail();",
   "  if (process.env.FAIL_TCP === '1' && chain === 'ADGUARD_REDIRECT_DNS' && rule.includes('-p tcp')) fail();",
+  "  if ((process.env.FAIL_APP_RULE === '1' || (process.env.FAIL_IP6_APP_RULE === '1' && ipv6)) && /--uid-owner [0-9]+ -j RETURN/.test(rule)) fail();",
   "  if (action === '-A') data[key].push(rule); else data[key].unshift(rule);",
   "  ok();",
   "}",
@@ -74,6 +75,14 @@ function fixture(t, overrides = {}) {
   const ip6 = path.join(dir, 'ip6tables');
   copyFileSync(executable, ip6);
   chmodSync(ip6, 0o755);
+  const excluded = path.join(dir, 'app-exclusions.txt');
+  const helper = path.join(dir, 'app-filter');
+  const lookups = path.join(dir, 'app-lookups');
+  const busybox = path.join(dir, 'busybox');
+  writeFileSync(busybox, '#!/bin/sh\nexec "$@"\n');
+  chmodSync(busybox, 0o755);
+  writeFileSync(helper, '#!/bin/sh\n[ "$1" = uids ] || exit 2\nprintf "lookup\\n" >> "$APP_LOOKUPS"\n[ "$FAIL_UID_LOOKUP" != 1 ] || exit 1\nprintf "%s" "$TEST_APP_UIDS"\n');
+  chmodSync(helper, 0o755);
   const wrapper = path.join(dir, 'run.sh');
   writeFileSync(wrapper, [
     '#!/usr/bin/env bash',
@@ -92,11 +101,15 @@ function fixture(t, overrides = {}) {
     return spawnSync('bash', [shellPath(wrapper), command], {
       encoding: 'utf8',
       env: { ...process.env, PATH: dir + path.delimiter + process.env.PATH,
-        FIREWALL_TEST_STATE: stateFile, ...overrides, ...extraEnv },
+        FIREWALL_TEST_STATE: stateFile, BB: shellPath(busybox), ABP_APP_FILTER: shellPath(helper),
+        ABP_APP_EXCLUSIONS: shellPath(excluded), APP_LOOKUPS: shellPath(lookups),
+        ...overrides, ...extraEnv },
     });
   }
   return {
     run,
+    exclude: () => writeFileSync(excluded, '0:com.example.excluded\n'),
+    lookups: () => { try { return readFileSync(lookups, 'utf8'); } catch { return ''; } },
     read: () => JSON.parse(readFileSync(stateFile, 'utf8')),
     write: obj => writeFileSync(stateFile, JSON.stringify(obj)),
   };
@@ -203,6 +216,64 @@ test('enable creates complete IPv4 redirect rules', t => {
   assert(s['nat:ADGUARD_REDIRECT_DNS'].some(x => x.includes('-p udp')));
   assert(s['nat:ADGUARD_REDIRECT_DNS'].some(x => x.includes('-p tcp')));
 });
+
+test('default scope does not query Android packages or require the app helper', t => {
+  const f = fixture(t), r = f.run('enable', { ABP_APP_FILTER: '/missing/helper' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(f.lookups(), '');
+});
+
+for (const ipv6Mode of ['disabled', 'redirect', 'block']) test('application bypass precedes DNS rules in ' + ipv6Mode + ' mode', t => {
+  const f = fixture(t); f.exclude();
+  const r = f.run('enable', { TEST_APP_UIDS: '10123\n10124\n',
+    TEST_IPV6_ENABLED: ipv6Mode === 'disabled' ? 'false' : 'true', TEST_IPV6_BLOCK: ipv6Mode === 'block' ? 'true' : 'false' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(f.lookups(), 'lookup\n', 'resolve the same snapshot once across protocol families');
+  const state = f.read();
+  const chains = ['nat:ADGUARD_REDIRECT_DNS'];
+  if (ipv6Mode === 'redirect') chains.push('nat:ADGUARD_REDIRECT_DNS6');
+  if (ipv6Mode === 'block') chains.push('filter:ADGUARD_BLOCK_DNS');
+  for (const chain of chains) {
+    const rules = state[chain];
+    for (const uid of ['10123', '10124']) {
+      const index = rules.indexOf('-m owner --uid-owner ' + uid + ' -j RETURN');
+      assert(index >= 0, chain + ' missing app bypass');
+      assert(index < rules.findIndex(rule => rule.includes('-p udp')), chain + ' UDP bypass order');
+      assert(index < rules.findIndex(rule => rule.includes('-p tcp')), chain + ' TCP bypass order');
+    }
+    if (chain.startsWith('nat:')) assert.equal(rules[0], '-m owner --uid-owner root --gid-owner net_raw -j RETURN');
+  }
+});
+
+for (const env of [{ FAIL_UID_LOOKUP: '1' }, { TEST_APP_UIDS: '10123\n--jump DROP\n' },
+  { TEST_APP_UIDS: '4294967295\n' }, { ABP_APP_FILTER: '/missing/helper' }]) {
+  test('invalid or unavailable app identities preserve the installed firewall: ' + JSON.stringify(env), t => {
+    const f = fixture(t); assert.equal(f.run('enable').status, 0); f.exclude();
+    const before = f.read(), r = f.run('enable', env);
+    assert.notEqual(r.status, 0);
+    assert.deepEqual(f.read(), before);
+  });
+}
+
+test('removed packages yield no stale numeric UID bypass', t => {
+  const f = fixture(t); f.exclude();
+  assert.equal(f.run('enable', { TEST_APP_UIDS: '10123\n' }).status, 0);
+  const r = f.run('enable', { TEST_APP_UIDS: '' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(f.read()['nat:ADGUARD_REDIRECT_DNS'].length, 3);
+});
+
+for (const env of [{ FAIL_APP_RULE: '1' }, { FAIL_IP6_APP_RULE: '1', TEST_IPV6_ENABLED: 'true' },
+  { FAIL_IP6_APP_RULE: '1', TEST_IPV6_ENABLED: 'true', TEST_IPV6_BLOCK: 'true' }]) {
+  test('app bypass installation failure leaves no partial DNS takeover: ' + JSON.stringify(env), t => {
+    const f = fixture(t); f.exclude();
+    const r = f.run('enable', { TEST_APP_UIDS: '10123\n', ...env });
+    assert.notEqual(r.status, 0);
+    const state = f.read();
+    assert.deepEqual(state['nat:OUTPUT'], []);
+    assert.deepEqual(state['filter:OUTPUT'], []);
+  });
+}
 
 test('repeated enable repairs incomplete chain and never duplicates jump', t => {
   const f = fixture(t);

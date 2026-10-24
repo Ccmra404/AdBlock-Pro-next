@@ -23,7 +23,7 @@ SOURCE_MIGRATION=$DIR/source-url-migration-v1
 SHARED_SOURCE=shared
 umask 077
 
-case "$1" in list-whitelist|list-blacklist|list-sources|shared-rules|export-file) ;; *)
+case "$1" in list-whitelist|list-blacklist|list-sources|shared-rules|export-file|app-filter-list) ;; *)
   if [ "${ABP_CONFIG_LOCKED:-0}" != 1 ]; then
     export ABP_CONFIG_LOCKED=1
     exec "$BB" flock -n "$DIR/update.lock" "$BB" sh "$0" "$@"
@@ -227,6 +227,12 @@ remove_from_profiles() {
 }
 
 case "$1" in
+  app-filter-list)
+    "$BB" sh /data/adb/adblockpro/scripts/app-filter.sh list
+    ;;
+  app-filter-set)
+    "$BB" sh /data/adb/adblockpro/scripts/app-filter.sh set "$2" "$3"
+    ;;
   init-sources)
     init_sources || { echo '[!] Could not initialize editable rule sources.' >&2; exit 1; }
     echo '[+] Editable rule sources initialized; existing preferences and personal lists are preserved.'

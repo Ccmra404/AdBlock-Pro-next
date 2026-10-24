@@ -8,6 +8,26 @@ import { shellPath, rootFixture } from './shell-fixture.mjs';
 
 const source = readFileSync(new URL('../webui-job.sh', import.meta.url), 'utf8');
 
+test('application scope config forwards both arguments and records the numeric job ID', t => {
+  const root = rootFixture(t); root.addBusybox('Magisk');
+  const jobs = path.join(root.dir, 'jobs'); mkdirSync(jobs);
+  const script = path.join(root.dir, 'webui-job.sh');
+  writeFileSync(script, source.replace('DIR=/data/adb/bindhosts_personal/webui-jobs', 'DIR=' + JSON.stringify(shellPath(jobs))));
+  writeFileSync(path.join(root.dir, 'webui-config.sh'), '#!/bin/sh\nprintf "%s\\n" "$@"\n');
+  const result = spawnSync('bash', [shellPath(script), 'config', 'app-filter-set', '0:com.example.app', 'off', '1791000000100'], {
+    encoding: 'utf8', env: root.env('Magisk'), timeout: 10000,
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'app-filter-set\n0:com.example.app\noff\n');
+  assert.equal(readFileSync(path.join(jobs, '1791000000100.action'), 'utf8'), 'app-filter-set\n0:com.example.app\n');
+  assert.equal(readFileSync(path.join(jobs, '1791000000100.done'), 'utf8'), '0\n');
+  const invalid = spawnSync('bash', [shellPath(script), 'config', 'app-filter-set', '0:com.example;id', 'off', '1791000000101'], {
+    encoding: 'utf8', env: root.env('Magisk'), timeout: 10000,
+  });
+  assert.notEqual(invalid.status, 0);
+  assert.equal(existsSync(path.join(jobs, '1791000000101.done')), false);
+});
+
 test('clearing operation logs preserves running jobs for poll', t => {
   const fixture = rootFixture(t);
   fixture.addBusybox('Magisk');

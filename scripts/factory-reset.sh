@@ -160,6 +160,7 @@ reset_defaults() {
   printf 'on\n' > "$new_state/autostart"
   printf 'on\n' > "$new_state/dns-takeover"
   printf 'off\n' > "$new_state/vpn-compat"
+  : > "$new_state/app-exclusions.txt"
   : > "$new_state/sources.txt"
   : > "$new_state/custom-sources.txt"
   : > "$new_state/disabled-sources.txt"

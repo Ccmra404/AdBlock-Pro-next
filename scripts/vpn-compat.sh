@@ -146,11 +146,18 @@ clear_pause() {
   esac
 }
 
+load_dns_settings() {
+  # Settings contain readonly paths; repeated sourcing can terminate ash.
+  [ "${dns_settings_loaded:-0}" = 1 ] && return 0
+  . "$AGH_DIR/settings.conf" || return 1
+  dns_settings_loaded=1
+}
+
 dns_listener_ready() {
   local port_hex
   [ -r "$AGH_DIR/settings.conf" ] || return 1
   # The configured port is sourced from the trusted module settings file.
-  . "$AGH_DIR/settings.conf"
+  load_dns_settings || return 1
   case "${redir_port:-}" in ''|*[!0-9]*) return 1 ;; esac
   [ "$redir_port" -ge 1 ] && [ "$redir_port" -le 65535 ] || return 1
   port_hex=$(printf '%04X' "$redir_port") || return 1
@@ -171,6 +178,20 @@ core_ready() {
 
 apply_redirect() {
   [ ! -f "$MOD_PATH/disable" ] && [ ! -f "$MOD_PATH/remove" ] || return 1
+  load_dns_settings || { describe_safely error; return 1; }
+  case "${enable_iptables:-true}" in
+    true) ;;
+    false)
+      "$BB" sh "$FIREWALL" disable || { describe_safely error; return 1; }
+      clear_pause scope
+      describe_safely off
+      return 0 ;;
+    *)
+      "$BB" sh "$FIREWALL" disable >/dev/null 2>&1 || true
+      write_atomic "$STATE_FILE" error || true
+      describe_safely error
+      return 1 ;;
+  esac
   core_ready || { describe_safely error; return 1; }
   "$BB" sh "$FIREWALL" enable || {
     "$BB" sh "$FIREWALL" disable >/dev/null 2>&1 || true
@@ -290,6 +311,39 @@ set_takeover() {
   echo '[+] DNS redirection enabled after TCP and UDP listener checks.'
 }
 
+# Scope changes must not resume a paused core or override VPN/takeover intent.
+refresh() {
+  local takeover guard firewall_enabled
+  load_dns_settings || return 1
+  takeover=$(read_switch "$STATE_DIR/dns-takeover")
+  firewall_enabled=${enable_iptables:-true}
+  if [ "$takeover" != on ] || [ "$firewall_enabled" != true ] ||
+     [ -f "$MOD_PATH/disable" ] || [ -f "$MOD_PATH/remove" ] || ! core_ready; then
+    "$BB" sh "$FIREWALL" disable || { describe_safely error; return 1; }
+    [ "$takeover" != unknown ] || { describe_safely error; echo '[!] DNS 接管偏好无法读取；未启用重定向。' >&2; return 1; }
+    case "$firewall_enabled" in true|false) ;; *) describe_safely error; echo '[!] DNS 防火墙设置无效；未启用重定向。' >&2; return 1 ;; esac
+    clear_pause scope
+    describe_safely off
+    echo '[+] 应用排除设置已保存；当前未启用 DNS 重定向。'
+    return 0
+  fi
+  if [ "$(read_switch "$STATE_DIR/vpn-compat")" = on ]; then
+    guard=$(start_guard) || return 1
+    case "$guard" in
+      ready) ;;
+      paused-vpn|paused-unknown|resume-wait)
+        if [ "$guard" = resume-wait ]; then
+          "$BB" sh "$FIREWALL" disable || { describe_safely error; return 1; }
+        fi
+        echo '[+] 应用排除设置已保存；VPN 兼容旁路期间暂不接管 DNS。'
+        return 0 ;;
+      *) return 1 ;;
+    esac
+  fi
+  apply_redirect scope || return 1
+  echo '[+] 应用排除设置已应用，无需更新订阅规则。'
+}
+
 case "$1" in
   detect)
     detect_tunnel; rc=$?
@@ -299,5 +353,6 @@ case "$1" in
   watch) watch ;;
   set-mode) set_mode "$2" ;;
   set-takeover) set_takeover "$2" ;;
-  *) echo "Usage: $0 {detect|start-guard|watch|set-mode on|off|set-takeover on|off}" >&2; exit 2 ;;
+  refresh) refresh ;;
+  *) echo "Usage: $0 {detect|start-guard|watch|set-mode on|off|set-takeover on|off|refresh}" >&2; exit 2 ;;
 esac

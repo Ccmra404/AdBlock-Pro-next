@@ -74,7 +74,11 @@ case "$1" in
   ;;
  config)
   case "$2" in
-   list-whitelist|list-blacklist|shared-rules) ;;
+   list-whitelist|list-blacklist|shared-rules|app-filter-list) ;;
+   app-filter-set)
+    [ ${#3} -le 265 ] && printf '%s\n' "$3" | "$BB" grep -Eq '^(0|[1-9][0-9]{0,4}):[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$' || exit 1
+    case "$4" in on|off) ;; *) exit 1 ;; esac
+    ;;
    import-lists) case "$3" in ''|*[!A-Za-z0-9+/=]*) exit 1 ;; esac; [ ${#3} -le 98304 ] || exit 1 ;;
    export-rules) case "$3" in local|shared) ;; *) exit 1 ;; esac ;;
    export-file) case "$3" in operation-logs|observed-domains) ;; *) exit 1 ;; esac; case "$4" in ''|*[!0-9]*) exit 1 ;; esac; [ ${#4} -le 20 ] || exit 1; case "$5" in ''|*[!A-Za-z0-9+/=]*) exit 1 ;; esac; [ ${#5} -le 90000 ] || exit 1 ;;
@@ -92,7 +96,7 @@ case "$1" in
   # Serialize configuration writes with DNS worker operations across WebUI
   # sessions. Reads intentionally remain non-blocking.
   case "$2" in
-   list-whitelist|list-blacklist|list-sources|shared-rules|export-file) ;;
+   list-whitelist|list-blacklist|list-sources|shared-rules|export-file|app-filter-list) ;;
    *)
     if [ "${ABP_JOB_CONFIG_LOCKED:-0}" != 1 ]; then
      mkdir -p "$DIR" || exit 1
@@ -105,11 +109,11 @@ case "$1" in
     set-source)
      case "$5" in ''|light|balanced|strict) result=$(sh "$CONFIG" "$2" "$3" "$4" "$5" 2>&1); event_id=$6 ;; *) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$5 ;; esac
      ;;
-   add-source) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$5 ;;
+   add-source|app-filter-set) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$5 ;;
    rename-source) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$5 ;;
    edit-source) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$5 ;;
    list-sources) result=$(sh "$CONFIG" "$2" "$3" 2>&1); event_id='' ;;
-   shared-rules) result=$(sh "$CONFIG" "$2" 2>&1); event_id='' ;;
+   shared-rules|app-filter-list) result=$(sh "$CONFIG" "$2" 2>&1); event_id='' ;;
    export-rules) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$4 ;;
    export-file) result=$(sh "$CONFIG" "$2" "$3" "$4" "$5" 2>&1); event_id='' ;;
    *) result=$(sh "$CONFIG" "$2" "$3" 2>&1); event_id=$4 ;;
@@ -117,7 +121,7 @@ case "$1" in
   code=$?
   printf '%s\n' "$result"
   case "$2" in
-   add-whitelist|add-blacklist|remove-whitelist|remove-blacklist|import-lists|export-rules|auto-update|autostart|vpn-compat|set-mode|set-source|add-source|remove-source|rename-source|edit-source) loggable=1 ;;
+   add-whitelist|add-blacklist|remove-whitelist|remove-blacklist|import-lists|export-rules|auto-update|autostart|vpn-compat|set-mode|set-source|add-source|remove-source|rename-source|edit-source|app-filter-set) loggable=1 ;;
    *) loggable=0 ;;
   esac
   case "$event_id" in ''|*[!0-9]*) loggable=0 ;; esac

@@ -31,6 +31,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
       [path.join(state, 'auto-update'), 'off\n'],
       [path.join(state, 'autostart'), 'off\n'],
       [path.join(state, 'dns-takeover'), 'off\n'],
+      [path.join(state, 'app-exclusions.txt'), '0:com.example.excluded\n'],
     ]);
     for (const [file, content] of privateFiles) writeFileSync(file, content);
     for (const marker of ['v3-installed', 'profiles-initialized']) writeFileSync(path.join(state, marker), '');
