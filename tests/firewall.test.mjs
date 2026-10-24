@@ -45,6 +45,7 @@ const mock = [
   "}",
   "if (action === '-A' || action === '-I') {",
   "  if (!data[key]) fail();",
+  "  if (process.env.FAIL_VPN_MARK === '1' && rule.includes('--mark')) fail();",
   "  if (process.env.FAIL_TCP === '1' && chain === 'ADGUARD_REDIRECT_DNS' && rule.includes('-p tcp')) fail();",
   "  if (action === '-A') data[key].push(rule); else data[key].unshift(rule);",
   "  ok();",
@@ -199,7 +200,7 @@ test('enable creates complete IPv4 redirect rules', t => {
   assert.equal(r.status, 0, r.stderr);
   const s = f.read();
   assert.equal(s['nat:OUTPUT'].filter(x => x === jump).length, 1);
-  assert.equal(s['nat:ADGUARD_REDIRECT_DNS'].length, 3);
+  assert.equal(s['nat:ADGUARD_REDIRECT_DNS'].length, 4);
   assert(s['nat:ADGUARD_REDIRECT_DNS'].some(x => x.includes('-p udp')));
   assert(s['nat:ADGUARD_REDIRECT_DNS'].some(x => x.includes('-p tcp')));
 });
@@ -213,7 +214,26 @@ test('repeated enable repairs incomplete chain and never duplicates jump', t => 
   assert.equal(f.run('enable').status, 0);
   const repaired = f.read();
   assert.equal(repaired['nat:OUTPUT'].filter(x => x === jump).length, 1);
-  assert.equal(repaired['nat:ADGUARD_REDIRECT_DNS'].length, 3);
+  assert.equal(repaired['nat:ADGUARD_REDIRECT_DNS'].length, 4);
+});
+
+test('VPN-protected app DNS is exempt before ordinary DNS redirection', t => {
+  const f = fixture(t);
+  assert.equal(f.run('enable').status, 0);
+  const rules = f.read()['nat:ADGUARD_REDIRECT_DNS'];
+  const bypass = rules.indexOf('-m mark --mark 0x20000/0xe0000 -j RETURN');
+  assert(bypass >= 0, 'honor protectedFromVpn only when permission bits are NONE');
+  assert(bypass < rules.findIndex(rule => rule.includes('-j REDIRECT')));
+  assert(rules.some(rule => rule.includes('--uid-owner root --gid-owner net_raw')));
+  assert.equal(rules.filter(rule => rule.includes('-j REDIRECT')).length, 2);
+  assert(!rules.some(rule => rule.includes('198.18.0.2')), 'ordinary VPN DNS must still reach AGH');
+});
+
+test('an unavailable VPN mark matcher leaves no partial active redirection', t => {
+  const f = fixture(t);
+  assert.notEqual(f.run('enable', { FAIL_VPN_MARK: '1' }).status, 0);
+  assert.deepEqual(f.read()['nat:OUTPUT'], []);
+  assert.equal(f.read()['nat:ADGUARD_REDIRECT_DNS'], undefined);
 });
 
 test('disable removes duplicate legacy jumps and owned chain', t => {
