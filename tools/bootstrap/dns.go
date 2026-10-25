@@ -279,6 +279,26 @@ func (m dnsManager) info() (dnsInfo, error) {
 	normalizeDNS(&current.dnsSettings)
 	return current, err
 }
+
+// AdGuard Home returns upstream.Address() keys, including protocol default ports.
+func dnsTestResultKey(server string) string {
+	if _, err := netip.ParseAddr(server); err == nil {
+		return net.JoinHostPort(server, "53")
+	}
+	u, err := url.Parse(server)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "tls") {
+		return server
+	}
+	if u.Port() == "" {
+		port := "443"
+		if u.Scheme == "tls" {
+			port = "853"
+		}
+		u.Host = net.JoinHostPort(u.Hostname(), port)
+	}
+	return u.String()
+}
+
 func (m dnsManager) test(c dnsSettings) ([]dnsTestRow, error) {
 	servers, seen := []string{}, map[string]bool{}
 	for _, group := range [][]string{c.Upstream, c.Fallback, c.Bootstrap} {
@@ -295,7 +315,11 @@ func (m dnsManager) test(c dnsSettings) ([]dnsTestRow, error) {
 	}
 	rows := make([]dnsTestRow, 0, len(servers))
 	for _, s := range servers {
-		rows = append(rows, dnsTestRow{s, results[s] == "OK"})
+		result, exists := results[s]
+		if !exists {
+			result = results[dnsTestResultKey(s)]
+		}
+		rows = append(rows, dnsTestRow{s, result == "OK"})
 	}
 	return rows, nil
 }

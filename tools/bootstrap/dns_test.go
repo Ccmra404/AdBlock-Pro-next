@@ -26,6 +26,7 @@ type dnsFixture struct {
 	badTest, missingTest, changeDuringTest, failFirstWrite, failAllWrites bool
 	writes                                                                int
 	postFields                                                            []string
+	testResults                                                           map[string]string
 }
 
 func newDNSFixture(t *testing.T) *dnsFixture {
@@ -59,6 +60,9 @@ func newDNSFixture(t *testing.T) *dnsFixture {
 				if f.badTest {
 					results[s] = "failed with private token=hidden"
 				}
+			}
+			if f.testResults != nil {
+				results = f.testResults
 			}
 			if f.changeDuringTest {
 				f.current.Upstream = []string{"9.9.9.9"}
@@ -183,6 +187,82 @@ func TestDNSSaveTestsEveryServerAndOnlySendsManagedFields(t *testing.T) {
 		t.Fatal("desired DNS config not applied")
 	}
 }
+func TestDNSTestMatchesCoreDefaultPorts(t *testing.T) {
+	// AdGuard Home v0.107.79 keys successful results by upstream.Address(),
+	// which adds default ports.  Keep these literal API responses independent
+	// of the result-matching implementation.
+	cases := []struct{ server, key string }{
+		{"223.5.5.5", "223.5.5.5:53"},
+		{"119.29.29.29:5353", "119.29.29.29:5353"},
+		{"2620:fe::10", "[2620:fe::10]:53"},
+		{"[2620:fe::10]:5353", "[2620:fe::10]:5353"},
+		{"https://dns.alidns.com/dns-query", "https://dns.alidns.com:443/dns-query"},
+		{"https://doh.pub:8443/dns-query?name=value", "https://doh.pub:8443/dns-query?name=value"},
+		{"https://[2620:fe::10]/dns-query", "https://[2620:fe::10]:443/dns-query"},
+		{"tls://dns.example", "tls://dns.example:853"},
+		{"tls://[2620:fe::10]", "tls://[2620:fe::10]:853"},
+		{"tls://dns.example:8853", "tls://dns.example:8853"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.server, func(t *testing.T) {
+			f := newDNSFixture(t)
+			f.testResults = map[string]string{tc.key: "OK"}
+			c := dnsDefaults()
+			c.Upstream = []string{tc.server}
+			rows, err := f.manager.test(c)
+			if err != nil || len(rows) != 1 || rows[0].Server != tc.server || !rows[0].OK {
+				t.Fatalf("core success misreported: rows=%#v err=%v", rows, err)
+			}
+			if f.writes != 0 {
+				t.Fatal("draft test changed DNS settings")
+			}
+		})
+	}
+}
+
+func TestDNSTestDoesNotAcceptUnrelatedOrConflictingSuccess(t *testing.T) {
+	for _, tc := range []struct {
+		server  string
+		results map[string]string
+	}{
+		{"223.5.5.5", map[string]string{}},
+		{"223.5.5.5", map[string]string{"223.5.5.5:53": "timeout"}},
+		{"223.5.5.5", map[string]string{"223.5.5.5:5353": "OK"}},
+		{"223.5.5.5", map[string]string{"119.29.29.29:53": "OK"}},
+		{"223.5.5.5", map[string]string{"223.5.5.5": "failed", "223.5.5.5:53": "OK"}},
+		{"https://doh.pub/dns-query", map[string]string{"https://doh.pub:8443/dns-query": "OK"}},
+		{"https://doh.pub/dns-query", map[string]string{"https://doh.pub:443/other": "OK"}},
+		{"https://doh.pub/dns-query?key=a", map[string]string{"https://doh.pub:443/dns-query?key=b": "OK"}},
+		{"tls://dns.example", map[string]string{"https://dns.example:853": "OK"}},
+	} {
+		f := newDNSFixture(t)
+		f.testResults = tc.results
+		c := dnsDefaults()
+		c.Upstream = []string{tc.server}
+		rows, err := f.manager.test(c)
+		if err != nil || len(rows) != 1 || rows[0].OK {
+			t.Fatalf("unconfirmed result accepted: server=%s results=%#v rows=%#v err=%v", tc.server, tc.results, rows, err)
+		}
+	}
+}
+
+func TestDNSSaveAcceptsCoreDefaultPortsAndPreservesInput(t *testing.T) {
+	f := newDNSFixture(t)
+	f.testResults = map[string]string{
+		"223.5.5.5:53": "OK", "119.29.29.29:53": "OK",
+		"[2620:fe::10]:53": "OK", "https://doh.pub:443/dns-query": "OK",
+	}
+	c := dnsDefaults()
+	c.Bootstrap = []string{"2620:fe::10"}
+	c.Fallback = []string{"https://doh.pub/dns-query"}
+	if err := f.manager.apply(dnsEdit{c, f.revision()}, true); err != nil {
+		t.Fatal(err)
+	}
+	if f.writes != 1 || !reflect.DeepEqual(f.current.dnsSettings, c) {
+		t.Fatalf("DNS input changed during result matching: %#v", f.current.dnsSettings)
+	}
+}
+
 func TestDNSTestIncludesFallbackAndBootstrapAndMissingResultsFail(t *testing.T) {
 	f := newDNSFixture(t)
 	c := dnsDefaults()
