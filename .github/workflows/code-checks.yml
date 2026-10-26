@@ -26,5 +26,7 @@ jobs:
           done
       - name: WebUI async state regression tests
         run: node --test tests/*.test.mjs
+      - name: Issue 52 VPN-protected DNS netfilter regression
+        run: sudo -n python3 tests/issue52_netfilter.py
       - name: Python policy and upstream safety tests
         run: python3 -m unittest discover -s tests -p 'test_*.py'

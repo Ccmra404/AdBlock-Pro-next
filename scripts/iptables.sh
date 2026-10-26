@@ -169,6 +169,14 @@ enable_iptables_chain() {
     disable_iptables_chain "$command" "$chain"; return 1
   fi
 
+  # Android Fwmark: bit 17 is protectedFromVpn, bits 18-19 are permission.
+  # Preserve VPN app egress, but NOT system DNS (PERMISSION_SYSTEM also uses
+  # the protect bit). Re-intercepting protected egress can feed it back to AGH.
+  if ! $command -t nat -A "$chain" -m mark --mark 0x20000/0xe0000 -j RETURN; then
+    log "Cannot preserve VPN-protected DNS egress" "无法保留 VPN 受保护 DNS 出站路径，取消接管以防解析异常"
+    disable_iptables_chain "$command" "$chain"; return 1
+  fi
+
   for subnet in $ignore_dest_list; do
     if ! $command -t nat -A "$chain" -d "$subnet" -j RETURN >/dev/null 2>&1; then
       log "Cannot bypass destination $subnet" "无法绕过目标网段 $subnet"
