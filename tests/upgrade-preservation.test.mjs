@@ -56,6 +56,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     writeFileSync(path.join(stage, 'bin/AdGuardHome'), 'fixture-only-replacement-binary');
     writeFileSync(path.join(stage, 'bin/curl'), '#!/bin/sh\necho "curl fixture"\n');
     writeFileSync(path.join(stage, 'bin/adblock-ai'), '#!/bin/sh\necho "AI fixture"\n');
+    writeFileSync(path.join(stage, 'bin/adblock-apps.dex'), 'application-label-fixture');
     writeFileSync(path.join(stage, 'bin/adblock-bootstrap'), '#!/bin/sh\nexit 0\n');
     for (const file of ['10007.txt', '1791638912.txt']) writeFileSync(path.join(stage, 'bin/data/filters', file), 'new-default-cache');
     const zip = path.join(root.dir, 'candidate.zip');
@@ -75,6 +76,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     for (const [file, content] of privateFiles) assert.equal(readFileSync(file, 'utf8'), content, file + ' changed during upgrade');
     assert.equal(readFileSync(path.join(state, 'root-family'), 'utf8').trim(), family);
     assert.equal(readFileSync(path.join(runtime, 'bin/AdGuardHome'), 'utf8'), 'fixture-only-replacement-binary');
+    assert.equal(readFileSync(path.join(runtime, 'bin/adblock-apps.dex'), 'utf8'), 'application-label-fixture');
     assert.equal(readFileSync(path.join(runtime, 'scripts/compat.sh'), 'utf8'), readFileSync(path.join(module, 'scripts/compat.sh'), 'utf8'));
   });
 }

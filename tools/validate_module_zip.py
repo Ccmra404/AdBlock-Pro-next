@@ -18,7 +18,7 @@ REQUIRED = {
     'scripts/footprint.sh', 'scripts/memory.sh', 'scripts/detach.sh', 'scripts/network-diagnostics.sh',
     'META-INF/com/google/android/update-binary',
     'bin/AdGuardHome', 'bin/adblock-bootstrap',
-    'bin/curl', 'bin/adblock-ai', 'certs/cacert.pem',
+    'bin/curl', 'bin/adblock-ai', 'bin/adblock-apps.dex', 'certs/cacert.pem',
     'bin/data/filters/10007.txt', 'bin/data/filters/1791638912.txt',
     'LICENSE', 'THIRD_PARTY_NOTICES.md', 'licenses/AWAvenue-GPL-3.0.txt',
     'licenses/curl-COPYING.txt', 'licenses/openssl-LICENSE.txt', 'licenses/cacert-MPL-2.0.txt',
@@ -45,6 +45,10 @@ def validate(path, version, version_code):
             raise ValueError('missing installer files: ' + ', '.join(sorted(REQUIRED - set(names))))
         if archive.testzip() is not None:
             raise ValueError('corrupt ZIP entry')
+        dex = archive.read('bin/adblock-apps.dex')
+        if (len(dex) < 112 or dex[:4] != b'dex\n' or dex[4:7] not in (b'035', b'037', b'038', b'039', b'040')
+                or dex[7] != 0 or struct.unpack_from('<II', dex, 32) != (len(dex), 112)):
+            raise ValueError('invalid application label DEX helper')
         ca_data = archive.read('certs/cacert.pem')
         if hashlib.sha256(ca_data).hexdigest() != CA_SHA256:
             raise ValueError('incorrect CA certificate bundle checksum')

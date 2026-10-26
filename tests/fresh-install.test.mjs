@@ -28,6 +28,7 @@ function installFixture(t, family, preference, failWrite = false, failPermission
   writeFileSync(path.join(stage, 'bin/curl'), '#!/bin/sh\necho "curl fixture"\n');
   for (const file of ['10007.txt', '1791638912.txt']) writeFileSync(path.join(stage, 'bin/data/filters', file), '||ads.cache.example^\n');
   writeFileSync(path.join(stage, 'bin/adblock-ai'), '#!/bin/sh\necho AI-fixture\n');
+  writeFileSync(path.join(stage, 'bin/adblock-apps.dex'), 'application-label-fixture');
   const config = readFileSync(new URL('../tools/bootstrap/main.go', import.meta.url), 'utf8').match(/const initialConfig = `([\s\S]*?)`/)[1];
   // Fixture only: Linux ARM64 CI separately runs the real Go generator/core.
   writeFileSync(path.join(stage, 'bin/adblock-bootstrap'), '#!/bin/sh\ncat > "$1" <<\'ABP_CONFIG\'\n' + remap(config.replace('%s', 'fixture-only-hash')) + '\nABP_CONFIG\nprintf "fixture-only-credential\\n" > "$2"\n');
@@ -54,6 +55,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     assert.match(readFileSync(path.join(f.runtime, 'defaults/settings.conf'), 'utf8'), /enable_ipv6_dns=false/);
     assert.equal(existsSync(path.join(f.runtime, 'defaults/filters/10007.txt')), true);
     assert.equal(existsSync(path.join(f.runtime, 'bin/adblock-bootstrap')), true);
+    assert.equal(readFileSync(path.join(f.runtime, 'bin/adblock-apps.dex'), 'utf8'), 'application-label-fixture');
     assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'on\n');
     assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'off\n');
     assert.match(installed.stdout, /DNS takeover: on \(initialized\)/);
