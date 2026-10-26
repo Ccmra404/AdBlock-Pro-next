@@ -13,7 +13,7 @@ VERSION = 'v0.13.0-rc.3-dev.abcdef0'
 
 
 class ModuleZipTests(unittest.TestCase):
-    def fixture(self, extra=None, missing='', arm=True, version=VERSION, corrupt_ca=False,
+    def fixture(self, extra=None, missing='', arm=True, version=VERSION, corrupt_ca=False, corrupt_dex=False,
                 update_url='https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest/download/update.json'):
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -30,6 +30,10 @@ class ModuleZipTests(unittest.TestCase):
                     data = props.encode()
                 if name == 'certs/cacert.pem':
                     data = b'broken' if corrupt_ca else (Path(__file__).resolve().parents[1] / name).read_bytes()
+                if name == 'bin/adblock-apps.dex' and not corrupt_dex:
+                    data = bytearray(112)
+                    data[:8] = b'dex\n038\0'
+                    struct.pack_into('<II', data, 32, len(data), 112)
                 if name in ['bin/AdGuardHome', 'bin/adblock-bootstrap', 'bin/curl', 'bin/adblock-ai']:
                     data = bytearray(64)
                     data[:6] = b'\x7fELF\x02\x01'
@@ -41,6 +45,12 @@ class ModuleZipTests(unittest.TestCase):
 
     def test_complete_arm64_candidate(self):
         validator.validate(self.fixture(), VERSION, 45)
+
+    def test_missing_or_invalid_application_label_helper_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'missing installer'):
+            validator.validate(self.fixture(missing='bin/adblock-apps.dex'), VERSION, 45)
+        with self.assertRaisesRegex(ValueError, 'DEX helper'):
+            validator.validate(self.fixture(corrupt_dex=True), VERSION, 45)
 
     def test_credentials_and_unsafe_paths_are_rejected(self):
         for name in ['admin.auth', 'bin/AdGuardHome.yaml', 'config/api.auth', '../other', 'ai/config.json', 'private/ai/jobs/123/result.json']:

@@ -23,7 +23,7 @@ SOURCE_MIGRATION=$DIR/source-url-migration-v1
 SHARED_SOURCE=shared
 umask 077
 
-case "$1" in list-whitelist|list-blacklist|list-sources|shared-rules|export-file|app-filter-list) ;; *)
+case "$1" in list-whitelist|list-blacklist|list-sources|shared-rules|export-file|app-filter-list|application-labels) ;; *)
   if [ "${ABP_CONFIG_LOCKED:-0}" != 1 ]; then
     export ABP_CONFIG_LOCKED=1
     exec "$BB" flock -n "$DIR/update.lock" "$BB" sh "$0" "$@"
@@ -227,6 +227,11 @@ remove_from_profiles() {
 }
 
 case "$1" in
+  application-labels)
+    helper=/data/adb/adblockpro/bin/adblock-apps.dex
+    [ -s "$helper" ] || { echo '[!] Application label helper is unavailable.' >&2; exit 1; }
+    CLASSPATH="$helper" "$BB" timeout 10 /system/bin/app_process /system/bin AppCatalogue
+    ;;
   app-filter-list)
     "$BB" sh /data/adb/adblockpro/scripts/app-filter.sh list
     ;;

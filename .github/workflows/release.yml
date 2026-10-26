@@ -6,6 +6,7 @@ on:
       # Any file entering the installer ZIP must trigger an ARM64 package test.
       - "tools/bootstrap/**"
       - "tools/ai/**"
+      - "tools/app-catalogue/**"
       - "customize.sh"
       - "module.prop"
       - "action.sh"
@@ -65,10 +66,16 @@ jobs:
           echo "ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
       - name: Build pinned curl and OpenSSL for Android ARM64
         run: bash tools/build_android_curl.sh
+      - name: Build local Android application label helper
+        run: |
+          sdkmanager "build-tools;35.0.0"
+          D8_JAR="$ANDROID_HOME/build-tools/35.0.0/lib/d8.jar" bash tools/build_app_catalogue.sh
       - uses: actions/upload-artifact@v4
         with:
           name: adblock-curl-arm64
-          path: bin/curl
+          path: |
+            bin/curl
+            bin/adblock-apps.dex
           if-no-files-found: error
           retention-days: 1
   package:
@@ -171,7 +178,7 @@ jobs:
             sed -i "s@AdBlock-Pro-next/main/rules/@AdBlock-Pro-next/$ARTIFACT_SHA/rules/@" "$stage/scripts/rule-store.sh"
           fi
           cp licenses/AWAvenue-GPL-3.0.txt licenses/curl-COPYING.txt licenses/openssl-LICENSE.txt licenses/cacert-MPL-2.0.txt licenses/go-openai-Apache-2.0.txt licenses/go-BSD-3-Clause.txt licenses/go-crypto-BSD-3-Clause.txt "$stage/licenses/"
-          cp bin/AdGuardHome bin/adblock-bootstrap bin/curl bin/adblock-ai "$stage/bin/"
+          cp bin/AdGuardHome bin/adblock-bootstrap bin/curl bin/adblock-ai bin/adblock-apps.dex "$stage/bin/"
           cp bin/data/filters/10007.txt bin/data/filters/1791638912.txt "$stage/bin/data/filters/"
           chmod 755 "$stage/bin/AdGuardHome" "$stage/bin/adblock-bootstrap" "$stage/bin/curl" "$stage/bin/adblock-ai"
           (cd "$stage" && zip -q -r -9 "$GITHUB_WORKSPACE/dist/AdBlock-Pro-$TAG-arm64.zip" .)

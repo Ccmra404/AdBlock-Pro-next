@@ -21,7 +21,7 @@ jobs:
           node --input-type=module --check < webroot/kernelsu.js
       - name: Shell syntax
         run: |
-          for script in action.sh bindhosts.sh customize.sh service.sh uninstall.sh webui-config.sh webui-job.sh scripts/*.sh; do
+          for script in action.sh bindhosts.sh customize.sh service.sh uninstall.sh webui-config.sh webui-job.sh scripts/*.sh tools/build_app_catalogue.sh; do
             bash -n "$script"
           done
       - name: WebUI async state regression tests
