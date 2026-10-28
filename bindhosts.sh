@@ -493,9 +493,9 @@ source_name() {
 source_mirror_urls() {
   case "$1" in
     https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt)
-      printf '%s\n' "https://${1#https://ghfast.top/}" ;;
+      printf '%s\n' "https://${1#https://ghfast.top/}" "https://gcore.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/${1##*/}" "https://cdn.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/${1##*/}" ;;
     https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt)
-      printf '%s\n' "https://ghfast.top/${1#https://}" ;;
+      printf '%s\n' "https://ghfast.top/${1#https://}" "https://gcore.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/${1##*/}" "https://cdn.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/${1##*/}" ;;
     https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward)
       printf '%s\n' 'https://lingeringsound.github.io/10007_auto/reward' 'https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' 'https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' 'https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward' ;;
     https://lingeringsound.github.io/10007_auto/reward)
@@ -549,8 +549,15 @@ post_remove_source() {
 download_candidate() {
   candidate_url=$1; candidate_output=$2
   if [ ! -s "$AGH/certs/cacert.pem" ]; then echo '[!] 模块 CA 证书包缺失，无法安全下载 HTTPS 规则。' >&2; return 1; fi
+  # GOODBYEADS includes multi-megabyte files. Allow slow transfers to finish,
+  # but abandon connections that make virtually no progress for 30 seconds.
+  case "$candidate_url" in
+    https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt|https://gcore.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/dns.txt|https://gcore.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/allow.txt|https://cdn.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/dns.txt|https://cdn.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/allow.txt)
+      candidate_max_time=${3:-200}; set -- --speed-limit 1024 --speed-time 30 ;;
+    *) candidate_max_time=20; set -- ;;
+  esac
   if "$CURL" --cacert "$AGH/certs/cacert.pem" --silent --show-error --fail --location --proto '=https' --proto-redir '=https' \
-    --connect-timeout 10 --max-time 20 --max-filesize 52428800 "$candidate_url" -o "$candidate_output"; then
+    --connect-timeout 10 --max-time "$candidate_max_time" "$@" --max-filesize 52428800 "$candidate_url" -o "$candidate_output"; then
     :
   else
     curl_status=$?
@@ -563,21 +570,43 @@ download_candidate() {
   fi
   bytes=$(wc -c < "$candidate_output" 2>/dev/null); case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
   [ "$bytes" -gt 0 ] && [ "$bytes" -le 52428800 ] || { rm -f "$candidate_output"; return 1; }
+  # The bundled curl has no gzip decoder; do not install compressed bytes as rules.
+  if [ "$(head -c 2 "$candidate_output")" = "$(printf '\037\213')" ]; then
+    echo '[提醒] 规则源返回压缩内容，无法直接使用，将尝试其他镜像。' >&2
+    rm -f "$candidate_output"; return 1
+  fi
   first=$(head -c 512 "$candidate_output" | "$BB" tr '[:upper:]' '[:lower:]')
   case "$first" in *'<!doctype html'*|*'<html'*|*'<head'*) rm -f "$candidate_output"; return 1 ;; esac
 }
 download_source() {
   url=$1; output=$2; name=$3
   [ -n "${CURL:-}" ] || CURL=$(abp_find_curl) || return 1
+  source_budget=20; source_started=
+  case "$url" in
+    https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt)
+      source_budget=200
+      if read -r source_started _ 2>/dev/null < /proc/uptime; then
+        source_started=${source_started%%.*}
+        case "$source_started" in ''|*[!0-9]*) source_started= ;; esac
+      else source_started=; fi
+      echo '[提醒] GOODBYEADS 规则较大，慢速网络下下载可能需要几分钟。' ;;
+  esac
   echo "[进度] 下载规则源：$name"
   candidate_host=${url#https://}; candidate_host=${candidate_host%%/*}
   echo "[进度] 尝试规则源：$candidate_host"
-  if download_candidate "$url" "$output"; then return 0; fi
+  if download_candidate "$url" "$output" "$source_budget"; then return 0; fi
   for mirror in $(source_mirror_urls "$url" 2>/dev/null); do
     [ -n "$mirror" ] && [ "$mirror" != "$url" ] || continue
+    source_remaining=$source_budget
+    if [ -n "$source_started" ] && read -r source_now _ 2>/dev/null < /proc/uptime; then
+      source_now=${source_now%%.*}
+      case "$source_now" in ''|*[!0-9]*) source_now=$source_started ;; esac
+      source_remaining=$((source_budget - source_now + source_started))
+      [ "$source_remaining" -gt 0 ] || break
+    fi
     candidate_host=${mirror#https://}; candidate_host=${candidate_host%%/*}
     echo "[提醒] 原地址失败，正在尝试 HTTPS 镜像：$candidate_host"
-    if download_candidate "$mirror" "$output"; then echo "[+] 已通过 HTTPS 镜像下载：$name"; return 0; fi
+    if download_candidate "$mirror" "$output" "$source_remaining"; then echo "[+] 已通过 HTTPS 镜像下载：$name"; return 0; fi
   done
   echo "[!] 下载失败：$name。原地址和可用镜像均未成功；现有规则会保留。" >&2
   rm -f "$output"

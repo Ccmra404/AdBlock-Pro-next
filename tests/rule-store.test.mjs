@@ -38,7 +38,7 @@ function fixture(t) {
   const remote = path.join(f.dir,'remote');
   writeFileSync(remote,bundle);
   const curl = path.join(f.dir,'curl');
-  writeFileSync(curl,'#!/bin/sh\noutput= url=\nwhile [ "$#" -gt 0 ]; do case "$1" in --cacert|--connect-timeout|--max-time|--max-filesize) shift 2;; -o) output=$2; shift 2;; https://*) url=$1; shift;; *) shift;; esac; done\nprintf "%s\\n" "$url" >> "$CURL_URLS"\n[ "$url" != "$FAIL_URL" ] || { echo "curl: (28) Resolving timed out" >&2; exit 28; }\n[ "$FAIL_DOWNLOAD" != 1 ] || { echo "curl: (28) Resolving timed out" >&2; exit 28; }\n[ "$FAIL_TLS" != 1 ] || { echo "curl: (60) certificate verify failed" >&2; exit 60; }\ncp "$REMOTE" "$output"\n'); chmodSync(curl,0o755);
+  writeFileSync(curl,'#!/bin/sh\noutput= url=\nwhile [ "$#" -gt 0 ]; do case "$1" in --cacert|--connect-timeout|--max-time|--max-filesize) shift 2;; -o) output=$2; shift 2;; https://*) url=$1; shift;; *) shift;; esac; done\nprintf "%s\\n" "$url" >> "$CURL_URLS"\n[ "$url" != "$FAIL_URL" ] || { echo "curl: (28) simulated timeout" >&2; exit 28; }\n[ "$FAIL_DOWNLOAD" != 1 ] || { echo "curl: (${FAIL_CURL_CODE:-28}) simulated failure" >&2; exit "${FAIL_CURL_CODE:-28}"; }\n[ "$FAIL_TLS" != 1 ] || { echo "curl: (60) certificate verify failed" >&2; exit 60; }\ncp "$REMOTE" "$output"\n'); chmodSync(curl,0o755);
   const env = { ...f.env('Magisk'), ABP_STATE_DIR:shellPath(state), ABP_AGH_DIR:shellPath(agh), ABP_MODULE_DIR:shellPath(module), CURL:shellPath(curl), REMOTE:shellPath(remote), CURL_URLS:shellPath(path.join(f.dir,'curl-urls')), ABP_EXPORT_DIR:shellPath(path.join(f.dir,'exports')) };
   const run = (...args) => spawnSync('bash',[shellPath(script),...args],{env,encoding:'utf8',timeout:10000});
   const file = path.join(state,'shared-app-domains.txt'), filter = path.join(agh,'bin/userfilters/adblock-pro-shared-app-rules.txt');
@@ -83,19 +83,27 @@ test('shared sync retries the official CDN mirror when GitHub Raw is unavailable
   assert.match(result.stdout,/共享规则已从 HTTPS 镜像获取/);
 });
 
-test('shared sync reports DNS and TLS failures while retaining the previous snapshot and lists', t=>{
+test('shared sync distinguishes DNS, timeout, TLS connection and certificate failures while retaining snapshots', t=>{
   const f=fixture(t); assert.equal(f.run('init').status,0);
   const before=readFileSync(f.file,'utf8'), original=readFileSync(f.filter,'utf8'), lists=f.privateSnapshot();
   f.env.FAIL_DOWNLOAD='1';
+  f.env.FAIL_CURL_CODE='6';
   const dns=f.run('sync');
   assert.notEqual(dns.status,0);
-  assert.match(dns.stderr,/域名无法解析或解析超时/);
+  assert.match(dns.stderr,/域名解析失败/);
   assert.match(dns.stderr,/现有共享规则快照和个人名单均已保留/);
   assert.deepEqual(readFileSync(f.curlUrls,'utf8').trim().split('\n'),[
     'https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/shared-app-domains.txt',
     'https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt',
     'https://cdn.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt',
   ]);
+  assert.equal(readFileSync(f.file,'utf8'),before); assert.equal(readFileSync(f.filter,'utf8'),original); assert.deepEqual(f.privateSnapshot(),lists);
+  f.env.FAIL_CURL_CODE='28';
+  const timeout=f.run('sync');
+  assert.notEqual(timeout.status,0); assert.match(timeout.stderr,/请求超时.*解析、连接或下载/); assert.doesNotMatch(timeout.stderr,/域名解析失败/);
+  f.env.FAIL_CURL_CODE='35';
+  const handshake=f.run('sync');
+  assert.notEqual(handshake.status,0); assert.match(handshake.stderr,/TLS 连接失败/); assert.doesNotMatch(handshake.stderr,/证书校验失败/);
   assert.equal(readFileSync(f.file,'utf8'),before); assert.equal(readFileSync(f.filter,'utf8'),original); assert.deepEqual(f.privateSnapshot(),lists);
   f.env.FAIL_TLS='1'; delete f.env.FAIL_DOWNLOAD;
   const tls=f.run('sync');
