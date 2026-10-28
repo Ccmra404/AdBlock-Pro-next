@@ -23,7 +23,7 @@ for (const [name, black, white, input] of [
   assert.deepEqual(f.privateSnapshot(), before);
 });
 
-function fixture(t) {
+function fixture(t, { registry = '' } = {}) {
   const f = rootFixture(t); f.addBusybox('Magisk');
   const state = path.join(f.dir, 'state'), agh = path.join(f.dir, 'agh'), module = path.join(f.dir, 'module');
   mkdirSync(state); mkdirSync(path.join(module, 'rules'), { recursive:true });
@@ -33,6 +33,11 @@ function fixture(t) {
   writeFileSync(path.join(module, 'rules/shared-app-domains.txt'), bundle);
   const script = path.join(f.dir, 'scripts/rule-store.sh');
   writeFileSync(script, 'if [ -n "$ABP_COMMAND_DIR" ]; then export PATH="$ABP_COMMAND_DIR:$PATH"; fi\n' + readFileSync(new URL('../scripts/rule-store.sh', import.meta.url)));
+  if (registry) {
+    writeFileSync(path.join(f.dir, 'scripts/source-registry.sh'), readFileSync(new URL('../scripts/source-registry.sh', import.meta.url)));
+    writeFileSync(path.join(module, 'rules/source-registry.tsv'), readFileSync(new URL('../rules/source-registry.tsv', import.meta.url)));
+    writeFileSync(path.join(state, 'source-registry.tsv'), registry);
+  }
   for (const [kind,text] of [['blacklist','# local comment\nads.local.example\n'], ['whitelist','login.local.example\n']])
     writeFileSync(path.join(state,kind+'.txt'),text);
   const remote = path.join(f.dir,'remote');
@@ -81,6 +86,29 @@ test('shared sync retries the official CDN mirror when GitHub Raw is unavailable
     'https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt',
   ]);
   assert.match(result.stdout,/共享规则已从 HTTPS 镜像获取/);
+});
+
+test('shared sync uses the updated registry without changing personal lists', t=>{
+  const original = 'https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/shared-app-domains.txt';
+  const mirror = 'https://rules.example.org/shared.txt';
+  const registry = readFileSync(new URL('../rules/source-registry.tsv', import.meta.url), 'utf8')
+    .replace('revision: 2026102801', 'revision: 2026102802').replace(original, mirror);
+  const f = fixture(t, { registry }); const before=f.privateSnapshot();
+  assert.equal(f.run('init').status,0);
+  const result=f.run('sync'); assert.equal(result.status,0,result.stderr+result.stdout);
+  assert.deepEqual(readFileSync(f.curlUrls,'utf8').trim().split('\n'), [mirror]);
+  assert.deepEqual(f.privateSnapshot(), before);
+});
+
+test('a test build with a commit-scoped shared source does not use the production registry', t=>{
+  const original = 'https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/shared-app-domains.txt';
+  const registry = readFileSync(new URL('../rules/source-registry.tsv', import.meta.url), 'utf8')
+    .replace('revision: 2026102801', 'revision: 2026102802').replace(original, 'https://rules.example.org/shared.txt');
+  const f = fixture(t, { registry }); const commitUrl=original.replace('/main/', '/' + 'a'.repeat(40) + '/');
+  f.env.ABP_SHARED_RULES_URL=commitUrl;
+  assert.equal(f.run('init').status,0);
+  const result=f.run('sync'); assert.equal(result.status,0,result.stderr+result.stdout);
+  assert.deepEqual(readFileSync(f.curlUrls,'utf8').trim().split('\n'), [commitUrl]);
 });
 
 test('shared sync distinguishes DNS, timeout, TLS connection and certificate failures while retaining snapshots', t=>{

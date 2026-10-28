@@ -114,8 +114,14 @@ case "$1" in
     CURL=${CURL:-$(abp_find_curl)}
     [ -s "$AGH/certs/cacert.pem" ] || { echo '[!] 模块 CA 证书包缺失，无法安全同步共享规则。' >&2; exit 1; }
     candidate_urls=$SOURCE
-    if [ "$SOURCE" = 'https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/shared-app-domains.txt' ]; then
-      candidate_urls="$candidate_urls https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt https://cdn.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt"
+    if [ "${SOURCE#https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/}" = 'main/rules/shared-app-domains.txt' ]; then
+      registry_helper=${0%/*}/source-registry.sh
+      registry_urls=''
+      if [ -f "$registry_helper" ]; then
+        registry_urls=$(ABP_STATE_DIR="$STATE" ABP_AGH_DIR="$AGH" ABP_MODULE_DIR="$MODULE" "$BB" sh "$registry_helper" urls shared 2>/dev/null) || registry_urls=''
+      fi
+      if [ -n "$registry_urls" ]; then candidate_urls=$registry_urls;
+      else candidate_urls="$candidate_urls https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt https://cdn.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt"; fi
     fi
     downloaded=0
     dns_failure=0

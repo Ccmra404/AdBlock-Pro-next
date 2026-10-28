@@ -43,7 +43,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     }
     const files = ['action.sh', 'module.prop', 'service.sh', 'uninstall.sh', 'bindhosts.sh',
       'webui-config.sh', 'webui-job.sh', 'settings.conf', 'config-blacklist.txt', 'config-whitelist.txt',
-      'rules/shared-app-domains.txt', 'certs/cacert.pem',
+      'rules/shared-app-domains.txt', 'rules/source-registry.tsv', 'certs/cacert.pem',
       ...readdirSync(new URL('../scripts/', import.meta.url)).map(name => 'scripts/' + name),
       ...readdirSync(new URL('../webroot/', import.meta.url)).map(name => 'webroot/' + name)];
     for (const file of files) {

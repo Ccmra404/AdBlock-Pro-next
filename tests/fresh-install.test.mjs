@@ -16,7 +16,7 @@ function installFixture(t, family, preference, failWrite = false, failPermission
     .replaceAll('/data/adb/modules/AdGuardHome', shellPath(path.join(root.dir, 'absent')));
   const files = ['action.sh', 'module.prop', 'service.sh', 'uninstall.sh', 'bindhosts.sh', 'webui-config.sh', 'webui-job.sh',
     'settings.conf', 'config-blacklist.txt', 'config-whitelist.txt',
-    'rules/shared-app-domains.txt', 'certs/cacert.pem',
+    'rules/shared-app-domains.txt', 'rules/source-registry.tsv', 'certs/cacert.pem',
     ...readdirSync(new URL('../scripts/', import.meta.url)).map(name => 'scripts/' + name),
     ...readdirSync(new URL('../webroot/', import.meta.url)).map(name => 'webroot/' + name)];
   for (const file of files) {
@@ -43,7 +43,7 @@ function installFixture(t, family, preference, failWrite = false, failPermission
   const install = () => spawnSync('bash', [shellPath(script)], { timeout: 20000, encoding: 'utf8', env: {
     ...root.env(family), MODPATH: shellPath(module), TMPDIR: shellPath(root.dir), ZIPFILE: shellPath(zip),
   } });
-  return { state, runtime, install };
+  return { state, runtime, module, install };
 }
 
 for (const family of ['KernelSU', 'Magisk', 'APatch']) {
@@ -60,6 +60,8 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'off\n');
     assert.match(installed.stdout, /DNS takeover: on \(initialized\)/);
     assert.match(readFileSync(path.join(f.runtime, 'bin/adblock-ai'), 'utf8'), /AI-fixture/);
+    assert.equal(existsSync(path.join(f.runtime, 'scripts/source-registry.sh')), true);
+    assert.equal(existsSync(path.join(f.module, 'rules/source-registry.tsv')), true);
     mkdirSync(path.join(f.state, 'ai'), { recursive: true });
     writeFileSync(path.join(f.state, 'ai/config.json'), 'fixture-private-config');
     const personal = path.join(f.runtime, 'bin/userfilters/adblock-pro-user-rules.txt');

@@ -13,7 +13,7 @@ const goodbyeAllow = goodbye.replace('/dns.txt', '/allow.txt');
 const goodbyeRow = 'source\tgoodbyeads\tGOODBYEADS DNS\t' + goodbye + '\tenabled\tconfigured\tremovable\n';
 const nativePath = value => process.platform === 'win32' ? value.replace(/^\/([a-z])\//, (_, drive) => drive.toUpperCase() + ':/') : value;
 
-function fixture(t, { sources, oldApplied = '', marker = true, failDownload = false, failDownloadUrl = '', failRemove = false, statusUrl = '', existingShared = false } = {}) {
+function fixture(t, { sources, oldApplied = '', marker = true, failDownload = false, failDownloadUrl = '', failRemove = false, statusUrl = '', existingShared = false, registry = '' } = {}) {
   const root = rootFixture(t); root.addBusybox('Magisk');
   const mod = path.join(root.dir, 'module'), agh = path.join(root.dir, 'agh'), state = path.join(root.dir, 'state');
   mkdirSync(path.join(mod, 'scripts'), { recursive: true });
@@ -21,6 +21,13 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
   mkdirSync(path.join(agh, 'certs'), { recursive: true });
   writeFileSync(path.join(agh, 'certs', 'cacert.pem'), 'fixture CA bundle\n');
   writeFileSync(path.join(mod, 'scripts', 'compat.sh'), readFileSync(root.compatFile, 'utf8'));
+  if (registry) {
+    mkdirSync(path.join(agh, 'scripts'), { recursive: true }); mkdirSync(path.join(mod, 'rules'), { recursive: true });
+    writeFileSync(path.join(agh, 'scripts', 'compat.sh'), readFileSync(root.compatFile, 'utf8'));
+    writeFileSync(path.join(agh, 'scripts', 'source-registry.sh'), readFileSync(new URL('../scripts/source-registry.sh', import.meta.url)));
+    writeFileSync(path.join(mod, 'rules', 'source-registry.tsv'), readFileSync(new URL('../rules/source-registry.tsv', import.meta.url)));
+    writeFileSync(path.join(state, 'source-registry.tsv'), registry);
+  }
   const sourceList = path.join(root.dir, 'source-list.tsv'), calls = path.join(root.dir, 'api-calls.tsv');
   const curlCalls = path.join(root.dir, 'curl-calls.txt'), curlOptions = path.join(root.dir, 'curl-options.txt');
   const sharedFilter = path.join(agh, 'bin', 'userfilters', 'adblock-pro-shared-app-rules.txt');
@@ -38,6 +45,7 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
     'output= url=',
     'while [ "$#" -gt 0 ]; do case "$1" in --connect-timeout|--max-time|--speed-limit|--speed-time) printf "%s\\t%s\\n" "$1" "$2" >> "$CURL_OPTIONS"; shift 2;; -o) output=$2; shift 2;; https://*) url=$1; shift;; *) shift;; esac; done',
     'printf "%s\\n" "$url" >> "$CURL_CALLS"',
+    'case "$url" in */rules/source-registry.tsv) if [ -n "$REGISTRY_REMOTE" ]; then cp "$REGISTRY_REMOTE" "$output"; exit "$?"; fi ;; esac',
     '[ "$url" != "$DELAY_URL" ] || sleep 2',
     'printf "%s\\n" "$FAIL_URL" | grep -Fxq "$url" && { echo "curl: (${FAIL_CURL_CODE:-28}) simulated download failure" >&2; exit "${FAIL_CURL_CODE:-28}"; }',
     '[ "$url" != "$COMPRESSED_URL" ] || { printf "\\037\\213\\010compressed" > "$output"; exit 0; }',
@@ -109,6 +117,42 @@ test('subscriptions download through system curl and AdGuard Home receives only 
   assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), feed + '\n');
 });
 
+test('updated built-in mirror is used without changing custom sources or selected source identities', t => {
+  const original = 'https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward';
+  const mirror = 'https://rules.example.org/reward.txt';
+  const registry = readFileSync(new URL('../rules/source-registry.tsv', import.meta.url), 'utf8')
+    .replace('revision: 2026102801', 'revision: 2026102802').replace(original, mirror);
+  const sources = 'mode\tbalanced\nsource\t10007\t10007\t' + original + '\tenabled\tconfigured\tremovable\n' +
+    'source\tcustom\tCustom\t' + feed + '\tenabled\tconfigured\tremovable\n' +
+    'source\tawa-full\tDisabled\thttps://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt\tdisabled\tcatalog\tremovable\n';
+  const f = fixture(t, { sources, registry });
+  const result = f.run(); assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(readFileSync(f.curlCalls, 'utf8').trim().split('\n'), [mirror, feed]);
+  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), original + '\n' + feed + '\n');
+});
+
+test('a rule update refreshes the online registry before downloading enabled built-in sources', t => {
+  const original = 'https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward';
+  const mirror = 'https://rules.example.org/reward.txt';
+  const bundled = readFileSync(new URL('../rules/source-registry.tsv', import.meta.url), 'utf8');
+  const remote = bundled.replace('revision: 2026102801', 'revision: 2026102802').replace(original, mirror);
+  const sources = 'mode\tbalanced\nsource\t10007\t10007\t' + original + '\tenabled\tconfigured\tremovable\n';
+  const f = fixture(t, { sources, registry: bundled });
+  const remotePath = path.join(f.state, 'registry-remote'); writeFileSync(remotePath, remote); f.env.REGISTRY_REMOTE = shellPath(remotePath);
+  const update = bindhosts.slice(bindhosts.indexOf('update_rules() {'), bindhosts.indexOf('\ndiagnose() {'));
+  const wrapper = readFileSync(f.script, 'utf8').replace(/\nsync_sources$/, '\n' + [
+    'api() { printf "%s\\t%s\\t%s\\n" "$1" "$2" "$3" >> "$API_CALLS"; case "$1 $2" in "GET /status") printf "{}\\n";; "GET /filtering/status") printf "{\\"filters\\":[]}\\n";; "POST /filtering/refresh") printf "{\\"updated\\":0}\\n";; *) return 0;; esac; }',
+    'save_snapshot() { return 0; }', 'sync_personal_filter() { return 0; }', 'rules_count() { echo 1; }', 'update_failed() { return 1; }',
+    update, 'update_rules',
+  ].join('\n'));
+  writeFileSync(f.script, wrapper);
+  const result=f.run(); assert.equal(result.status,0,result.stderr+result.stdout);
+  assert.equal(readFileSync(path.join(f.state, 'source-registry.tsv'),'utf8'), remote);
+  assert.deepEqual(readFileSync(f.curlCalls,'utf8').trim().split('\n'), [
+    'https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/source-registry.tsv', mirror,
+  ]);
+});
+
 test('GOODBYEADS downloads both lists into one removable filter and keeps other sources independent', t => {
   const f = fixture(t, { sources: 'mode\tbalanced\n' + goodbyeRow + 'source\tcustom\tOther Feed\t' + feed + '\tenabled\tconfigured\tremovable\n' });
   f.env.ALLOW_CONTENT = '! original header\n@@||allowed.example^\n@@||browser.example^$domain=site.example';
@@ -125,6 +169,20 @@ test('GOODBYEADS downloads both lists into one removable filter and keeps other 
   assert.equal(f.run().status, 0);
   assert.equal(existsSync(nativePath(paired)), false, 'removing the source removes the block and companion exceptions together');
   assert.match(readFileSync(f.calls, 'utf8'), /POST\t\/filtering\/remove_url/);
+});
+
+test('online GOODBYEADS mirrors keep the block and companion lists paired', t => {
+  const dnsMirror = 'https://rules.example.org/GOODBYEADS/master/data/rules/dns.txt';
+  const allowMirror = dnsMirror.replace('/dns.txt', '/allow.txt');
+  const registry = readFileSync(new URL('../rules/source-registry.tsv', import.meta.url), 'utf8')
+    .replace('revision: 2026102801', 'revision: 2026102802').replace(goodbye, dnsMirror).replace(goodbyeAllow, allowMirror);
+  const f = fixture(t, { sources: 'mode\tbalanced\n' + goodbyeRow, registry });
+  const result = f.run(); assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(readFileSync(f.curlCalls, 'utf8').trim().split('\n'), [dnsMirror, allowMirror]);
+  const options = readFileSync(f.curlOptions, 'utf8');
+  assert.equal((options.match(/--max-time\t200/g) || []).length, 2);
+  const add = readFileSync(f.calls, 'utf8').split('\n').find(line => line.startsWith('POST\t/filtering/add_url\t'));
+  assert.match(readFileSync(nativePath(JSON.parse(add.split('\t')[2]).url), 'utf8'), /\|\|ads\.example\^[\s\S]*@@\|\|allowed\.example\^/);
 });
 
 test('GOODBYEADS uses HTTPS fallback independently for the block and companion list', t => {
