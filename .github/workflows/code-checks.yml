@@ -26,5 +26,10 @@ jobs:
           done
       - name: WebUI async state regression tests
         run: node --test tests/*.test.mjs
+      - name: DNS firewall regression tests with mksh
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mksh
+          ABP_FIREWALL_TEST_SHELL=mksh node --test --test-name-pattern='application bypass precedes|valid UID remains valid on Android-style shell|invalid or unavailable app identities' tests/firewall.test.mjs
       - name: Python policy and upstream safety tests
         run: python3 -m unittest discover -s tests -p 'test_*.py'
