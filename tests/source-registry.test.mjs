@@ -21,7 +21,7 @@ function fixture(t, { reference = 'main' } = {}) {
     .replace('AdBlock-Pro-next/main/rules/source-registry.tsv', 'AdBlock-Pro-next/' + reference + '/rules/source-registry.tsv'));
   const remote = path.join(root.dir, 'remote'), curl = path.join(root.dir, 'curl'), calls = path.join(root.dir, 'calls');
   writeFileSync(remote, next);
-  writeFileSync(curl, '#!/bin/sh\noutput= url=\nwhile [ "$#" -gt 0 ]; do case "$1" in --cacert|--connect-timeout|--max-time|--max-filesize) shift 2 ;; -o) output=$2; shift 2 ;; https://*) url=$1; shift ;; *) shift ;; esac; done\nprintf "%s\\n" "$url" >> "$CALLS"\n[ "$FAIL_DOWNLOAD" != 1 ] || exit 28\ncp "$REMOTE" "$output"\n');
+  writeFileSync(curl, '#!/bin/sh\noutput= url=\nwhile [ "$#" -gt 0 ]; do case "$1" in --cacert|--connect-timeout|--max-time|--max-filesize) shift 2 ;; -o) output=$2; shift 2 ;; https://*) url=$1; shift ;; *) shift ;; esac; done\nprintf "%s\\n" "$url" >> "$CALLS"\n[ "$FAIL_DOWNLOAD" != 1 ] || exit 28\n[ "$url" != "$FAIL_URL" ] || exit 28\ncp "$REMOTE" "$output"\n');
   chmodSync(curl, 0o755);
   const env = { ...root.env('Magisk'), ABP_STATE_DIR: shellPath(state), ABP_AGH_DIR: shellPath(agh),
     ABP_MODULE_DIR: shellPath(mod), CURL: shellPath(curl), REMOTE: shellPath(remote), CALLS: shellPath(calls) };
@@ -80,9 +80,11 @@ test('test builds use their own commit-scoped registry and do not reuse the prod
   const sha = 'a'.repeat(40), f = fixture(t, { reference: sha });
   writeFileSync(f.cache, next);
   assert.equal(f.run('urls', reward).stdout.trim().split('\n')[0], reward);
+  f.env.FAIL_URL='https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/' + sha + '/rules/source-registry.tsv';
   assert.equal(f.run('refresh').status, 0);
   assert.equal(readFileSync(path.join(f.state, 'source-registry-test-' + sha + '.tsv'), 'utf8'), next);
   assert.deepEqual(readFileSync(f.calls, 'utf8').trim().split('\n'), [
     'https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/' + sha + '/rules/source-registry.tsv',
+    'https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@' + sha + '/rules/source-registry.tsv',
   ]);
 });

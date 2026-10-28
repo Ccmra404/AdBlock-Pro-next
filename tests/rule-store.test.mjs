@@ -100,15 +100,17 @@ test('shared sync uses the updated registry without changing personal lists', t=
   assert.deepEqual(f.privateSnapshot(), before);
 });
 
-test('a test build with a commit-scoped shared source does not use the production registry', t=>{
+test('a test build uses commit-scoped shared mirrors instead of the production registry', t=>{
   const original = 'https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/shared-app-domains.txt';
   const registry = readFileSync(new URL('../rules/source-registry.tsv', import.meta.url), 'utf8')
     .replace('revision: 2026102801', 'revision: 2026102802').replace(original, 'https://rules.example.org/shared.txt');
   const f = fixture(t, { registry }); const commitUrl=original.replace('/main/', '/' + 'a'.repeat(40) + '/');
   f.env.ABP_SHARED_RULES_URL=commitUrl;
+  f.env.FAIL_URL=commitUrl;
   assert.equal(f.run('init').status,0);
   const result=f.run('sync'); assert.equal(result.status,0,result.stderr+result.stdout);
-  assert.deepEqual(readFileSync(f.curlUrls,'utf8').trim().split('\n'), [commitUrl]);
+  assert.deepEqual(readFileSync(f.curlUrls,'utf8').trim().split('\n'), [commitUrl,
+    'https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@' + 'a'.repeat(40) + '/rules/shared-app-domains.txt']);
 });
 
 test('shared sync distinguishes DNS, timeout, TLS connection and certificate failures while retaining snapshots', t=>{

@@ -122,6 +122,14 @@ case "$1" in
       fi
       if [ -n "$registry_urls" ]; then candidate_urls=$registry_urls;
       else candidate_urls="$candidate_urls https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt https://cdn.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt"; fi
+    else
+      shared_ref=${SOURCE#https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/}
+      shared_ref=${shared_ref%%/*}
+      if [ ${#shared_ref} -eq 40 ]; then
+        case "$shared_ref" in *[!0-9a-f]*) ;; *)
+          candidate_urls="$candidate_urls https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@$shared_ref/rules/shared-app-domains.txt https://cdn.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@$shared_ref/rules/shared-app-domains.txt" ;;
+        esac
+      fi
     fi
     downloaded=0
     dns_failure=0
