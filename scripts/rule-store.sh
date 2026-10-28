@@ -119,6 +119,8 @@ case "$1" in
     fi
     downloaded=0
     dns_failure=0
+    timeout_failure=0
+    tls_connection_failure=0
     tls_failure=0
     for candidate_url in $candidate_urls; do
       candidate_host=${candidate_url#https://}
@@ -131,14 +133,18 @@ case "$1" in
       else
         curl_status=$?
         case "$curl_status" in
-          6|28) dns_failure=1 ;;
+          6) dns_failure=1 ;;
+          28) timeout_failure=1 ;;
+          35) tls_connection_failure=1 ;;
           60) tls_failure=1 ;;
         esac
       fi
       rm -f "$work/download"
     done
     if [ "$downloaded" != 1 ]; then
-      [ "$dns_failure" != 1 ] || echo '[!] 共享规则镜像的域名无法解析或解析超时；请检查设备 DNS、VPN 或网络，旧快照已保留。' >&2
+      [ "$dns_failure" != 1 ] || echo '[!] 共享规则镜像域名解析失败；请检查设备 DNS 或网络。' >&2
+      [ "$timeout_failure" != 1 ] || echo '[!] 共享规则镜像请求超时，可能发生在域名解析、连接或下载阶段；请检查设备网络或 VPN。' >&2
+      [ "$tls_connection_failure" != 1 ] || echo '[!] 共享规则镜像 TLS 连接失败；请检查设备网络或 VPN。' >&2
       [ "$tls_failure" != 1 ] || echo '[!] 共享规则镜像的 TLS 证书校验失败；请检查系统时间、CA 证书或网络代理，未关闭证书校验，旧快照已保留。' >&2
       echo '[!] 共享规则同步失败；现有共享规则快照和个人名单均已保留。' >&2
       exit 1

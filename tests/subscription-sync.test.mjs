@@ -36,10 +36,12 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
   writeFileSync(curl, [
     '#!/bin/sh',
     'output= url=',
-    'while [ "$#" -gt 0 ]; do case "$1" in --connect-timeout|--max-time) printf "%s\\t%s\\n" "$1" "$2" >> "$CURL_OPTIONS"; shift 2;; -o) output=$2; shift 2;; https://*) url=$1; shift;; *) shift;; esac; done',
+    'while [ "$#" -gt 0 ]; do case "$1" in --connect-timeout|--max-time|--speed-limit|--speed-time) printf "%s\\t%s\\n" "$1" "$2" >> "$CURL_OPTIONS"; shift 2;; -o) output=$2; shift 2;; https://*) url=$1; shift;; *) shift;; esac; done',
     'printf "%s\\n" "$url" >> "$CURL_CALLS"',
+    '[ "$url" != "$DELAY_URL" ] || sleep 2',
     'printf "%s\\n" "$FAIL_URL" | grep -Fxq "$url" && { echo "curl: (${FAIL_CURL_CODE:-28}) simulated download failure" >&2; exit "${FAIL_CURL_CODE:-28}"; }',
-    'case "$url" in */GOODBYEADS/master/data/rules/allow.txt) printf "%s\\n" "${ALLOW_CONTENT:-@@||allowed.example^}" > "$output" ;; *) printf "||ads.example^\\n" > "$output" ;; esac',
+    '[ "$url" != "$COMPRESSED_URL" ] || { printf "\\037\\213\\010compressed" > "$output"; exit 0; }',
+    'case "$url" in */GOODBYEADS/master/data/rules/allow.txt|*/GOODBYEADS@master/data/rules/allow.txt) printf "%s\\n" "${ALLOW_CONTENT:-@@||allowed.example^}" > "$output" ;; *) printf "||ads.example^\\n" > "$output" ;; esac',
   ].join('\n'));
   chmodSync(curl, 0o755);
 
@@ -72,7 +74,7 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
   ].join('\n');
   writeFileSync(script, body); chmodSync(script, 0o755);
   const env = { ...root.env('Magisk'), CURL: shellPath(curl), CURL_CALLS: shellPath(curlCalls), CURL_OPTIONS: shellPath(curlOptions), SOURCE_LIST: shellPath(sourceList), API_CALLS: shellPath(calls), FAIL_URL: failDownloadUrl || (failDownload ? feed : ''), FAIL_CURL_CODE: '28', FAIL_REMOVE: failRemove ? '1' : '0', STATUS_URL: existingShared ? shellPath(sharedFilter) : statusUrl, EXISTING_URL: existingShared ? shellPath(sharedFilter) : '' };
-  const run = () => spawnSync('bash', [shellPath(script)], { encoding: 'utf8', timeout: 15000, env });
+  const run = () => spawnSync(process.env.ABP_SUBSCRIPTION_TEST_SHELL || 'bash', [shellPath(script)], { encoding: 'utf8', timeout: 15000, env });
   return { run, state, agh, calls, curlCalls, curlOptions, oldCache, sharedFilter, env, script };
 }
 
@@ -133,13 +135,55 @@ test('GOODBYEADS uses HTTPS fallback independently for the block and companion l
   assert.deepEqual(readFileSync(f.curlCalls, 'utf8').trim().split('\n'), [goodbye, raw(goodbye), goodbyeAllow, raw(goodbyeAllow)]);
 });
 
+test('GOODBYEADS retries CDN mirrors and allows slow large downloads', t => {
+  const raw = url => url.replace('https://ghfast.top/', 'https://');
+  const gcore = file => 'https://gcore.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/' + file;
+  const f = fixture(t, { sources: 'mode\tbalanced\n' + goodbyeRow,
+    failDownloadUrl: [goodbye, raw(goodbye), goodbyeAllow, raw(goodbyeAllow)].join('\n') });
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(readFileSync(f.curlCalls, 'utf8').trim().split('\n'),
+    [goodbye, raw(goodbye), gcore('dns.txt'), goodbyeAllow, raw(goodbyeAllow), gcore('allow.txt')]);
+  const options = readFileSync(f.curlOptions, 'utf8');
+  const limits = [...options.matchAll(/--max-time\t(\d+)/g)].map(match => Number(match[1]));
+  assert.equal(limits.length, 6);
+  assert.ok(limits.every(limit => limit >= 190 && limit <= 200));
+  assert.equal((options.match(/--speed-time\t30/g) || []).length, 6);
+});
+
+test('GOODBYEADS mirrors share the same bounded download budget', t => {
+  const f = fixture(t, { sources: 'mode\tbalanced\n' + goodbyeRow, failDownloadUrl: goodbye });
+  f.env.DELAY_URL = goodbye;
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  const limits = [...readFileSync(f.curlOptions, 'utf8').matchAll(/--max-time\t(\d+)/g)].map(match => Number(match[1]));
+  assert.equal(limits[0], 200);
+  assert.ok(limits[1] <= 199, 'time spent on the first candidate reduces the mirror budget');
+  assert.equal(limits[2], 200, 'the companion file gets its own budget');
+});
+
+test('compressed source content is rejected and a plaintext mirror is used', t => {
+  const original = 'https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt';
+  const cxplay = 'https://script.cx.ms/awavenue/AWAvenue-Ads-Rule-Adguard.txt';
+  const sources = 'mode\tbalanced\nsource\tcustom\tExample Feed\t' + original + '\tenabled\tconfigured\tremovable\n';
+  const f = fixture(t, { sources }); f.env.COMPRESSED_URL = original;
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.deepEqual(readFileSync(f.curlCalls, 'utf8').trim().split('\n'), [original, cxplay]);
+  assert.match(result.stderr, /压缩内容/);
+  const add = readFileSync(f.calls, 'utf8').split('\n').find(line => line.startsWith('POST\t/filtering/add_url\t'));
+  assert.match(readFileSync(nativePath(JSON.parse(add.split('\t')[2]).url), 'utf8'), /ads\.example/);
+});
+
 test('a failed companion download preserves the complete previous filter and never mutates the running core', t => {
   const f = fixture(t, { sources: 'mode\tbalanced\n' + goodbyeRow });
   assert.equal(f.run().status, 0);
   const beforeCalls = readFileSync(f.calls, 'utf8');
   const paired = JSON.parse(beforeCalls.split('\n').find(x => x.startsWith('POST\t/filtering/add_url\t')).split('\t')[2]).url;
   const beforeFilter = readFileSync(nativePath(paired), 'utf8');
-  f.env.FAIL_URL = goodbyeAllow + '\n' + goodbyeAllow.replace('https://ghfast.top/', 'https://');
+  f.env.FAIL_URL = [goodbyeAllow, goodbyeAllow.replace('https://ghfast.top/', 'https://'),
+    'https://gcore.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/allow.txt',
+    'https://cdn.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/allow.txt'].join('\n');
   const result = f.run();
   assert.equal(result.status, 2, result.stderr + result.stdout);
   assert.equal(readFileSync(f.calls, 'utf8'), beforeCalls);
