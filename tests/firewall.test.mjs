@@ -98,7 +98,7 @@ function fixture(t, overrides = {}) {
       .replace(/^\. \/data\/adb\/adblockpro\/(?:settings.conf|scripts\/base.sh)\r?$/gm, ''),
   ].join('\n'));
   function run(command, extraEnv = {}) {
-    return spawnSync('bash', [shellPath(wrapper), command], {
+    return spawnSync(process.env.ABP_FIREWALL_TEST_SHELL || 'bash', [shellPath(wrapper), command], {
       encoding: 'utf8',
       env: { ...process.env, PATH: dir + path.delimiter + process.env.PATH,
         FIREWALL_TEST_STATE: stateFile, BB: shellPath(busybox), ABP_APP_FILTER: shellPath(helper),
@@ -245,8 +245,18 @@ for (const ipv6Mode of ['disabled', 'redirect', 'block']) test('application bypa
   }
 });
 
+for (const uid of ['10123', '2147483647', '2147483648', '4294967294']) {
+  test('valid UID remains valid on Android-style shell: ' + uid, t => {
+    const f = fixture(t); f.exclude();
+    const result = f.run('enable', { TEST_APP_UIDS: uid + '\n' });
+    assert.equal(result.status, 0, result.stderr);
+    assert(f.read()['nat:ADGUARD_REDIRECT_DNS'].includes('-m owner --uid-owner ' + uid + ' -j RETURN'));
+  });
+}
+
 for (const env of [{ FAIL_UID_LOOKUP: '1' }, { TEST_APP_UIDS: '10123\n--jump DROP\n' },
-  { TEST_APP_UIDS: '4294967295\n' }, { ABP_APP_FILTER: '/missing/helper' }]) {
+  { TEST_APP_UIDS: '4294967295\n' }, { TEST_APP_UIDS: '9999999999\n' },
+  { TEST_APP_UIDS: '10000000000\n' }, { ABP_APP_FILTER: '/missing/helper' }]) {
   test('invalid or unavailable app identities preserve the installed firewall: ' + JSON.stringify(env), t => {
     const f = fixture(t); assert.equal(f.run('enable').status, 0); f.exclude();
     const before = f.read(), r = f.run('enable', env);
