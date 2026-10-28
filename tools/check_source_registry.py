@@ -80,10 +80,36 @@ def valid_sample(source_id, body):
         except (UnicodeError, ValueError):
             return False
     if source_id == 'shared':
-        return bool(re.search(rb'(?m)^# revision: [0-9]+\r?$', body))
+        return bool(re.search(rb'(?m)^# revision: [0-9]+\r?$', body) and
+                    re.search(rb'(?mi)^[a-z0-9][a-z0-9.-]*\.[a-z][a-z0-9-]*\r?$', body))
     if source_id == 'goodbyeads-allow':
         return bool(re.search(rb'(?m)^@@', body))
     return bool(re.search(rb'(?m)^(?:\|\||0\.0\.0\.0[ \t]|127\.0\.0\.1[ \t])', body))
+
+
+def read_response(source_id, response):
+    limit = 16384 if source_id == 'registry' else 65536 if source_id == 'shared' else 52428800
+    declared = response.headers.get('Content-Length', '')
+    expected = int(declared) if declared.isdigit() else None
+    if expected is not None and expected > limit:
+        raise ValueError('response exceeds size limit')
+    sample, total, started = bytearray(), 0, time.monotonic()
+    while True:
+        chunk = response.read(65536)
+        if time.monotonic() - started > 30:
+            raise TimeoutError('download exceeded 30 seconds')
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            raise ValueError('response exceeds size limit')
+        if len(sample) < 65536:
+            sample.extend(chunk[:65536 - len(sample)])
+    if expected is not None and total != expected:
+        raise ValueError('incomplete response')
+    if response.status != 200 or not valid_sample(source_id, sample):
+        raise ValueError('non-text or unexpected rule sample')
+    return total
 
 
 def probe(entry):
@@ -95,10 +121,8 @@ def probe(entry):
         try:
             request = Request(url, headers={'User-Agent': 'AdBlock-Pro-source-check/1.0', 'Accept-Encoding': 'identity'})
             with opener.open(request, timeout=8) as response:
-                body = response.read(65536)
-                if response.status != 200 or not valid_sample(source_id, body):
-                    raise ValueError('non-text or unexpected rule sample')
-            return source_id, url, True, 'HTTP 200, rule sample valid'
+                size = read_response(source_id, response)
+            return source_id, url, True, f'HTTP 200, {size} bytes downloaded'
         except Exception as exc:
             error = type(exc).__name__
             if attempt == 0:

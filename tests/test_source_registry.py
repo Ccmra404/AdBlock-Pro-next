@@ -1,4 +1,5 @@
 import importlib.util
+from io import BytesIO
 from pathlib import Path
 import unittest
 
@@ -23,9 +24,24 @@ class SourceRegistryCheckTests(unittest.TestCase):
         self.assertTrue(checker.valid_sample('goodbyeads', b'||ads.example^\n'))
         self.assertTrue(checker.valid_sample('goodbyeads-allow', b'@@||example.com^\n'))
         self.assertTrue(checker.valid_sample('shared', b'# revision: 10\nads.example\n'))
+        self.assertFalse(checker.valid_sample('shared', b'# revision: 10\n'))
         self.assertTrue(checker.valid_sample('registry', (ROOT / 'rules/source-registry.tsv').read_bytes()))
         for data in (b'', b'\x1f\x8bcompressed', b'<html>error</html>', b'\x00broken'):
             self.assertFalse(checker.valid_sample('10007', data))
+
+    def test_detects_truncated_and_oversized_downloads(self):
+        class Response(BytesIO):
+            status = 200
+            def __init__(self, data, length):
+                super().__init__(data)
+                self.headers = {'Content-Length': str(length)}
+
+        valid = b'||ads.example^\n'
+        self.assertEqual(checker.read_response('goodbyeads', Response(valid, len(valid))), len(valid))
+        with self.assertRaisesRegex(ValueError, 'incomplete'):
+            checker.read_response('goodbyeads', Response(valid, len(valid) + 50))
+        with self.assertRaisesRegex(ValueError, 'size limit'):
+            checker.read_response('registry', Response(valid, 16385))
 
 
 if __name__ == '__main__':
