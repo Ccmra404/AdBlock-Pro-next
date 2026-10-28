@@ -73,8 +73,13 @@ case "$1" in
     temp="$STATE/.source-registry.$$"
     trap 'rm -f "$temp"' EXIT
     registry_urls=$SOURCE
-    if [ "$source_ref" = main ]; then
-      registry_urls="$registry_urls https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/source-registry.tsv https://cdn.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/source-registry.tsv https://ghfast.top/raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/source-registry.tsv"
+    ref_allowed=0
+    if [ "$source_ref" = main ]; then ref_allowed=1
+    elif [ ${#source_ref} -eq 40 ]; then
+      case "$source_ref" in *[!0-9a-f]*) ;; *) ref_allowed=1 ;; esac
+    fi
+    if [ "$ref_allowed" = 1 ]; then
+      registry_urls="$registry_urls https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@$source_ref/rules/source-registry.tsv https://cdn.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@$source_ref/rules/source-registry.tsv https://ghfast.top/raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/$source_ref/rules/source-registry.tsv"
     fi
     for registry_url in $registry_urls; do
       if "$CURL" --cacert "$AGH/certs/cacert.pem" --silent --show-error --fail --location --proto '=https' --proto-redir '=https' --connect-timeout 3 --max-time 6 --max-filesize 16384 "$registry_url" -o "$temp" && valid_registry "$temp"; then
