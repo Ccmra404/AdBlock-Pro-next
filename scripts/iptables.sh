@@ -8,7 +8,7 @@ APP_FILTER=${ABP_APP_FILTER:-/data/adb/adblockpro/scripts/app-filter.sh}
 APP_EXCLUSIONS=${ABP_APP_EXCLUSIONS:-/data/adb/bindhosts_personal/app-exclusions.txt}
 
 load_app_exclusions() {
-  local uid
+  local uid uid_high uid_low
   app_excluded_uids=
   [ -e "$APP_EXCLUSIONS" ] || return 0
   [ -f "$APP_EXCLUSIONS" ] && [ -r "$APP_EXCLUSIONS" ] || return 1
@@ -18,7 +18,16 @@ load_app_exclusions() {
   [ -n "$app_excluded_uids" ] || return 0
   while IFS= read -r uid; do
     case "$uid" in ''|*[!0-9]*) return 1 ;; esac
-    [ ${#uid} -le 10 ] && [ "$uid" -le 4294967294 ] || return 1
+    [ ${#uid} -le 10 ] || return 1
+    # Android mksh uses signed 32-bit arithmetic. Compare at most five digits
+    # at a time so the intended unsigned UID limit cannot overflow.
+    if [ ${#uid} -eq 10 ]; then
+      uid_high=${uid%?????}
+      uid_low=${uid#?????}
+      [ "$uid_high" -lt 42949 ] || {
+        [ "$uid_high" -eq 42949 ] && [ "$uid_low" -le 67294 ]
+      } || return 1
+    fi
   done <<EOF
 $app_excluded_uids
 EOF
