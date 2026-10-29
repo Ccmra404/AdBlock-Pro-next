@@ -1,7 +1,7 @@
 id=bindhosts_personal
 name=AdBlock Pro
-version=v0.14.2
-versionCode=54
+version=v0.14.3
+versionCode=55
 author=Ccmra
 description=AdGuard Home DNS filtering for KernelSU, Magisk and APatch
 updateJson=https://github.com/Ccmra404/AdBlock-Pro-next/releases/latest/download/update.json
