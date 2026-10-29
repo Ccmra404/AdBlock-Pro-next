@@ -1,0 +1,31 @@
+name: Check built-in rule sources
+
+on:
+  pull_request:
+    paths:
+      - 'rules/source-registry.tsv'
+      - 'scripts/source-registry.sh'
+      - 'tools/check_source_registry.py'
+      - 'tests/source-registry.test.mjs'
+      - 'tests/test_source_registry.py'
+      - '.github/workflows/check-rule-sources.yml'
+  schedule:
+    - cron: '17 */12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate the source registry
+        run: python3 tools/check_source_registry.py
+      - name: Check mirror availability on this runner
+        if: github.event_name != 'pull_request'
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 tools/check_source_registry.py --check | tee -a "$GITHUB_STEP_SUMMARY"

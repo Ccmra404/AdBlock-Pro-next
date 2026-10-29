@@ -1,0 +1,21 @@
+# AdBlock Pro built-in source mirrors; raise the revision when editing.
+# revision: 2026102801
+10007	https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
+10007	https://lingeringsound.github.io/10007_auto/reward
+10007	https://gcore.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
+10007	https://cdn.jsdelivr.net/gh/lingeringsound/10007_auto@master/reward
+10007	https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward
+awa-full	https://script.cx.ms/awavenue/AWAvenue-Ads-Rule-Adguard.txt
+awa-full	https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/AWAvenue-Ads-Rule.txt
+awa-full	https://raw.githubusercontent.com/TG-Twilight/AWAvenue-Ads-Rule/main/AWAvenue-Ads-Rule.txt
+goodbyeads	https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt
+goodbyeads	https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt
+goodbyeads	https://gcore.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/dns.txt
+goodbyeads	https://cdn.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/dns.txt
+goodbyeads-allow	https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt
+goodbyeads-allow	https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt
+goodbyeads-allow	https://gcore.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/allow.txt
+goodbyeads-allow	https://cdn.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/allow.txt
+shared	https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/shared-app-domains.txt
+shared	https://gcore.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt
+shared	https://cdn.jsdelivr.net/gh/Ccmra404/AdBlock-Pro-next@main/rules/shared-app-domains.txt

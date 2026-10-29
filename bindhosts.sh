@@ -551,8 +551,8 @@ download_candidate() {
   if [ ! -s "$AGH/certs/cacert.pem" ]; then echo '[!] 模块 CA 证书包缺失，无法安全下载 HTTPS 规则。' >&2; return 1; fi
   # GOODBYEADS includes multi-megabyte files. Allow slow transfers to finish,
   # but abandon connections that make virtually no progress for 30 seconds.
-  case "$candidate_url" in
-    https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt|https://gcore.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/dns.txt|https://gcore.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/allow.txt|https://cdn.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/dns.txt|https://cdn.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/allow.txt)
+  case "$4" in
+    large)
       candidate_max_time=${3:-200}; set -- --speed-limit 1024 --speed-time 30 ;;
     *) candidate_max_time=20; set -- ;;
   esac
@@ -581,10 +581,10 @@ download_candidate() {
 download_source() {
   url=$1; output=$2; name=$3
   [ -n "${CURL:-}" ] || CURL=$(abp_find_curl) || return 1
-  source_budget=20; source_started=
+  source_budget=20; source_started=; source_policy=normal
   case "$url" in
     https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://ghfast.top/raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/dns.txt|https://raw.githubusercontent.com/8680/GOODBYEADS/master/data/rules/allow.txt)
-      source_budget=200
+      source_budget=200; source_policy=large
       if read -r source_started _ 2>/dev/null < /proc/uptime; then
         source_started=${source_started%%.*}
         case "$source_started" in ''|*[!0-9]*) source_started= ;; esac
@@ -592,11 +592,13 @@ download_source() {
       echo '[提醒] GOODBYEADS 规则较大，慢速网络下下载可能需要几分钟。' ;;
   esac
   echo "[进度] 下载规则源：$name"
-  candidate_host=${url#https://}; candidate_host=${candidate_host%%/*}
-  echo "[进度] 尝试规则源：$candidate_host"
-  if download_candidate "$url" "$output" "$source_budget"; then return 0; fi
-  for mirror in $(source_mirror_urls "$url" 2>/dev/null); do
-    [ -n "$mirror" ] && [ "$mirror" != "$url" ] || continue
+  source_candidates=''
+  if [ -f "$AGH/scripts/source-registry.sh" ]; then
+    source_candidates=$(ABP_STATE_DIR="$STATE" ABP_AGH_DIR="$AGH" ABP_MODULE_DIR="$MODDIR" "$BB" sh "$AGH/scripts/source-registry.sh" urls "$url" 2>/dev/null) || source_candidates=''
+  fi
+  [ -n "$source_candidates" ] || source_candidates="$url $(source_mirror_urls "$url" 2>/dev/null)"
+  source_first=1
+  for mirror in $source_candidates; do
     source_remaining=$source_budget
     if [ -n "$source_started" ] && read -r source_now _ 2>/dev/null < /proc/uptime; then
       source_now=${source_now%%.*}
@@ -605,8 +607,13 @@ download_source() {
       [ "$source_remaining" -gt 0 ] || break
     fi
     candidate_host=${mirror#https://}; candidate_host=${candidate_host%%/*}
-    echo "[提醒] 原地址失败，正在尝试 HTTPS 镜像：$candidate_host"
-    if download_candidate "$mirror" "$output" "$source_remaining"; then echo "[+] 已通过 HTTPS 镜像下载：$name"; return 0; fi
+    if [ "$source_first" = 1 ]; then echo "[进度] 尝试规则源：$candidate_host";
+    else echo "[提醒] 原地址失败，正在尝试 HTTPS 镜像：$candidate_host"; fi
+    if download_candidate "$mirror" "$output" "$source_remaining" "$source_policy"; then
+      [ "$source_first" = 1 ] || echo "[+] 已通过 HTTPS 镜像下载：$name"
+      return 0
+    fi
+    source_first=0
   done
   echo "[!] 下载失败：$name。原地址和可用镜像均未成功；现有规则会保留。" >&2
   rm -f "$output"
@@ -757,6 +764,9 @@ sync_shared_rules() {
   api GET /status 4 >/dev/null || return 1
   save_snapshot || return 1
   echo '[进度] 同步公开共享抓包规则'
+  if [ -f "$AGH/scripts/source-registry.sh" ]; then
+    ABP_STATE_DIR="$STATE" ABP_AGH_DIR="$AGH" ABP_MODULE_DIR="$MODDIR" "$BB" sh "$AGH/scripts/source-registry.sh" refresh || echo '[提醒] 在线线路清单未更新，继续使用原有线路。' >&2
+  fi
   "$BB" sh "$RULE_STORE" sync || return 1
   ensure_shared_filter && api POST /filtering/refresh '{"whitelist":false}' 30 >/dev/null || {
     update_failed '[!] 共享规则应用失败，正在保留上一版配置。'; return 1;
@@ -866,6 +876,9 @@ update_rules() {
   save_snapshot || { echo '[!] 无法保存更新前的规则快照。' >&2; return 1; }
   echo '[进度] 应用来源与黑白名单配置'
   selected_sources=$("$BB" sh "$MODDIR/webui-config.sh" list-sources) || { update_failed '[!] 无法读取已选规则来源。'; return 1; }
+  if [ -f "$AGH/scripts/source-registry.sh" ] && printf '%s\n' "$selected_sources" | "$BB" awk -F '\t' '$1=="source" && $5=="enabled" && ($2=="10007" || $2=="awa-full" || $2=="goodbyeads" || $2=="shared") { found=1 } END { exit !found }'; then
+    ABP_STATE_DIR="$STATE" ABP_AGH_DIR="$AGH" ABP_MODULE_DIR="$MODDIR" "$BB" sh "$AGH/scripts/source-registry.sh" refresh || echo '[提醒] 在线线路清单未更新，继续使用原有线路。' >&2
+  fi
   if printf '%s\n' "$selected_sources" | "$BB" awk -F '\t' '$1=="source" && $4=="shared" && $5=="enabled" { found=1 } END { exit !found }'; then
     "$BB" sh "$RULE_STORE" sync || echo '[提醒] 共享库同步失败，继续使用随包或上次有效快照。'
   fi
