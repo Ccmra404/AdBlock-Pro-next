@@ -164,6 +164,7 @@ reset_defaults() {
   : > "$new_state/sources.txt"
   : > "$new_state/custom-sources.txt"
   : > "$new_state/disabled-sources.txt"
+  : > "$new_state/sources-pending-add.txt"
   "$BB" awk '
     /^filters:[[:space:]]*$/ { in_filters=1; next }
     in_filters && /^[^[:space:]]/ { in_filters=0 }

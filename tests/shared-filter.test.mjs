@@ -3,11 +3,12 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { rootFixture, shellPath } from './shell-fixture.mjs';
+import { rootFixture, shellPath, filteringBootstrap } from './shell-fixture.mjs';
 
 function fixture(t, { present = true, failSet = false, selected = true } = {}) {
   const root = rootFixture(t);
   root.addBusybox('Magisk');
+  const bootstrap = filteringBootstrap(root);
   const module = path.join(root.dir, 'module');
   const agh = path.join(root.dir, 'agh');
   const state = path.join(root.dir, 'state');
@@ -29,7 +30,7 @@ if [ "$SHARED_SELECTED" = 1 ]; then printf 'source\\tshared\\tShared\\tshared\\t
   const status = path.join(root.dir, 'filtering-status.json');
   const calls = path.join(root.dir, 'api-calls.txt');
   const sharedFilter = shellPath(path.join(agh, 'bin', 'userfilters', 'adblock-pro-shared-app-rules.txt'));
-  writeFileSync(status, JSON.stringify({ filters: present ? [{ url: sharedFilter, enabled: false }] : [] }));
+  writeFileSync(status, JSON.stringify({ filters: present ? [{ url: sharedFilter, name: 'Shared rules', enabled: false }] : [], whitelist_filters: [] }));
   const curl = path.join(root.dir, 'curl');
   writeFileSync(curl, `#!/bin/sh
 method=GET
@@ -50,7 +51,7 @@ case "$method $path" in
   'GET /filtering/status') cat "$FILTER_STATUS" ;;
   'POST /filtering/add_url') exit 0 ;;
   'POST /filtering/set_url') [ "$FAIL_SET" != 1 ] || exit 22 ;;
-  'POST /filtering/remove_url') printf '{"filters":[]}' > "$FILTER_STATUS" ;;
+  'POST /filtering/remove_url') printf '{"filters":[],"whitelist_filters":[]}' > "$FILTER_STATUS" ;;
   *) exit 22 ;;
 esac
 `);
@@ -62,7 +63,7 @@ esac
   const entry = path.join(module, 'bindhosts.sh');
   writeFileSync(entry, script);
   const env = {
-    ...root.env('Magisk'), CURL: shellPath(curl),
+    ...root.env('Magisk'), ABP_BOOTSTRAP: bootstrap, CURL: shellPath(curl),
     FILTER_STATUS: shellPath(status), API_CALLS: shellPath(calls),
     FAIL_SET: failSet ? '1' : '0',
     SHARED_SELECTED: selected ? '1' : '0',
@@ -110,5 +111,5 @@ test('an unselected shared source is removed from the live filter instead of bei
   const result = f.run();
   assert.equal(result.status, 0, JSON.stringify(result));
   const calls = readFileSync(f.calls, 'utf8').trim().split('\n').map(line => line.split('\t'));
-  assert.deepEqual(calls.map(([method, url]) => [method, url]), [['POST', '/filtering/remove_url']]);
+  assert.deepEqual(calls.map(([method, url]) => [method, url]), [['POST', '/filtering/remove_url'], ['GET', '/filtering/status']]);
 });

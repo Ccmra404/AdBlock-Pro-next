@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { rootFixture, shellPath } from './shell-fixture.mjs';
+import { rootFixture, shellPath, filteringBootstrap } from './shell-fixture.mjs';
 
 function fixture(t, { family = 'Magisk', present = true, failure = '', empty = false, invalid = false } = {}) {
   const root = rootFixture(t); root.addBusybox(family);
@@ -11,6 +11,7 @@ function fixture(t, { family = 'Magisk', present = true, failure = '', empty = f
   mkdirSync(path.join(module, 'scripts'), { recursive: true });
   mkdirSync(path.join(agh, 'bin/userfilters'), { recursive: true }); mkdirSync(state);
   writeFileSync(path.join(module, 'scripts/compat.sh'), readFileSync(root.compatFile));
+  const bootstrap = filteringBootstrap(root);
   writeFileSync(path.join(agh, 'admin.auth'), 'fixture:fixture');
   const personal = path.join(agh, 'bin/userfilters/adblock-pro-user-rules.txt');
   writeFileSync(personal, '||old.example^\n');
@@ -19,7 +20,7 @@ function fixture(t, { family = 'Magisk', present = true, failure = '', empty = f
   const marker = path.join(state, 'user-filter-applied');
   // Presence is read from the API, independently of this possibly stale marker.
   if (!present) writeFileSync(marker, shellPath(personal));
-  const calls = path.join(root.dir, 'calls'), count = path.join(root.dir, 'count');
+  const calls = path.join(root.dir, 'calls'), count = path.join(root.dir, 'count'), removed = path.join(root.dir, 'removed');
   const curl = path.join(root.dir, 'curl');
   writeFileSync(curl, `#!/bin/sh
 method=GET; body=; url=
@@ -32,9 +33,9 @@ done
 route=\${url#http://127.0.0.1:3000/control}
 printf '%s\\t%s\\t%s\\n' "$method" "$route" "$body" >> "$CALLS"
 case "$route" in
- /filtering/status)
+  /filtering/status)
   [ "$FAILURE" != status ] || exit 7
-  if [ "$PRESENT" = 1 ]; then printf '{"enabled":false,"filters":[{"url":"%s","enabled":true}]}' "$PERSONAL"; else printf '{"enabled":false,"filters":[]}'; fi ;;
+  if [ "$PRESENT" = 1 ] && [ ! -f "$REMOVED" ]; then printf '{"enabled":false,"filters":[{"url":"%s","name":"Personal rules","enabled":true}],"whitelist_filters":[]}' "$PERSONAL"; else printf '{"enabled":false,"filters":[],"whitelist_filters":[]}'; fi ;;
  /filtering/set_url)
   case "$body" in *'"enabled":true'*)
    n=$(cat "$COUNT" 2>/dev/null); n=$((\${n:-0}+1)); echo "$n" > "$COUNT"
@@ -42,7 +43,7 @@ case "$route" in
    [ "$FAILURE" != once ] || [ "$n" != 1 ] || exit 22 ;;
   esac ;;
  /filtering/add_url) [ "$FAILURE" != add ] || exit 22 ;;
- /filtering/remove_url) [ "$FAILURE" != remove ] || exit 22 ;;
+ /filtering/remove_url) [ "$FAILURE" != remove ] || exit 22; : > "$REMOVED" ;;
  *) exit 99 ;;
 esac
 `); chmodSync(curl, 0o755);
@@ -50,7 +51,7 @@ esac
   script = script.replace('AGH=/data/adb/adblockpro', `AGH=${shellPath(agh)}`).replace('STATE=/data/adb/bindhosts_personal', `STATE=${shellPath(state)}`);
   const entry = path.join(module, 'bindhosts.sh'); writeFileSync(entry, script);
   const run = () => spawnSync('bash', [shellPath(entry), '--apply-personal'], { encoding: 'utf8', timeout: 10000,
-    env: { ...root.env(family), ABP_UPDATE_LOCKED: '1', CURL: shellPath(curl), CALLS: shellPath(calls), COUNT: shellPath(count), PERSONAL: shellPath(personal), PRESENT: present ? '1' : '0', FAILURE: failure } });
+    env: { ...root.env(family), ABP_BOOTSTRAP: bootstrap, ABP_UPDATE_LOCKED: '1', CURL: shellPath(curl), CALLS: shellPath(calls), COUNT: shellPath(count), PERSONAL: shellPath(personal), REMOVED: shellPath(removed), PRESENT: present ? '1' : '0', FAILURE: failure } });
   const requests = () => readFileSync(calls, 'utf8').trim().split('\n').map(line => { const [method, route, body] = line.split('\t'); return { method, route, body: body ? JSON.parse(body) : null }; });
   return { run, requests, personal, desired, state, marker };
 }
@@ -71,7 +72,7 @@ test('missing personal filter is registered despite a stale marker', t => {
 
 test('clearing the personal lists removes only that filter', t => {
   const f = fixture(t, { empty: true }); assert.equal(f.run().status, 0);
-  const calls = f.requests(); assert.deepEqual(calls.map(x => x.route), ['/filtering/status', '/filtering/remove_url']);
+  const calls = f.requests(); assert.deepEqual(calls.map(x => x.route), ['/filtering/status', '/filtering/remove_url', '/filtering/status']);
   assert.equal(calls[1].body.url, shellPath(f.personal)); assert.equal(existsSync(f.marker), false);
 });
 

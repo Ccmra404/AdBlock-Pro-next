@@ -206,6 +206,7 @@ if [ ! -f "$STATE_DIR/v3-installed" ]; then
     'https://edgeone.gh-proxy.org/https://raw.githubusercontent.com/lingeringsound/10007_auto/master/reward' \
     'https://cdn.uura.cn/AWAvenue/AWAvenue-Ads-Rule.txt' \
     > "$STATE_DIR/sources-applied.txt"
+  : > "$STATE_DIR/sources-pending-add.txt"
   : > "$STATE_DIR/last-update"
   : > "$STATE_DIR/v3-installed"
 fi

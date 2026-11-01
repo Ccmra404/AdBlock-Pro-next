@@ -47,3 +47,80 @@ esac
   }
   return { dir, paths, compatFile, addBusybox, env };
 }
+
+export function filteringBootstrap(root) {
+  const js = path.join(root.dir, 'fake-adblock-bootstrap.js');
+  const shim = path.join(root.dir, 'fake-adblock-bootstrap');
+  writeFileSync(js, String.raw`#!/usr/bin/env node
+const fs = require('node:fs');
+const [command, ...args] = process.argv.slice(2);
+function fail(message, code = 1) { console.error(message); process.exit(code); }
+function status() {
+  let value;
+  try { value = JSON.parse(fs.readFileSync(0, 'utf8')); } catch { fail('invalid filter status'); }
+  if (!Array.isArray(value.filters) || !Array.isArray(value.whitelist_filters)) fail('missing filter arrays');
+  for (const entry of [...value.filters, ...value.whitelist_filters]) {
+    if (typeof entry.url !== 'string' || !entry.url || typeof entry.name !== 'string' || !entry.name || typeof entry.enabled !== 'boolean') fail('invalid filter entry');
+  }
+  return value;
+}
+function list(value, kind) {
+  if (kind === 'block') return value.filters;
+  if (kind === 'allow') return value.whitelist_filters;
+  fail('invalid filter list');
+}
+function find(value, url, kind) {
+  const matches = list(value, kind).filter(entry => entry.url === url);
+  if (matches.length !== 1) fail('filter not found or duplicated', 3);
+  return matches[0];
+}
+const json = value => process.stdout.write(JSON.stringify(value));
+switch (command) {
+  case 'filtering-check-status': status(); break;
+  case 'filtering-enabled-count': {
+    const value = status();
+    process.stdout.write(String([...value.filters, ...value.whitelist_filters].filter(entry => entry.enabled).length));
+    break;
+  }
+  case 'filtering-is-enabled': {
+    const [url, kind] = args;
+    process.stdout.write(String(find(status(), url, kind).enabled));
+    break;
+  }
+  case 'filtering-set-body': {
+    const [url, kind, field, next] = args;
+    const entry = find(status(), url, kind);
+    const data = { name: entry.name, url: entry.url, enabled: entry.enabled };
+    if (field === 'enabled' && (next === 'true' || next === 'false')) data.enabled = next === 'true';
+    else if (field === 'name' && next) data.name = next;
+    else if (field === 'url' && next) data.url = next;
+    else if (field !== 'refresh') fail('invalid set field');
+    json({ url: entry.url, whitelist: kind === 'allow', data });
+    break;
+  }
+  case 'filtering-copy-body':
+  case 'filtering-add-body': {
+    const [source, target, kind] = args;
+    const entry = find(status(), source, kind);
+    if (command === 'filtering-copy-body') json({ url: target, whitelist: kind === 'allow', data: { name: entry.name, url: target, enabled: entry.enabled } });
+    else json({ name: entry.name, url: target, whitelist: kind === 'allow' });
+    break;
+  }
+  case 'filtering-new-body': {
+    const [name, url, kind] = args;
+    json({ name, url, whitelist: kind === 'allow' });
+    break;
+  }
+  case 'filtering-remove-body': {
+    const [url, kind] = args;
+    json({ url, whitelist: kind === 'allow' });
+    break;
+  }
+  default: fail('unknown filtering helper command');
+}
+`);
+  chmodSync(js, 0o755);
+  writeFileSync(shim, `#!/bin/sh\nexec "${shellPath(process.execPath)}" "${shellPath(js)}" "$@"\n`);
+  chmodSync(shim, 0o755);
+  return shellPath(shim);
+}
