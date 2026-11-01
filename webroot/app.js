@@ -181,8 +181,11 @@ function sourceRows() {
 }
 function externalSubscriptionsMarkup() {
   const status = state.status?.dns_filter_json;
+  const hasFilterLists = status && Object.prototype.hasOwnProperty.call(status, 'filters') && Object.prototype.hasOwnProperty.call(status, 'whitelist_filters');
+  const filters = status?.filters === null ? [] : status?.filters;
+  const whitelistFilters = status?.whitelist_filters === null ? [] : status?.whitelist_filters;
   const heading = `<div class="panel-head"><div><h2 class="section-title">当前订阅</h2><p class="section-sub">与 AdGuard Home 后台共用同一份订阅状态；这里的操作会立即同步到后台</p></div></div>`;
-  if (!Array.isArray(status?.filters) || !Array.isArray(status?.whitelist_filters)) {
+  if (!hasFilterLists || !Array.isArray(filters) || !Array.isArray(whitelistFilters)) {
     return `<section class="panel" id="external-subscriptions">${heading}<div class="empty-state">${state.status ? '暂时无法读取完整订阅状态；为避免显示错误数据，请检查 DNS 核心和管理接口。' : '尚未读取 AdGuard Home 订阅。'}</div></section>`;
   }
   const moduleMap = new Map(String(state.status.module_source_map || '').split('|').filter(Boolean).map(pair => {
@@ -190,7 +193,7 @@ function externalSubscriptionsMarkup() {
     return split < 0 ? ['', ''] : [pair.slice(0, split), pair.slice(split + 1)];
   }).filter(([source, target]) => source && target));
   const originalByFilter = new Map([...moduleMap].map(([source, target]) => [target, source]));
-  const subscriptions = [...status.filters.map(filter => ({ ...filter, list: 'block' })), ...status.whitelist_filters.map(filter => ({ ...filter, list: 'allow' }))].filter(filter => {
+  const subscriptions = [...filters.map(filter => ({ ...filter, list: 'block' })), ...whitelistFilters.map(filter => ({ ...filter, list: 'allow' }))].filter(filter => {
     const url = String(filter?.url || '');
     return url && !url.endsWith('/adblock-pro-user-rules.txt') && !url.endsWith('/adblock-pro-shared-app-rules.txt');
   });

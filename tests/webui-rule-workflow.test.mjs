@@ -217,6 +217,8 @@ test('native subscription panel distinguishes unavailable status from an empty l
  assert.match(h.externalSubscriptionsMarkup(),/暂时无法读取/);
  h.state.status={dns_filter_json:{filters:[],whitelist_filters:[]}};
  assert.match(h.externalSubscriptionsMarkup(),/AdGuard Home 当前没有普通订阅/);
+ h.state.status={dns_filter_json:{filters:null,whitelist_filters:null}};
+ assert.match(h.externalSubscriptionsMarkup(),/AdGuard Home 当前没有普通订阅/);
 });
 
 test('removing a module directory entry leaves current AdGuard Home subscriptions untouched',async()=>{

@@ -33,8 +33,12 @@ func readFilteringStatus(r io.Reader, list string) ([]filteringEntry, error) {
 	if len(status.Filters) == 0 || len(status.WhitelistFilters) == 0 {
 		return nil, errors.New("AdGuard Home filter status is missing a filter array")
 	}
-	if bytes.Equal(bytes.TrimSpace(status.Filters), []byte("null")) || bytes.Equal(bytes.TrimSpace(status.WhitelistFilters), []byte("null")) {
-		return nil, errors.New("AdGuard Home filter status contains a null filter array")
+	// AdGuard Home encodes an empty subscription list as null in live status.
+	if bytes.Equal(bytes.TrimSpace(status.Filters), []byte("null")) {
+		status.Filters = json.RawMessage("[]")
+	}
+	if bytes.Equal(bytes.TrimSpace(status.WhitelistFilters), []byte("null")) {
+		status.WhitelistFilters = json.RawMessage("[]")
 	}
 	raw := status.Filters
 	if list == "allow" {

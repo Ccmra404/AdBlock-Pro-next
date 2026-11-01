@@ -58,6 +58,8 @@ function fail(message, code = 1) { console.error(message); process.exit(code); }
 function status() {
   let value;
   try { value = JSON.parse(fs.readFileSync(0, 'utf8')); } catch { fail('invalid filter status'); }
+  if (value?.filters === null) value.filters = [];
+  if (value?.whitelist_filters === null) value.whitelist_filters = [];
   if (!Array.isArray(value.filters) || !Array.isArray(value.whitelist_filters)) fail('missing filter arrays');
   for (const entry of [...value.filters, ...value.whitelist_filters]) {
     if (typeof entry.url !== 'string' || !entry.url || typeof entry.name !== 'string' || !entry.name || typeof entry.enabled !== 'boolean') fail('invalid filter entry');

@@ -72,10 +72,6 @@ func TestFilteringStatusRejectsUnknownAndMalformedState(t *testing.T) {
 	if err == nil {
 		t.Fatal("filter with missing enabled state was accepted as disabled")
 	}
-	_, err = readFilteringStatus(strings.NewReader(`{"filters":[],"whitelist_filters":null}`), "block")
-	if err == nil {
-		t.Fatal("null allow-list state was treated as an empty list")
-	}
 	entries, err := readFilteringStatus(strings.NewReader(filterStatusFixture), "block")
 	if err != nil {
 		t.Fatal(err)
@@ -83,6 +79,27 @@ func TestFilteringStatusRejectsUnknownAndMalformedState(t *testing.T) {
 	_, err = findFilteringEntry(entries, "https://missing.example/list.txt")
 	if !errors.Is(err, errFilterNotFound) {
 		t.Fatalf("missing filter error = %v", err)
+	}
+}
+
+func TestFilteringStatusTreatsNullListsAsEmpty(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		status string
+		list   string
+	}{
+		{"null allow list", `{"filters":[],"whitelist_filters":null}`, "allow"},
+		{"null block list", `{"filters":null,"whitelist_filters":[]}`, "block"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			entries, err := readFilteringStatus(strings.NewReader(test.status), test.list)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("entries = %v, want empty", entries)
+			}
+		})
 	}
 }
 
