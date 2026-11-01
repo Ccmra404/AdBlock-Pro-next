@@ -163,8 +163,7 @@ test('VPN compatibility is enabled by default and explains whole-device bypass a
   assert.match(markup, /旁路整机的模块 DNS 接管/);
   assert.match(markup, /IPv6 DNS 接管\/阻断/);
   assert.match(markup, /即使 VPN 仍连接/);
-  assert.match(markup, /data-toggle="vpn-compat"/);
-  assert.doesNotMatch(markup, /data-toggle="vpn-compat" checked/);
+  assert.match(markup, /data-toggle="vpn-compat" checked/);
 });
 
 for (const takeover of ['on', 'off']) test(`unknown firewall state is not displayed as absent or bypassed: ${takeover}`, () => {
