@@ -385,6 +385,10 @@ status() {
   fi
   module_version=$($BB grep '^version=' "$MODDIR/module.prop" | $BB cut -d= -f2-)
   [ -n "$module_version" ] || module_version=unknown
+  module_source_urls=''
+  if [ -r "$STATE/sources-applied.txt" ]; then
+    module_source_urls=$($BB awk 'NF { printf "%s%s", separator, $0; separator="|" }' "$STATE/sources-applied.txt")
+  fi
   count=$(rules_count "$filter_json")
   if [ "$count" = 0 ] && [ -d "$AGH/bin/data/filters" ]; then
     count=$(for file in "$AGH/bin/data/filters"/*.txt; do [ -f "$file" ] || continue; "$BB" awk '!/^[[:space:]]*(!|#|$)/ { n++ } END { print n+0 }' "$file"; done | "$BB" awk '{ n += $1 } END { print n+0 }')
@@ -399,6 +403,7 @@ status() {
   "$BB" sh "$AGH/scripts/memory.sh" quick "$pid" | "$BB" sed 's/^mem_rss/dns_rss/;s/^mem_pss/dns_pss/;s/^mem_/dns_mem_/'
   printf 'module=version=%s / %s\nupdate_due=no\nauto_update=%s\nlast_update=%s\n' "$module_version" "$version" "$auto" "$last_update"
   printf 'history=%s\n' "$(history_text)"
+  printf 'module_source_urls=%s\n' "$module_source_urls"
   printf 'dns_filter_json=%s\n' "$(printf '%s' "$filter_json" | $BB tr '\r\n' '  ')"
   printf 'dns_stats_json=%s\n' "$(printf '%s' "$stats_json" | $BB tr '\r\n' '  ')"
   printf 'dns_listener=%s\ndns_listener_udp=%s\ndns_listener_tcp=%s\ndns_redirect=%s\n' "$listening" "$listening_udp" "$listening_tcp" "$redirected"

@@ -10,7 +10,7 @@ function harness() {
     localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{},
     exec:command=>new Promise(resolve=>pending.push({command,resolve})),setTimeout,clearTimeout,setInterval(){return 1;},requestAnimationFrame(){},cancelAnimationFrame(){} });
   vm.runInContext(source,context);
-  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,saveExportFile,observationAIPrompt,communityIssueUrl,parseObservationSnapshot,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,rulesPage,sourceRows,sharedResultsMarkup,startObservation,savePersonalDomain})',context)};
+  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,saveExportFile,observationAIPrompt,communityIssueUrl,parseObservationSnapshot,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,rulesPage,sourceRows,externalSubscriptionsMarkup,sharedResultsMarkup,startObservation,savePersonalDomain})',context)};
 }
 
 test('the optional paired source explains its scope and uses the existing import and remove controls', () => {
@@ -182,6 +182,35 @@ test('rule source page has no tiers and makes every bundled or custom source man
  assert.match(page,/data-action="source-delete"/);assert.match(page,/data-action="source-rename-open"/);
  assert.match(page,/data-action="source-url-open"/);
  assert.match(page,/name="name" maxlength="64"/);assert.match(page,/name="url"/);
+});
+
+test('rule page shows AdGuard Home remote subscriptions not owned by the module',()=>{
+ const h=harness();
+ h.state.sources=[{id:'custom',label:'Module source',url:'https://module.example/list.txt',enabled:'enabled'}];
+ h.state.status={module_source_urls:'https://legacy-module.example/list.txt|https://module.example/list.txt|shared',dns_filter_json:{filters:[
+  {name:'Manual subscription <test>',url:'https://manual.example/list.txt?token=fixture',enabled:true,rules_count:42},
+  {name:'Legacy module subscription',url:'https://legacy-module.example/list.txt',enabled:true,rules_count:10},
+  {name:'Module source',url:'https://module.example/list.txt',enabled:true,rules_count:20},
+  {name:'Local module filter',url:'file:///data/adb/adblockpro/userfilters/shared.txt',enabled:true,rules_count:4},
+ ]}};
+ const external=h.externalSubscriptionsMarkup();
+ assert.match(external,/AdGuard Home 直接添加的远程订阅/);
+ assert.match(external,/manual\.example\/list\.txt\?token=fixture/);
+ assert.match(external,/Manual subscription &lt;test&gt;/);
+ assert.match(external,/42 条/);
+ assert.match(external,/请在设置页的 AdGuard Home 后台/);
+ assert.doesNotMatch(external,/legacy-module\.example|module\.example|file:\/\//);
+ assert.doesNotMatch(external,/data-action=/,'native subscriptions are informational and never mutate filters');
+ assert.match(h.rulesPage(),/id="external-subscriptions"/);
+});
+
+test('native subscription panel distinguishes unavailable status from an empty list',()=>{
+ const h=harness();
+ assert.match(h.externalSubscriptionsMarkup(),/尚未读取 AdGuard Home 订阅/);
+ h.state.status={dns_health:'api_failed',dns_filter_json:{}};
+ assert.match(h.externalSubscriptionsMarkup(),/暂时无法读取/);
+ h.state.status={dns_filter_json:{filters:[]}};
+ assert.match(h.externalSubscriptionsMarkup(),/未发现直接添加的远程订阅/);
 });
 
 test('confirmed source removal invalidates cached rows and reloads the source list',async()=>{

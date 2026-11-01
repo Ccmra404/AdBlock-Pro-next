@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
 
-function statusFixture(t, { takeover = 'on', vpnCompat = 'off', vpnState = '', listener = true, redirect = true, running = true, api = true, firewallOutput, firewallExit, networkDiagnostics = false, filtering = '{"enabled":true,"filters":[]}' } = {}) {
+function statusFixture(t, { takeover = 'on', vpnCompat = 'off', vpnState = '', listener = true, redirect = true, running = true, api = true, firewallOutput, firewallExit, networkDiagnostics = false, filtering = '{"enabled":true,"filters":[]}', appliedSources = '' } = {}) {
   const root = rootFixture(t); root.addBusybox('Magisk');
   const runtime = path.join(root.dir, 'runtime'), state = path.join(root.dir, 'state'), proc = path.join(root.dir, 'proc');
   for (const dir of [path.join(runtime, 'bin'), path.join(runtime, 'scripts'), state, path.join(proc, 'net'), path.join(proc, '1234')]) mkdirSync(dir, { recursive: true });
@@ -20,6 +20,7 @@ function statusFixture(t, { takeover = 'on', vpnCompat = 'off', vpnState = '', l
   writeFileSync(path.join(state, 'dns-takeover'), takeover + '\n');
   writeFileSync(path.join(state, 'vpn-compat'), vpnCompat + '\n');
   writeFileSync(path.join(state, 'vpn-compat-state'), vpnState ? vpnState + '\n' : '');
+  if (appliedSources) writeFileSync(path.join(state, 'sources-applied.txt'), appliedSources);
   writeFileSync(path.join(state, 'engine-version'), 'fixture-engine\n');
   writeFileSync(path.join(root.dir, 'module.prop'), 'version=v0.13.0-rc.3\n');
   for (const file of ['memory.sh', 'footprint.sh']) writeFileSync(path.join(runtime, 'scripts', file), readFileSync(new URL('../scripts/' + file, import.meta.url), 'utf8'));
@@ -68,6 +69,11 @@ test('network probes run only on explicit diagnosis and failed probes remain unk
   assert.equal(diagnosis.diag_ipv6_mode, 'unknown');
   assert.match(run.networkQueries(), /settings/);
   assert.match(run.networkQueries(), /dumpsys/);
+});
+
+test('status exposes module-applied source URLs for separating native subscriptions', t => {
+  const run = statusFixture(t, { appliedSources: 'https://old.example/list.txt\nshared\nhttps://private.example/feed?token=fixture\n' });
+  assert.equal(run().module_source_urls, 'https://old.example/list.txt|shared|https://private.example/feed?token=fixture');
 });
 
 for (const [name, filtering, expected] of [

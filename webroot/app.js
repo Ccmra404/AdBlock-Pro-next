@@ -179,6 +179,28 @@ function sourceRows() {
   }).join('');
   return rows;
 }
+function externalSubscriptionsMarkup() {
+  const filters = state.status?.dns_filter_json?.filters;
+  const heading = `<div class="panel-head"><div><h2 class="section-title">AdGuard Home 直接添加的远程订阅</h2><p class="section-sub">显示未由模块订阅管理的远程规则；只读展示</p></div></div>`;
+  if (!Array.isArray(filters)) {
+    return `<section class="panel" id="external-subscriptions">${heading}<div class="empty-state">${state.status ? '暂时无法读取 AdGuard Home 订阅，请检查 DNS 核心和管理接口。' : '尚未读取 AdGuard Home 订阅。'}</div></section>`;
+  }
+  const moduleOwned = new Set(String(state.status.module_source_urls || '').split('|').filter(Boolean));
+  const seen = new Set();
+  const subscriptions = filters.filter(filter => {
+    const url = String(filter?.url || '');
+    if (!/^https?:\/\//i.test(url) || moduleOwned.has(url) || seen.has(url)) return false;
+    seen.add(url);
+    return true;
+  });
+  const rows = subscriptions.map(filter => {
+    const enabled = filter.enabled === true;
+    const count = filter.rules_count != null && Number.isFinite(Number(filter.rules_count)) ? `${fmt(filter.rules_count)} 条规则` : '规则数未知';
+    return row('globe', filter.name || filter.url, `${filter.url} · ${count}`, tag(enabled ? '已启用' : '已停用', enabled ? 'green' : 'yellow'));
+  }).join('');
+  const content = rows ? `<div class="rows">${rows}</div>` : '<div class="empty-state">未发现直接添加的远程订阅。</div>';
+  return `<section class="panel" id="external-subscriptions">${heading}<p class="field-help">这些订阅由 AdGuard Home 自己更新和管理。请在设置页的 AdGuard Home 后台中修改或移除；模块不会代替你操作。</p>${content}</section>`;
+}
 function ruleList(kind) {
   const items = state.lists[kind] || [];
   const title = kind === 'whitelist' ? '放行名单' : '拦截名单';
@@ -283,6 +305,7 @@ function rulesPage() {
   return `${heading('规则管理', '来源、更新与历史回滚')}
     <div class="stack"><section id="update-progress" class="panel progress-card hidden" aria-live="polite"><div class="panel-head"><b class="section-title">规则更新</b><span id="update-elapsed" class="small muted"></span></div><div id="update-stage" class="small">等待任务</div><div class="progress-track"><span class="progress-bar"></span></div><p id="update-help" class="field-help">下载期间本页面仍可切换；不要重复启动更新。</p></section>
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">规则来源</h2><p class="section-sub">逐项导入、停用、移除或重命名；订阅内容先下载校验，再交给本地 DNS 核心加载</p></div><span class="tag" data-source-count>${state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : `${selectedCount} 个已启用`}</span></div><div id="source-list" class="source-list">${sourceRows()}</div><form id="source-form" class="btn-row"><input class="field" name="name" maxlength="64" placeholder="来源名称" required><input class="field" name="url" type="url" placeholder="HTTPS 订阅地址" autocapitalize="none" required><button class="btn" type="submit">导入来源</button></form><p id="rules-feedback" class="field-help" aria-live="polite">默认来源也可以停用或移除；移除内置来源只从当前订阅中移除，仍可随时重新导入。更新失败会保留上一版规则。</p><div class="divider"></div><div class="btn-row"><button class="btn btn-primary" data-action="update">立即检查并更新</button><select id="history-select" class="field" aria-label="选择要恢复的规则历史"><option value="">选择历史版本</option>${(s?.history || []).map(item => { const [key, count] = item.split(':'); return `<option value="${esc(key)}">${esc(key.slice(0,4)+'-'+key.slice(4,6)+'-'+key.slice(6,8)+' '+key.slice(8,10)+':'+key.slice(10,12))} · ${fmt(count)} 条</option>`; }).join('')}</select><button class="btn btn-danger" data-action="rollback">恢复</button></div></section>
+    ${externalSubscriptionsMarkup()}
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">域名检查</h2><p class="section-sub">查看本地过滤规则的判定，排查疑似误拦截</p></div></div><label class="field-label" for="check-domain">要检查的域名</label><form id="domain-form" class="btn-row"><input id="check-domain" class="field" name="domain" value="${esc(state.domainCheckInput)}" placeholder="例如 ads.example.com" autocapitalize="none" spellcheck="false" required><button class="btn" type="submit" ${state.domainCheck?.pending ? 'disabled' : ''}>${state.domainCheck?.pending ? '检查中…' : '检查'}</button></form><div id="domain-result" class="domain-check-result" role="status" aria-live="polite" aria-atomic="true" aria-busy="${Boolean(state.domainCheck?.pending)}">${domainCheckMarkup()}</div><p class="field-help">此检查不测试网络速度或网站可达性，也不能证明应用广告已消失。</p></section></div>`;
 }
 function personalRulesPage() {
@@ -778,6 +801,7 @@ function syncStatusView() {
       if (input && !state.busy && !input.disabled) input.checked = Boolean(s && on);
     }
   } else if (state.page === 'rules') {
+    updateExternalSubscriptionsView();
     const select = $('#history-select');
     const history = (s?.history || []).join(',');
     if (select && select.dataset.history !== history && document.activeElement !== select) {
@@ -804,6 +828,11 @@ function updateSourcesView() {
   }
   setText('[data-source-count]', state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : state.sources.filter(source => source.enabled === 'enabled').length + ' 个已启用');
   if (state.busy) setBusy(true);
+}
+function updateExternalSubscriptionsView() {
+  const panel = $('#external-subscriptions');
+  const markup = externalSubscriptionsMarkup();
+  if (panel && panel.outerHTML !== markup) panel.outerHTML = markup;
 }
 function syncListsView() {
   if (state.page !== 'lists') return;
