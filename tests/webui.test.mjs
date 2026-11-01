@@ -154,12 +154,12 @@ test('home service status rows refresh after the initial unknown render', () => 
   assert.equal(h.serviceRows[1].tag.classes.has('green'), false);
 });
 
-test('VPN compatibility is opt-in and explains whole-device bypass and restore behavior', () => {
+test('VPN compatibility is enabled by default and explains whole-device bypass and restore behavior', () => {
   const h = harness();
-  h.state.status = { vpn_compat: 'off', dns_takeover: 'on' };
+  h.state.status = { vpn_compat: 'on', dns_takeover: 'on' };
   const markup = h.managePage();
   assert.match(markup, /VPN\/TUN 自动兼容/);
-  assert.match(markup, /VPN\/TUN 自动兼容默认关闭/);
+  assert.match(markup, /VPN\/TUN 自动兼容默认开启/);
   assert.match(markup, /旁路整机的模块 DNS 接管/);
   assert.match(markup, /IPv6 DNS 接管\/阻断/);
   assert.match(markup, /即使 VPN 仍连接/);

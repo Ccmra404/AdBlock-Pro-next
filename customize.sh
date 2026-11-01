@@ -89,7 +89,37 @@ initialize_switch() {
 }
 initialize_switch autostart
 initialize_switch dns-takeover
-initialize_switch vpn-compat off
+initialize_switch vpn-compat on
+
+# Older releases wrote "off" for every install, so the saved value alone
+# cannot distinguish that default from a deliberate opt-out. Migrate it once;
+# after this marker exists, later user changes are preserved by upgrades.
+migrate_vpn_compat_default() {
+  marker="$STATE_DIR/vpn-compat-default-v2"
+  if [ -e "$marker" ]; then
+    [ "$(cat "$marker" 2>/dev/null)" = v1 ] || fail "Invalid saved VPN compatibility migration state."
+    return 0
+  fi
+  value=$(cat "$STATE_DIR/vpn-compat" 2>/dev/null)
+  case "$value" in
+    on) ;;
+    off)
+      tmp="$STATE_DIR/vpn-compat.tmp.$$"
+      printf 'on\n' > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$STATE_DIR/vpn-compat" || {
+        rm -f "$tmp"
+        fail "Cannot enable the new VPN compatibility default."
+      }
+      ui_print "[AdBlock Pro] VPN/TUN DNS bypass is enabled by default; you can turn it off in Settings."
+      ;;
+    *) fail "Invalid saved VPN compatibility state." ;;
+  esac
+  tmp="$marker.tmp.$$"
+  printf 'v1\n' > "$tmp" && chmod 600 "$tmp" && mv -f "$tmp" "$marker" || {
+    rm -f "$tmp"
+    fail "Cannot save VPN compatibility migration state."
+  }
+}
+migrate_vpn_compat_default
 
 for file in action.sh module.prop service.sh uninstall.sh; do
   unzip -oq "$ZIPFILE" "$file" -d "$MODPATH" || fail "Cannot extract $file."

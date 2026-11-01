@@ -87,7 +87,8 @@ test('factory reset keeps full recovery private and exports only lists/preferenc
   assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), 'default.personal.example\n');
   assert.equal(readFileSync(path.join(f.state, 'whitelist.txt'), 'utf8'), 'default-allow.example\n');
   assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'on\n');
-  assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'off\n');
+  assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'on\n');
+  assert.equal(readFileSync(path.join(f.state, 'vpn-compat-default-v2'), 'utf8'), 'v1\n');
   assert.equal(readFileSync(path.join(f.state, 'autostart'), 'utf8'), 'on\n');
   assert.equal(readFileSync(path.join(f.state, 'auto-update'), 'utf8'), 'on\n');
   assert.match(readFileSync(path.join(f.state, 'sources-v2.txt'), 'utf8'), /10007_auto/);
