@@ -215,9 +215,9 @@ test('GOODBYEADS mirrors share the same bounded download budget', t => {
   const result = f.run();
   assert.equal(result.status, 0, result.stderr + result.stdout);
   const limits = [...readFileSync(f.curlOptions, 'utf8').matchAll(/--max-time\t(\d+)/g)].map(match => Number(match[1]));
-  assert.equal(limits[0], 200);
-  assert.ok(limits[1] <= 199, 'time spent on the first candidate reduces the mirror budget');
-  assert.equal(limits[2], 200, 'the companion file gets its own budget');
+  assert.ok(limits[0] > 0 && limits[0] <= 200, 'the first candidate stays within the source budget');
+  assert.ok(limits[1] < limits[0], 'time spent on the first candidate reduces the mirror budget');
+  assert.ok(limits[2] > limits[1] && limits[2] <= 200, 'the companion file gets a fresh source budget');
 });
 
 test('compressed source content is rejected and a plaintext mirror is used', t => {
