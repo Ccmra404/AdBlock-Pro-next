@@ -57,7 +57,8 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     assert.equal(existsSync(path.join(f.runtime, 'bin/adblock-bootstrap')), true);
     assert.equal(readFileSync(path.join(f.runtime, 'bin/adblock-apps.dex'), 'utf8'), 'application-label-fixture');
     assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'on\n');
-    assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'off\n');
+    assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'on\n');
+    assert.equal(readFileSync(path.join(f.state, 'vpn-compat-default-v2'), 'utf8'), 'v1\n');
     assert.match(installed.stdout, /DNS takeover: on \(initialized\)/);
     assert.match(readFileSync(path.join(f.runtime, 'bin/adblock-ai'), 'utf8'), /AI-fixture/);
     assert.equal(existsSync(path.join(f.runtime, 'scripts/source-registry.sh')), true);
@@ -80,7 +81,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     writeFileSync(path.join(f.state, 'blacklist.txt'), 'custom.personal.example\ncustom.personal.example\n');
     writeFileSync(path.join(f.state, 'whitelist.txt'), 'login.personal.example\n');
     writeFileSync(path.join(f.state, 'dns-takeover'), 'off\n');
-    writeFileSync(path.join(f.state, 'vpn-compat'), 'on\n');
+    writeFileSync(path.join(f.state, 'vpn-compat'), 'off\n');
     const yaml = path.join(f.runtime, 'bin/AdGuardHome.yaml');
     const customDns = readFileSync(yaml, 'utf8')
       .replace('use_private_ptr_resolvers: false', 'use_private_ptr_resolvers: true')
@@ -97,7 +98,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
     assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), 'custom.personal.example\ncustom.personal.example\n');
     assert.equal(readFileSync(path.join(f.runtime, 'bin/userfilters/adblock-pro-shared-app-rules.txt'), 'utf8'), shared);
     assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'off\n');
-    assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'on\n');
+    assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'off\n');
     assert.equal(readFileSync(path.join(f.state, 'ai/config.json'), 'utf8'), 'fixture-private-config');
     assert.match(again.stdout, /DNS takeover: off \(preserved\)/);
     assert.equal(readFileSync(personal, 'utf8').split('||custom.personal.example^').length, 2);
@@ -109,6 +110,18 @@ test('a retained off preference is not overwritten even without an existing DNS 
   const f = installFixture(t, 'Magisk', 'off\n');
   const result = f.install(); assert.equal(result.status, 0, result.stderr);
   assert.equal(readFileSync(path.join(f.state, 'dns-takeover'), 'utf8'), 'off\n');
+});
+
+test('upgrading old default-off VPN compatibility enables auto bypass once and preserves later opt-out', t => {
+  const f = installFixture(t, 'Magisk', 'on\n');
+  writeFileSync(path.join(f.state, 'vpn-compat'), 'off\n');
+  const migrated = f.install(); assert.equal(migrated.status, 0, migrated.stderr + migrated.stdout);
+  assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'on\n');
+  assert.equal(readFileSync(path.join(f.state, 'vpn-compat-default-v2'), 'utf8'), 'v1\n');
+
+  writeFileSync(path.join(f.state, 'vpn-compat'), 'off\n');
+  const optedOut = f.install(); assert.equal(optedOut.status, 0, optedOut.stderr + optedOut.stdout);
+  assert.equal(readFileSync(path.join(f.state, 'vpn-compat'), 'utf8'), 'off\n');
 });
 
 test('invalid persisted takeover state is retained and installation fails explicitly', t => {
