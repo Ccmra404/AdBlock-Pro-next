@@ -28,6 +28,9 @@ def free_port():
 def exercise(engine, bootstrap):
     with tempfile.TemporaryDirectory(prefix='abp-personal-') as directory:
         root = Path(directory)
+        runtime_bin = root / 'bin'
+        runtime_bin.mkdir()
+        shutil.copy2(bootstrap, runtime_bin / 'adblock-bootstrap')
         config, auth = root / 'AdGuardHome.yaml', root / 'admin.auth'
         subprocess.run([str(bootstrap), str(config), str(auth)], check=True, capture_output=True)
         personal = root / 'bin/userfilters/adblock-pro-user-rules.txt'

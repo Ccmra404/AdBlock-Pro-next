@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
@@ -13,7 +14,7 @@ const goodbyeAllow = goodbye.replace('/dns.txt', '/allow.txt');
 const goodbyeRow = 'source\tgoodbyeads\tGOODBYEADS DNS\t' + goodbye + '\tenabled\tconfigured\tremovable\n';
 const nativePath = value => process.platform === 'win32' ? value.replace(/^\/([a-z])\//, (_, drive) => drive.toUpperCase() + ':/') : value;
 
-function fixture(t, { sources, oldApplied = '', marker = true, failDownload = false, failDownloadUrl = '', failRemove = false, statusUrl = '', existingShared = false, registry = '' } = {}) {
+function fixture(t, { sources, oldApplied = '', marker = true, pendingAdd, failDownload = false, failDownloadUrl = '', failRemove = false, statusUrl = '', statusEnabled = true, statusAllowUrl = '', existingShared = false, registry = '' } = {}) {
   const root = rootFixture(t); root.addBusybox('Magisk');
   const mod = path.join(root.dir, 'module'), agh = path.join(root.dir, 'agh'), state = path.join(root.dir, 'state');
   mkdirSync(path.join(mod, 'scripts'), { recursive: true });
@@ -32,7 +33,10 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
   const curlCalls = path.join(root.dir, 'curl-calls.txt'), curlOptions = path.join(root.dir, 'curl-options.txt');
   const sharedFilter = path.join(agh, 'bin', 'userfilters', 'adblock-pro-shared-app-rules.txt');
   writeFileSync(sharedFilter, '||shared.example^\n');
-  writeFileSync(sourceList, sources ?? 'mode\tbalanced\nsource\tcustom\tExample Feed\t' + feed + '\tenabled\tconfigured\tremovable\n');
+  const sourceText = sources ?? 'mode\tbalanced\nsource\tcustom\tExample Feed\t' + feed + '\tenabled\tconfigured\tremovable\n';
+  writeFileSync(sourceList, sourceText);
+  const pending = pendingAdd ?? sourceText.split(/\r?\n/).filter(line => line.startsWith('source\t')).map(line => line.split('\t')).filter(row => row[4] === 'enabled' && row[3] !== 'shared').map(row => row[3]).join('\n');
+  writeFileSync(path.join(state, 'sources-pending-add.txt'), pending ? pending + '\n' : '');
   writeFileSync(path.join(mod, 'webui-config.sh'), '#!/bin/sh\n[ "$1" = list-sources ] || exit 1\ncat "$SOURCE_LIST"\n');
   if (oldApplied !== null) writeFileSync(path.join(state, 'sources-applied.txt'), oldApplied);
   if (marker) writeFileSync(path.join(state, 'sources-local-v2'), 'local-v2\n');
@@ -58,7 +62,14 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
     '  method=$1; endpoint=$2; body=$3',
     '  printf "%s\\t%s\\t%s\\n" "$method" "$endpoint" "$body" >> "$API_CALLS"',
     '  case "$method $endpoint" in',
-    '    "GET /filtering/status") printf "{\\"filters\\":[{\\"url\\":\\"%s\\"}]}\\n" "$STATUS_URL" ;;',
+    '    "GET /filtering/status")',
+    '      status_url=$STATUS_URL; status_allow_url=$STATUS_ALLOW_URL',
+    '      if [ "$FAIL_REMOVE" != 1 ]; then remove_key=$(printf "POST\\t/filtering/remove_url\\t{\\"url\\":\\"%s\\"" "$status_url"); grep -Fq "$remove_key" "$API_CALLS" && status_url=; allow_remove_key=$(printf "POST\\t/filtering/remove_url\\t{\\"url\\":\\"%s\\"" "$status_allow_url"); grep -Fq "$allow_remove_key" "$API_CALLS" && status_allow_url=; fi',
+    '      printf "{\\"filters\\":["',
+    '      if [ -n "$status_url" ]; then printf "{\\"url\\":\\"%s\\",\\"name\\":\\"Fixture filter\\",\\"enabled\\":%s}" "$status_url" "$STATUS_ENABLED"; fi',
+    '      printf "],\\"whitelist_filters\\":["',
+    '      if [ -n "$status_allow_url" ]; then printf "{\\"url\\":\\"%s\\",\\"name\\":\\"Fixture allow\\",\\"enabled\\":true}" "$status_allow_url"; fi',
+    '      printf "]}\\n" ;;',
     '    "POST /filtering/remove_url") [ "$FAIL_REMOVE" != 1 ] ;;',
     '    "POST /filtering/add_url")',
     '      if [ -n "$EXISTING_URL" ]; then case "$body" in *"$EXISTING_URL"*) return 22 ;; esac; fi',
@@ -74,6 +85,7 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
     'MODDIR=' + shellPath(mod),
     'AGH=' + shellPath(agh),
     'STATE=' + shellPath(state),
+    'BOOTSTRAP=$ABP_BOOTSTRAP',
     'SHARED_FILTER=' + shellPath(path.join(agh, 'bin', 'userfilters', 'adblock-pro-shared-app-rules.txt')),
     '. ' + shellPath(path.join(mod, 'scripts', 'compat.sh')) + ' || exit 1',
     api,
@@ -81,7 +93,28 @@ function fixture(t, { sources, oldApplied = '', marker = true, failDownload = fa
     'sync_sources',
   ].join('\n');
   writeFileSync(script, body); chmodSync(script, 0o755);
-  const env = { ...root.env('Magisk'), CURL: shellPath(curl), CURL_CALLS: shellPath(curlCalls), CURL_OPTIONS: shellPath(curlOptions), SOURCE_LIST: shellPath(sourceList), API_CALLS: shellPath(calls), FAIL_URL: failDownloadUrl || (failDownload ? feed : ''), FAIL_CURL_CODE: '28', FAIL_REMOVE: failRemove ? '1' : '0', STATUS_URL: existingShared ? shellPath(sharedFilter) : statusUrl, EXISTING_URL: existingShared ? shellPath(sharedFilter) : '' };
+  const bootstrapJs = path.join(root.dir, 'fake-adblock-bootstrap.js');
+  const bootstrapShim = path.join(root.dir, 'fake-adblock-bootstrap');
+  writeFileSync(bootstrapJs, [
+    '#!/usr/bin/env node',
+    'const fs = require("fs");',
+    'const [command, ...args] = process.argv.slice(2);',
+    'function readRaw() { return fs.readFileSync(0, "utf8"); }',
+    'function die(message, code = 1) { console.error(message); process.exit(code); }',
+    'function status() { let value; try { value = JSON.parse(readRaw()); } catch { die("invalid status"); } if (!Array.isArray(value.filters) || !Array.isArray(value.whitelist_filters)) die("missing arrays"); for (const item of [...value.filters, ...value.whitelist_filters]) if (typeof item.url !== "string" || typeof item.name !== "string" || typeof item.enabled !== "boolean") die("invalid entry"); return value; }',
+    'function entries(which) { const value = status(); return which === "allow" ? value.whitelist_filters : which === "block" ? value.filters : die("invalid list"); }',
+    'function find(url, which) { const item = entries(which).find(entry => entry.url === url); if (!item) die("not found", 3); return item; }',
+    'if (command === "filtering-check-status") { status(); process.exit(0); }',
+    'if (command === "filtering-enabled-count") { const value = status(); process.stdout.write(String([...value.filters, ...value.whitelist_filters].filter(entry => entry.enabled).length)); process.exit(0); }',
+    'if (command === "filtering-is-enabled") { const [url, which] = args; process.stdout.write(String(find(url, which).enabled)); process.exit(0); }',
+    'if (command === "filtering-set-body") { const [url, which, field, value] = args; const item = find(url, which); const data = { name: item.name, url: item.url, enabled: item.enabled }; if (field === "enabled") data.enabled = value === "true"; if (field === "name") data.name = value; if (field === "url") data.url = value; if (!["refresh", "enabled", "name", "url"].includes(field)) die("bad field"); process.stdout.write(JSON.stringify({ url: item.url, whitelist: which === "allow", data })); process.exit(0); }',
+    'if (command === "filtering-copy-body" || command === "filtering-add-body") { const [source, target, which] = args; const item = find(source, which); process.stdout.write(JSON.stringify(command === "filtering-copy-body" ? { url: target, whitelist: which === "allow", data: { name: item.name, url: target, enabled: item.enabled } } : { name: item.name, url: target, whitelist: which === "allow" })); process.exit(0); }',
+    'if (command === "filtering-new-body") { const [name, url, which] = args; process.stdout.write(JSON.stringify({ name, url, whitelist: which === "allow" })); process.exit(0); }',
+    'if (command === "filtering-remove-body") { const [url, which] = args; process.stdout.write(JSON.stringify({ url, whitelist: which === "allow" })); process.exit(0); }',
+    'die("unknown command");',
+  ].join('\n')); chmodSync(bootstrapJs, 0o755);
+  writeFileSync(bootstrapShim, '#!/bin/sh\nexec "' + shellPath(process.execPath) + '" "' + shellPath(bootstrapJs) + '" "$@"\n'); chmodSync(bootstrapShim, 0o755);
+  const env = { ...root.env('Magisk'), ABP_BOOTSTRAP: shellPath(bootstrapShim), CURL: shellPath(curl), CURL_CALLS: shellPath(curlCalls), CURL_OPTIONS: shellPath(curlOptions), SOURCE_LIST: shellPath(sourceList), API_CALLS: shellPath(calls), FAIL_URL: failDownloadUrl || (failDownload ? feed : ''), FAIL_CURL_CODE: '28', FAIL_REMOVE: failRemove ? '1' : '0', STATUS_URL: existingShared ? shellPath(sharedFilter) : statusUrl, STATUS_ENABLED: statusEnabled ? 'true' : 'false', STATUS_ALLOW_URL: statusAllowUrl, EXISTING_URL: existingShared ? shellPath(sharedFilter) : '' };
   const run = () => spawnSync(process.env.ABP_SUBSCRIPTION_TEST_SHELL || 'bash', [shellPath(script)], { encoding: 'utf8', timeout: 15000, env });
   return { run, state, agh, calls, curlCalls, curlOptions, oldCache, sharedFilter, env, script };
 }
@@ -103,8 +136,8 @@ test('a due daily update downloads the subscribed remote source and registers it
   assert.equal(readFileSync(f.curlCalls, 'utf8').trim(), feed, 'off never sends a second download');
 });
 
-test('subscriptions download through system curl and AdGuard Home receives only the validated local file', t => {
-  const f = fixture(t, { marker: false, oldApplied: feed + '\n' });
+test('legacy remote subscription migrates to a validated local cache', t => {
+  const f = fixture(t, { marker: false, oldApplied: feed + '\n', pendingAdd: '', statusUrl: feed });
   const result = f.run();
   assert.equal(result.status, 0, JSON.stringify(result));
   const calls = readFileSync(f.calls, 'utf8');
@@ -128,7 +161,7 @@ test('updated built-in mirror is used without changing custom sources or selecte
   const f = fixture(t, { sources, registry });
   const result = f.run(); assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.deepEqual(readFileSync(f.curlCalls, 'utf8').trim().split('\n'), [mirror, feed]);
-  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), original + '\n' + feed + '\n');
+  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), [original, feed].sort().join('\n') + '\n');
 });
 
 test('a rule update refreshes the online registry before downloading enabled built-in sources', t => {
@@ -141,7 +174,7 @@ test('a rule update refreshes the online registry before downloading enabled bui
   const remotePath = path.join(f.state, 'registry-remote'); writeFileSync(remotePath, remote); f.env.REGISTRY_REMOTE = shellPath(remotePath);
   const update = bindhosts.slice(bindhosts.indexOf('update_rules() {'), bindhosts.indexOf('\ndiagnose() {'));
   const wrapper = readFileSync(f.script, 'utf8').replace(/\nsync_sources$/, '\n' + [
-    'api() { printf "%s\\t%s\\t%s\\n" "$1" "$2" "$3" >> "$API_CALLS"; case "$1 $2" in "GET /status") printf "{}\\n";; "GET /filtering/status") printf "{\\"filters\\":[]}\\n";; "POST /filtering/refresh") printf "{\\"updated\\":0}\\n";; *) return 0;; esac; }',
+    'api() { printf "%s\\t%s\\t%s\\n" "$1" "$2" "$3" >> "$API_CALLS"; case "$1 $2" in "GET /status") printf "{}\\n";; "GET /filtering/status") printf "{\\"filters\\":[],\\"whitelist_filters\\":[]}\\n";; "POST /filtering/refresh") printf "{\\"updated\\":0}\\n";; *) return 0;; esac; }',
     'save_snapshot() { return 0; }', 'sync_personal_filter() { return 0; }', 'rules_count() { echo 1; }', 'update_failed() { return 1; }',
     update, 'update_rules',
   ].join('\n'));
@@ -164,11 +197,11 @@ test('GOODBYEADS downloads both lists into one removable filter and keeps other 
   const paired = adds.find(x => x.name === 'GOODBYEADS DNS').url;
   assert.match(readFileSync(nativePath(paired), 'utf8'), /\|\|ads\.example\^[\s\S]*@@\|\|allowed\.example\^/);
   assert.match(readFileSync(nativePath(paired), 'utf8'), /@@\|\|browser\.example\^\$domain=site\.example/, 'browser scope is never removed or widened');
-  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), goodbye + '\n' + feed + '\n');
+  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), [goodbye, feed].sort().join('\n') + '\n');
   writeFileSync(nativePath(f.env.SOURCE_LIST), 'mode\tbalanced\nsource\tcustom\tOther Feed\t' + feed + '\tenabled\tconfigured\tremovable\n');
   assert.equal(f.run().status, 0);
-  assert.equal(existsSync(nativePath(paired)), false, 'removing the source removes the block and companion exceptions together');
-  assert.match(readFileSync(f.calls, 'utf8'), /POST\t\/filtering\/remove_url/);
+  assert.equal(existsSync(nativePath(paired)), true, 'removing a source from the module directory keeps the AdGuard Home subscription and its cache');
+  assert.doesNotMatch(readFileSync(f.calls, 'utf8'), /POST\t\/filtering\/remove_url/, 'catalog edits never remove AdGuard Home subscriptions');
 });
 
 test('online GOODBYEADS mirrors keep the block and companion lists paired', t => {
@@ -180,7 +213,9 @@ test('online GOODBYEADS mirrors keep the block and companion lists paired', t =>
   const result = f.run(); assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.deepEqual(readFileSync(f.curlCalls, 'utf8').trim().split('\n'), [dnsMirror, allowMirror]);
   const options = readFileSync(f.curlOptions, 'utf8');
-  assert.equal((options.match(/--max-time\t200/g) || []).length, 2);
+  const timeouts = [...options.matchAll(/--max-time\t(\d+)/g)].map(match => Number(match[1]));
+  assert.equal(timeouts.length, 2);
+  assert.ok(timeouts.every(timeout => timeout >= 190 && timeout <= 200));
   const add = readFileSync(f.calls, 'utf8').split('\n').find(line => line.startsWith('POST\t/filtering/add_url\t'));
   assert.match(readFileSync(nativePath(JSON.parse(add.split('\t')[2]).url), 'utf8'), /\|\|ads\.example\^[\s\S]*@@\|\|allowed\.example\^/);
 });
@@ -239,12 +274,15 @@ test('a failed companion download preserves the complete previous filter and nev
   const beforeCalls = readFileSync(f.calls, 'utf8');
   const paired = JSON.parse(beforeCalls.split('\n').find(x => x.startsWith('POST\t/filtering/add_url\t')).split('\t')[2]).url;
   const beforeFilter = readFileSync(nativePath(paired), 'utf8');
+  f.env.STATUS_URL = paired;
   f.env.FAIL_URL = [goodbyeAllow, goodbyeAllow.replace('https://ghfast.top/', 'https://'),
     'https://gcore.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/allow.txt',
     'https://cdn.jsdelivr.net/gh/8680/GOODBYEADS@master/data/rules/allow.txt'].join('\n');
   const result = f.run();
   assert.equal(result.status, 2, result.stderr + result.stdout);
-  assert.equal(readFileSync(f.calls, 'utf8'), beforeCalls);
+  assert.deepEqual(readFileSync(f.calls, 'utf8').split('\n').filter(line => line.startsWith('POST\t')),
+    beforeCalls.split('\n').filter(line => line.startsWith('POST\t')),
+    'a failed refresh may read AGH state but must not mutate it');
   assert.equal(readFileSync(nativePath(paired), 'utf8'), beforeFilter);
   assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), goodbye + '\n');
 });
@@ -256,7 +294,7 @@ test('GOODBYEADS rejects a companion file containing block rules or no DNS excep
     const result = f.run();
     assert.equal(result.status, 2, result.stderr + result.stdout);
     assert.match(result.stderr, /放行文件格式异常/);
-    assert.equal(existsSync(f.calls), false);
+    assert.doesNotMatch(existsSync(f.calls) ? readFileSync(f.calls, 'utf8') : '', /POST\t\/filtering\/(add_url|set_url|remove_url)/);
   }
 });
 
@@ -266,7 +304,7 @@ test('a failed subscription download keeps the previous applied source record an
   const result = f.run();
   assert.equal(result.status, 2, result.stderr + result.stdout);
   assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), oldRecord);
-  assert.equal(existsSync(f.calls) ? readFileSync(f.calls, 'utf8') : '', '');
+  assert.doesNotMatch(existsSync(f.calls) ? readFileSync(f.calls, 'utf8') : '', /POST\t\/filtering\/(add_url|set_url|remove_url)/);
   assert.equal(readFileSync(f.oldCache, 'utf8'), '||preserved.example^\n');
 });
 
@@ -306,7 +344,7 @@ test('failed source download after failed shared sync skips rollback and keeps D
     update,
     'update_rules',
   ].join('\n'));
-  const result = spawnSync('bash', [shellPath(script)], { encoding: 'utf8', timeout: 10000, env: root.env('Magisk') });
+  const result = spawnSync(process.env.ABP_SUBSCRIPTION_TEST_SHELL || 'bash', [shellPath(script)], { encoding: 'utf8', timeout: 10000, env: root.env('Magisk') });
   assert.equal(result.status, 1, result.stderr + result.stdout);
   assert.match(result.stderr, /Connection reset by peer/);
   assert.match(result.stderr, /订阅配置未更改，DNS 核心保持运行/);
@@ -340,7 +378,7 @@ test('failed source download after successful shared sync also keeps DNS running
     update,
     'update_rules',
   ].join('\n'));
-  const result = spawnSync('bash', [shellPath(script)], { encoding: 'utf8', timeout: 10000, env: root.env('Magisk') });
+  const result = spawnSync(process.env.ABP_SUBSCRIPTION_TEST_SHELL || 'bash', [shellPath(script)], { encoding: 'utf8', timeout: 10000, env: root.env('Magisk') });
   assert.equal(result.status, 1, result.stderr + result.stdout);
   assert.match(result.stderr, /Resolving timed out/);
   assert.match(result.stderr, /订阅配置未更改，DNS 核心保持运行/);
@@ -405,7 +443,7 @@ test('official AWAvenue AdGuard full-rule mirror uses Wang Fugui then retries CX
   assert.match(result.stdout,/正在尝试 HTTPS 镜像：script\.cx\.ms/);
 });
 
-test('legacy migration updates an already registered shared filter instead of adding it twice', t => {
+test('shared rules stay under the module updater and are excluded from ordinary subscriptions', t => {
   const sources = 'mode\tbalanced\nsource\tcustom\tExample Feed\t' + feed + '\tenabled\tconfigured\tremovable\nsource\tshared\tShared Rules\tshared\tenabled\tbundled\tremovable\n';
   const f = fixture(t, { sources, marker: false, oldApplied: '', existingShared: true });
   const result = f.run();
@@ -414,23 +452,30 @@ test('legacy migration updates an already registered shared filter instead of ad
   const sharedAdds = calls.filter(([method, endpoint, body]) => method === 'POST' && endpoint === '/filtering/add_url' && JSON.parse(body).url === shellPath(f.sharedFilter));
   assert.equal(sharedAdds.length, 0);
   const sharedUpdate = calls.find(([method, endpoint, body]) => method === 'POST' && endpoint === '/filtering/set_url' && JSON.parse(body).url === shellPath(f.sharedFilter));
-  assert.ok(sharedUpdate, 'the existing shared filter must still be reconciled');
-  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), feed + '\nshared\n');
+  assert.equal(sharedUpdate, undefined, 'shared filtering remains managed by its dedicated module update path');
+  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), feed + '\n');
 });
 
-test('deselecting a previously applied URL removes its local filter and clears only module-owned state', t => {
+test('removing a source from the module directory preserves its AdGuard Home subscription mapping', t => {
   const f = fixture(t, { sources: 'mode\tbalanced\n', oldApplied: feed + '\n' });
+  const localFilter = path.join(f.agh, 'bin', 'userfilters', `adblock-pro-source-${createHash('sha256').update(feed).digest('hex')}.txt`);
+  f.env.STATUS_URL = shellPath(localFilter);
   const result = f.run();
   assert.equal(result.status, 0, result.stderr + result.stdout);
   const calls = readFileSync(f.calls, 'utf8');
-  assert.match(calls, /POST\t\/filtering\/remove_url\t.*adblock-pro-source-/);
-  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), '');
+  assert.doesNotMatch(calls, /POST\t\/filtering\/remove_url/);
+  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), feed + '\n');
 });
 
-test('removal verification matches exact filter URLs instead of a shared prefix', t => {
-  const f = fixture(t, { marker: false, oldApplied: feed + '\n', failRemove: true, statusUrl: feed + '-other' });
+test('explicit removal verifies the exact URL and leaves a similarly prefixed subscription intact', t => {
+  const f = fixture(t, { sources: 'mode\tbalanced\n', pendingAdd: '', statusUrl: feed + '-other' });
+  const script = readFileSync(f.script, 'utf8').replace(/\nsync_sources$/, `\npost_remove_source '${feed}' block`);
+  writeFileSync(f.script, script);
   const result = f.run();
   assert.equal(result.status, 0, result.stderr + result.stdout);
-  assert.match(readFileSync(f.calls, 'utf8'), /GET\t\/filtering\/status/);
-  assert.equal(readFileSync(path.join(f.state, 'sources-applied.txt'), 'utf8'), feed + '\n');
+  const calls = readFileSync(f.calls, 'utf8');
+  const removeCall = calls.split('\n').find(line => line.startsWith('POST\t/filtering/remove_url\t'));
+  assert.ok(removeCall);
+  assert.deepEqual(JSON.parse(removeCall.split('\t').slice(2).join('\t')), { url: feed, whitelist: false });
+  assert.match(calls, /GET\t\/filtering\/status/);
 });

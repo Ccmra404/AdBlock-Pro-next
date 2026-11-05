@@ -19,6 +19,7 @@ PROFILE_DIR=$DIR/profiles
 SOURCES_V2=$DIR/sources-v2.txt
 SOURCE_NAMES=$DIR/source-names.tsv
 REMOVED_SOURCES=$DIR/removed-sources.txt
+PENDING_SOURCE_ADDS=$DIR/sources-pending-add.txt
 SOURCE_MIGRATION=$DIR/source-url-migration-v1
 SHARED_SOURCE=shared
 umask 077
@@ -176,6 +177,7 @@ migrate_source_state() {
 }
 init_sources() {
   migrate_source_state || return 1
+  [ -f "$PENDING_SOURCE_ADDS" ] || : > "$PENDING_SOURCE_ADDS"
   if [ -f "$SOURCES_V2" ]; then
     [ -f "$SOURCE_MIGRATION" ] || : > "$SOURCE_MIGRATION"
     return $?
@@ -298,10 +300,12 @@ case "$1" in
     init_sources || exit 1
     if [ "$3" = off ]; then
       remove_line "$SOURCES_V2" "$2" || exit 1
+      remove_line "$PENDING_SOURCE_ADDS" "$2" || exit 1
     else
       if [ "$2" != "$SHARED_SOURCE" ] && ! is_builtin "$2"; then append_line "$DIR/custom-sources.txt" "$2" || exit 1; fi
       append_line "$SOURCES_V2" "$2" || exit 1
       remove_line "$REMOVED_SOURCES" "$2" || exit 1
+      append_line "$PENDING_SOURCE_ADDS" "$2" || exit 1
     fi
     echo "[+] $(source_label "$2") source state saved; run a rule update to apply it."
     ;;
@@ -319,12 +323,14 @@ case "$1" in
     save_source_names "$2" "$name" || exit 1
     append_line "$SOURCES_V2" "$2" || exit 1
     remove_line "$REMOVED_SOURCES" "$2" || exit 1
+    append_line "$PENDING_SOURCE_ADDS" "$2" || exit 1
     echo "[+] $(source_label "$2") imported; run a rule update to apply it."
     ;;
   remove-source)
     valid_source_ref "$2" || { echo '[!] Invalid rule source.' >&2; exit 1; }
     init_sources || exit 1
     remove_line "$SOURCES_V2" "$2" || exit 1
+    remove_line "$PENDING_SOURCE_ADDS" "$2" || exit 1
     if [ "$2" != "$SHARED_SOURCE" ] && ! is_builtin "$2"; then
       remove_line "$DIR/custom-sources.txt" "$2" || exit 1
       if [ -f "$SOURCE_NAMES" ]; then "$BB" awk -F '\t' -v url="$2" '$1 != url { print }' "$SOURCE_NAMES" > "$SOURCE_NAMES.tmp.$$" && chmod 600 "$SOURCE_NAMES.tmp.$$" && mv "$SOURCE_NAMES.tmp.$$" "$SOURCE_NAMES" || exit 1; fi
@@ -372,6 +378,10 @@ case "$1" in
       printf '%s\t%s\n' "$3" "$old_name" >> "$names_tmp" || { rm -f "$custom_tmp" "$sources_tmp" "$names_tmp"; exit 1; }
     fi
     chmod 600 "$custom_tmp" "$sources_tmp" "$names_tmp" && mv "$custom_tmp" "$DIR/custom-sources.txt" && mv "$sources_tmp" "$SOURCES_V2" && mv "$names_tmp" "$SOURCE_NAMES" || { rm -f "$custom_tmp" "$sources_tmp" "$names_tmp"; echo '[!] Could not save the updated source.' >&2; exit 1; }
+    if [ "$was_selected" = 1 ]; then
+      remove_line "$PENDING_SOURCE_ADDS" "$2" || exit 1
+      append_line "$PENDING_SOURCE_ADDS" "$3" || exit 1
+    fi
     echo "[+] Source URL updated to $(source_label "$3"); run a rule update to apply it."
     ;;
   source-name)

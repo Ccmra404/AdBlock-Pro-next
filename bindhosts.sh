@@ -4,6 +4,7 @@ AGH=/data/adb/adblockpro
 STATE=/data/adb/bindhosts_personal
 API=http://127.0.0.1:3000/control
 AUTH_FILE=$AGH/admin.auth
+BOOTSTRAP=${ABP_BOOTSTRAP:-$AGH/bin/adblock-bootstrap}
 HISTORY=$STATE/dns-history
 OBS_DIR=$STATE/observations
 . "$MODDIR/scripts/compat.sh" || exit 1
@@ -385,6 +386,17 @@ status() {
   fi
   module_version=$($BB grep '^version=' "$MODDIR/module.prop" | $BB cut -d= -f2-)
   [ -n "$module_version" ] || module_version=unknown
+  module_source_urls=''
+  module_source_map=''
+  if [ -r "$STATE/sources-applied.txt" ]; then
+    module_source_urls=$($BB awk 'NF { printf "%s%s", separator, $0; separator="|" }' "$STATE/sources-applied.txt")
+    while IFS= read -r source_url; do
+      [ -n "$source_url" ] || continue
+      mapped_filter=$(source_file "$source_url")
+      [ -z "$module_source_map" ] || module_source_map="$module_source_map|"
+      module_source_map="$module_source_map$source_url$(printf '\t')$mapped_filter"
+    done < "$STATE/sources-applied.txt"
+  fi
   count=$(rules_count "$filter_json")
   if [ "$count" = 0 ] && [ -d "$AGH/bin/data/filters" ]; then
     count=$(for file in "$AGH/bin/data/filters"/*.txt; do [ -f "$file" ] || continue; "$BB" awk '!/^[[:space:]]*(!|#|$)/ { n++ } END { print n+0 }' "$file"; done | "$BB" awk '{ n += $1 } END { print n+0 }')
@@ -399,6 +411,8 @@ status() {
   "$BB" sh "$AGH/scripts/memory.sh" quick "$pid" | "$BB" sed 's/^mem_rss/dns_rss/;s/^mem_pss/dns_pss/;s/^mem_/dns_mem_/'
   printf 'module=version=%s / %s\nupdate_due=no\nauto_update=%s\nlast_update=%s\n' "$module_version" "$version" "$auto" "$last_update"
   printf 'history=%s\n' "$(history_text)"
+  printf 'module_source_urls=%s\n' "$module_source_urls"
+  printf 'module_source_map=%s\n' "$module_source_map"
   printf 'dns_filter_json=%s\n' "$(printf '%s' "$filter_json" | $BB tr '\r\n' '  ')"
   printf 'dns_stats_json=%s\n' "$(printf '%s' "$stats_json" | $BB tr '\r\n' '  ')"
   printf 'dns_listener=%s\ndns_listener_udp=%s\ndns_listener_tcp=%s\ndns_redirect=%s\n' "$listening" "$listening_udp" "$listening_tcp" "$redirected"
@@ -414,7 +428,7 @@ save_snapshot() {
   cp "$AGH/bin/AdGuardHome.yaml" "$stage/bin/AdGuardHome.yaml" || { rm -rf "$stage"; return 1; }
   [ ! -d "$AGH/bin/data/filters" ] || cp -R "$AGH/bin/data/filters" "$stage/bin/data/filters" || { rm -rf "$stage"; return 1; }
   [ ! -d "$AGH/bin/userfilters" ] || cp -R "$AGH/bin/userfilters" "$stage/bin/userfilters" || { rm -rf "$stage"; return 1; }
-  for file in sources-v2.txt source-names.tsv removed-sources.txt sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
+  for file in sources-v2.txt source-names.tsv removed-sources.txt sources-pending-add.txt sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
     [ ! -f "$STATE/$file" ] || cp "$STATE/$file" "$stage/state/$file" || { rm -rf "$stage"; return 1; }
   done
   [ ! -f "$STATE/profiles-initialized" ] || cp "$STATE/profiles-initialized" "$stage/state/profiles-initialized" || { rm -rf "$stage"; return 1; }
@@ -440,7 +454,7 @@ restore_snapshot() {
   rm -rf "$AGH/bin/data/filters" "$AGH/bin/userfilters"
   [ ! -d "$restore/bin/data/filters" ] || cp -R "$restore/bin/data/filters" "$AGH/bin/data/filters" || { rm -rf "$restore"; return 1; }
   [ ! -d "$restore/bin/userfilters" ] || cp -R "$restore/bin/userfilters" "$AGH/bin/userfilters" || { rm -rf "$restore"; return 1; }
-  for file in sources-v2.txt source-names.tsv removed-sources.txt sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
+  for file in sources-v2.txt source-names.tsv removed-sources.txt sources-pending-add.txt sources-local-v2 sources.txt custom-sources.txt disabled-sources.txt sources-applied.txt user-filter-applied shared-app-domains.txt blocking-mode blacklist.txt whitelist.txt auto-update last-update; do
     rm -f "$STATE/$file"
     [ ! -f "$restore/state/$file" ] || cp "$restore/state/$file" "$STATE/$file" || { rm -rf "$restore"; return 1; }
   done
@@ -536,15 +550,129 @@ source_file() {
   key=$(source_cache_key "$1")
   printf '%s/adblock-pro-source-%s.txt' "$AGH/bin/userfilters" "$key"
 }
+remove_line() {
+  remove_line_file=$1; remove_line_value=$2
+  [ -f "$remove_line_file" ] || return 0
+  remove_line_tmp="$remove_line_file.tmp.$$"
+  "$BB" grep -Fvx "$remove_line_value" "$remove_line_file" > "$remove_line_tmp"
+  remove_line_rc=$?
+  [ "$remove_line_rc" -le 1 ] || { rm -f "$remove_line_tmp"; return 1; }
+  chmod 600 "$remove_line_tmp" && mv "$remove_line_tmp" "$remove_line_file"
+}
 post_remove_source() {
-  url=$1
-  escaped=$(printf '%s' "$url" | "$BB" sed 's/\\/\\\\/g; s/"/\\"/g')
-  body=$(printf '{"url":"%s","whitelist":false}' "$escaped")
-  result=$(api POST /filtering/remove_url "$body" 8 2>&1) && return 0
-  case "$result" in *"not found"*|*"does not exist"*) return 0 ;; esac
-  status=$(api GET /filtering/status 8 2>/dev/null) || { printf '%s\n' "$result" >&2; return 1; }
-  if printf '%s' "$status" | "$BB" grep -Eo '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | "$BB" cut -d '"' -f4 | "$BB" grep -Fxq "$url"; then printf '%s\n' "$result" >&2; return 1; fi
-  return 0
+  local remove_url=$1 remove_list=${2:-block} status_file="$STATE/.filter-status-remove.$$" body result post_rc check_rc
+  body=$("$BOOTSTRAP" filtering-remove-body "$remove_url" "$remove_list") || return 1
+  result=$(api POST /filtering/remove_url "$body" 8 2>&1)
+  post_rc=$?
+  api GET /filtering/status 8 > "$status_file" || { printf '%s\n' "$result" >&2; rm -f "$status_file"; return 1; }
+  "$BOOTSTRAP" filtering-check-status < "$status_file" >/dev/null || { rm -f "$status_file"; return 1; }
+  filtering_set_body "$status_file" "$remove_url" "$remove_list" refresh >/dev/null 2>&1
+  check_rc=$?
+  rm -f "$status_file"
+  case "$check_rc" in
+    3) return 0 ;;
+    0) [ "$post_rc" -ne 0 ] && printf '%s\n' "$result" >&2; return 1 ;;
+    *) printf '[!] Unable to verify whether AdGuard Home removed the subscription.\n' >&2; return 1 ;;
+  esac
+}
+filtering_set_body() {
+  local filtering_status_file=$1 filtering_target_url=$2 filtering_target_list=$3 filtering_field=$4 filtering_value=${5-}
+  if [ "$filtering_field" = refresh ]; then
+    "$BOOTSTRAP" filtering-set-body "$filtering_target_url" "$filtering_target_list" refresh < "$filtering_status_file"
+  else
+    "$BOOTSTRAP" filtering-set-body "$filtering_target_url" "$filtering_target_list" "$filtering_field" "$filtering_value" < "$filtering_status_file"
+  fi
+}
+filtering_is_enabled() {
+  local filtering_status_file=$1 filtering_target_url=$2 filtering_target_list=$3
+  "$BOOTSTRAP" filtering-is-enabled "$filtering_target_url" "$filtering_target_list" < "$filtering_status_file"
+}
+post_filtering_set() {
+  local status_file=$1 url=$2 list=$3 field=$4 value=${5-} body
+  body=$(filtering_set_body "$status_file" "$url" "$list" "$field" "$value") || return $?
+  api POST /filtering/set_url "$body" 20 >/dev/null
+}
+filtering_copy_body() {
+  local status_file=$1 source_url=$2 target_url=$3 list=$4
+  "$BOOTSTRAP" filtering-copy-body "$source_url" "$target_url" "$list" < "$status_file"
+}
+post_filtering_copy_set() {
+  local status_file=$1 source_url=$2 target_url=$3 list=$4 body
+  body=$(filtering_copy_body "$status_file" "$source_url" "$target_url" "$list") || return $?
+  api POST /filtering/set_url "$body" 20 >/dev/null
+}
+post_filtering_copy_add() {
+  local status_file=$1 source_url=$2 target_url=$3 list=$4 body result add_rc
+  body=$("$BOOTSTRAP" filtering-add-body "$source_url" "$target_url" "$list" < "$status_file") || return $?
+  result=$(api POST /filtering/add_url "$body" 20 2>&1)
+  add_rc=$?
+  if [ "$add_rc" -ne 0 ]; then
+    case "$result" in *"already added"*|*"already exists"*) ;; *) printf '%s\n' "$result" >&2; return 1 ;; esac
+  fi
+}
+post_filtering_add() {
+  local name=$1 url=$2 list=$3 body result
+  body=$("$BOOTSTRAP" filtering-new-body "$name" "$url" "$list") || return 1
+  result=$(api POST /filtering/add_url "$body" 20 2>&1) || {
+    case "$result" in *"already added"*|*"already exists"*) return 0 ;; *) printf '%s\n' "$result" >&2; return 1 ;; esac
+  }
+}
+valid_subscription_action_url() {
+  local suffix
+  case "$1" in
+    https://*|http://*)
+      [ ${#1} -le 2048 ] || return 1
+      case "$1" in *[[:space:]]*|*'|'*|*'"'*|*"'"*|*'`'*|*'$('* ) return 1 ;; esac
+      return 0
+      ;;
+    "$AGH/bin/userfilters/adblock-pro-source-"*.txt)
+      suffix=${1#"$AGH/bin/userfilters/adblock-pro-source-"}
+      case "$suffix" in *.txt) suffix=${suffix%.txt} ;; *) return 1 ;; esac
+      case "$suffix" in ''|*[!a-fA-F0-9-]*) return 1 ;; esac
+      return 0
+      ;;
+    *) return 1 ;;
+  esac
+}
+valid_subscription_name() {
+  local subscription_name_length subscription_name_lines subscription_name_clean_length
+  subscription_name_length=$(printf '%s' "$1" | wc -c | tr -d '[:space:]')
+  [ "$subscription_name_length" -ge 1 ] && [ "$subscription_name_length" -le 192 ] || return 1
+  subscription_name_lines=$(printf '%s' "$1" | wc -l | tr -d '[:space:]')
+  [ "$subscription_name_lines" -eq 0 ] || return 1
+  subscription_name_clean_length=$(printf '%s' "$1" | "$BB" tr -d '[:cntrl:]' | wc -c | tr -d '[:space:]')
+  [ "$subscription_name_clean_length" = "$subscription_name_length" ]
+}
+subscription_set_action() {
+  local url=$1 list=$2 field=$3 value=$4 status_file rc
+  valid_subscription_action_url "$url" || { echo '[!] Invalid subscription URL.' >&2; return 1; }
+  case "$list" in block|allow) ;; *) echo '[!] Invalid subscription type.' >&2; return 1 ;; esac
+  case "$field" in
+    enabled) case "$value" in true|false) ;; *) echo '[!] Invalid enabled state.' >&2; return 1 ;; esac ;;
+    name) valid_subscription_name "$value" || { echo '[!] Invalid subscription name.' >&2; return 1; } ;;
+    *) echo '[!] Unsupported subscription change.' >&2; return 1 ;;
+  esac
+  status_file="$STATE/.filter-status-set.$$"
+  api GET /filtering/status 8 > "$status_file" || { rm -f "$status_file"; echo '[!] AdGuard Home API is unavailable.' >&2; return 1; }
+  "$BOOTSTRAP" filtering-check-status < "$status_file" >/dev/null || { rm -f "$status_file"; echo '[!] AdGuard Home returned an invalid filter list.' >&2; return 1; }
+  filtering_set_body "$status_file" "$url" "$list" "$field" "$value" > "$status_file.body" 2>/dev/null
+  rc=$?
+  if [ "$rc" -ne 0 ]; then rm -f "$status_file" "$status_file.body"; echo '[!] Subscription is no longer present in AdGuard Home; refresh the list.' >&2; return 1; fi
+  api POST /filtering/set_url "$(cat "$status_file.body")" 20 >/dev/null || { rm -f "$status_file" "$status_file.body"; return 1; }
+  api GET /filtering/status 8 > "$status_file" || { rm -f "$status_file" "$status_file.body"; return 1; }
+  "$BOOTSTRAP" filtering-check-status < "$status_file" >/dev/null || { rm -f "$status_file" "$status_file.body"; return 1; }
+  filtering_set_body "$status_file" "$url" "$list" refresh >/dev/null 2>&1
+  rc=$?
+  rm -f "$status_file" "$status_file.body"
+  [ "$rc" -eq 0 ] || { echo '[!] Subscription changed during the operation; refresh the list.' >&2; return 1; }
+  echo '[+] AdGuard Home subscription updated.'
+}
+subscription_remove_action() {
+  local url=$1 list=$2
+  valid_subscription_action_url "$url" || { echo '[!] Invalid subscription URL.' >&2; return 1; }
+  case "$list" in block|allow) ;; *) echo '[!] Invalid subscription type.' >&2; return 1 ;; esac
+  post_remove_source "$url" "$list" || return 1
+  echo '[+] AdGuard Home subscription removed; updates will not restore it automatically.'
 }
 download_candidate() {
   candidate_url=$1; candidate_output=$2
@@ -650,72 +778,151 @@ sync_sources() {
   desired="$STATE/.desired-sources.$$"
   raw="$STATE/.sources-raw.$$"
   work="$STATE/.source-downloads.$$"
-  live_urls="$work/.live-urls"
   entries="$STATE/.source-entries.$$"
   applied="$STATE/sources-applied.txt"
+  applied_next="$STATE/sources-applied.next.$$"
+  pending="$STATE/sources-pending-add.txt"
+  pending_next="$STATE/sources-pending-add.next.$$"
+  status_file="$work/filter-status.json"
+  fresh_status="$work/filter-status-current.json"
   marker="$STATE/sources-local-v2"
   "$BB" sh "$config" list-sources > "$raw" || { rm -f "$raw" "$desired"; return 1; }
-  "$BB" awk -F '\t' '$1=="source" && $5=="enabled" { print $4 "\t" $3 }' "$raw" > "$desired" || { rm -f "$raw" "$desired"; return 1; }
+  "$BB" awk -F '\t' '$1=="source" && $5=="enabled" && $4!="shared" { print $4 "\t" $3 }' "$raw" > "$desired" || { rm -f "$raw" "$desired"; return 1; }
   rm -f "$raw"
   mkdir -p "$work" "$AGH/bin/userfilters" || { rm -f "$desired"; return 1; }
+  api GET /filtering/status 8 > "$status_file" || { rm -rf "$work"; rm -f "$desired"; return 1; }
+  "$BOOTSTRAP" filtering-check-status < "$status_file" >/dev/null || {
+    echo '[!] AdGuard Home returned an invalid filter list; subscription state was not changed.' >&2
+    rm -rf "$work"; rm -f "$desired"; return 1
+  }
   : > "$entries"
+  if [ -f "$applied" ]; then cp "$applied" "$applied_next" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+  else : > "$applied_next"; fi
+  if [ -f "$pending" ]; then cp "$pending" "$pending_next" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next"; return 1; }
+  else : > "$pending_next"; fi
   while IFS="$(printf '\t')" read -r url name; do
     [ -n "$url" ] || continue
     filter=$(source_file "$url")
-    temp=''
-    if [ "$url" != shared ]; then
-      key=$(source_cache_key "$url")
-      temp="$work/$key.txt"
-      download_rule_source "$url" "$temp" "$name" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 2; }
-    elif [ ! -s "$filter" ]; then
-      echo '[!] 随包或本地共享规则文件缺失；现有规则保留。' >&2
-      rm -rf "$work"; rm -f "$desired" "$entries"; return 1
-    fi
-    printf '%s\t%s\t%s\t%s\n' "$url" "$filter" "$name" "$temp" >> "$entries" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
-  done < "$desired"
-  live_status=$(api GET /filtering/status 8) || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
-  printf '%s' "$live_status" | "$BB" grep -q '"filters"[[:space:]]*:' || { rm -rf "$work"; rm -f "$desired" "$entries"; echo '[!] AdGuard Home returned an invalid filter list.' >&2; return 1; }
-  printf '%s' "$live_status" | "$BB" grep -Eo '"url"[[:space:]]*:[[:space:]]*"[^"]*"' | "$BB" cut -d '"' -f4 > "$live_urls" || { rm -rf "$work"; rm -f "$desired" "$entries" "$live_urls"; return 1; }
-  [ -f "$applied" ] || : > "$applied"
-  if [ ! -f "$marker" ]; then
-    # Older releases registered remote URLs in AdGuard Home itself. Remove only
-    # those module-owned subscriptions before replacing them with local files.
-    while IFS= read -r url; do
-      [ -n "$url" ] || continue
-      post_remove_source "$url" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
-    done < "$applied"
-    if ! "$BB" awk -F '\t' '$1=="shared" { found=1 } END { exit !found }' "$desired"; then post_remove_source "$SHARED_FILTER" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }; fi
-  else
-    while IFS= read -r url; do
-      [ -n "$url" ] || continue
-      if ! "$BB" awk -F '\t' -v url="$url" '$1==url { found=1 } END { exit !found }' "$desired"; then
-        filter=$(source_file "$url")
-        post_remove_source "$filter" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
-        [ "$filter" = "$SHARED_FILTER" ] || rm -f "$filter"
+    mode=''
+    source_url=''
+    filter_enabled=$(filtering_is_enabled "$status_file" "$filter" block 2>/dev/null)
+    rc=$?
+    case "$rc" in
+      0) mode=local ;;
+      3)
+        filtering_is_enabled "$status_file" "$url" block >/dev/null 2>&1
+        direct_rc=$?
+        if [ "$direct_rc" -eq 0 ]; then
+          if [ -f "$marker" ] || ! "$BB" grep -Fxq "$url" "$applied" 2>/dev/null; then
+            # AdGuard Home owns direct subscriptions. Never convert or rewrite them.
+            printf '%s\n' "$url" >> "$applied_next" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+            remove_line "$pending_next" "$url" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+            continue
+          fi
+          source_url=$url
+          mode=migrate
+        elif [ "$direct_rc" -eq 3 ]; then
+          filtering_is_enabled "$status_file" "$url" allow >/dev/null 2>&1
+          allow_rc=$?
+          if [ "$allow_rc" -eq 0 ]; then
+            remove_line "$pending_next" "$url" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+            continue
+          elif [ "$allow_rc" -ne 3 ]; then
+            rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1
+          fi
+          if "$BB" grep -Fxq "$url" "$pending_next" 2>/dev/null; then mode=create
+          else
+            echo "[提醒] $name 已从 AdGuard Home 移除；更新不会重新添加。"
+            continue
+          fi
+        else
+          rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1
+        fi
+        ;;
+      *) rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1 ;;
+    esac
+    if [ "$mode" = local ]; then
+      case "$filter_enabled" in true|false) ;; *) rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1 ;; esac
+      if [ "$filter_enabled" != true ]; then
+        printf '%s\n' "$url" >> "$applied_next" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+        remove_line "$pending_next" "$url" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+        continue
       fi
-    done < "$applied"
-  fi
-  while IFS="$(printf '\t')" read -r url filter name temp; do
-    [ -n "$url" ] || continue
-    if [ -n "$temp" ]; then chmod 600 "$temp" && mv -f "$temp" "$filter" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }; fi
-    escaped=$(printf '%s' "$filter" | "$BB" sed 's/\\/\\\\/g; s/"/\\"/g')
-    safe_name=$(printf '%s' "$name" | "$BB" sed 's/\\/\\\\/g; s/"/\\"/g')
-    if ! "$BB" grep -Fxq "$filter" "$live_urls"; then
-      echo "[进度] 注册本地规则：$name"
-      body=$(printf '{"name":"%s","url":"%s","whitelist":false}' "$safe_name" "$escaped")
-      result=$(api POST /filtering/add_url "$body" 20 2>&1) || {
-        case "$result" in *"already added"*|*"already exists"*) ;; *) printf '%s\n' "$result" >&2; rm -rf "$work"; rm -f "$desired" "$entries"; return 1 ;; esac
-      }
-      printf '%s\n' "$filter" >> "$live_urls" || { rm -rf "$work"; rm -f "$desired" "$entries" "$live_urls"; return 1; }
-    else
-      echo "[进度] 更新本地规则：$name"
+    elif [ "$mode" = migrate ]; then
+      filter_enabled=$(filtering_is_enabled "$status_file" "$source_url" block 2>/dev/null)
+      rc=$?
+      if [ "$rc" -eq 3 ]; then continue; fi
+      [ "$rc" -eq 0 ] || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+      if [ "$filter_enabled" != true ]; then
+        # Keep an explicitly disabled legacy remote subscription as-is.
+        printf '%s\n' "$url" >> "$applied_next" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+        remove_line "$pending_next" "$url" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+        continue
+      fi
     fi
-    body=$(printf '{"url":"%s","whitelist":false,"data":{"name":"%s","url":"%s","enabled":true}}' "$escaped" "$safe_name" "$escaped")
-    api POST /filtering/set_url "$body" 20 >/dev/null || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+    key=$(source_cache_key "$url")
+    temp="$work/$key.txt"
+    download_rule_source "$url" "$temp" "$name" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 2; }
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$url" "$filter" "$name" "$temp" "$mode" "$source_url" >> "$entries" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+  done < "$desired"
+  while IFS="$(printf '\t')" read -r url filter name temp mode source_url; do
+    [ -n "$url" ] || continue
+    api GET /filtering/status 8 > "$fresh_status" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+    "$BOOTSTRAP" filtering-check-status < "$fresh_status" >/dev/null || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+    if [ "$mode" = migrate ]; then
+      filter_enabled=$(filtering_is_enabled "$fresh_status" "$source_url" block 2>/dev/null)
+      rc=$?
+      if [ "$rc" -eq 3 ]; then continue; fi
+      [ "$rc" -eq 0 ] || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+      if [ "$filter_enabled" != true ]; then continue; fi
+      chmod 600 "$temp" && mv -f "$temp" "$filter" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+      echo "[进度] 迁移规则来源：$name"
+      post_filtering_copy_add "$fresh_status" "$source_url" "$filter" block || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+      post_filtering_copy_set "$fresh_status" "$source_url" "$filter" block || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+      post_remove_source "$source_url" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+    elif [ "$mode" = create ]; then
+      filtering_is_enabled "$fresh_status" "$filter" block >/dev/null 2>&1
+      rc=$?
+      if [ "$rc" -eq 3 ]; then
+        # A removal made in AdGuard Home while the source was downloading wins.
+        filtering_is_enabled "$fresh_status" "$url" block >/dev/null 2>&1
+        direct_rc=$?
+        if [ "$direct_rc" -eq 0 ]; then remove_line "$pending_next" "$url" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }; continue; fi
+        [ "$direct_rc" -eq 3 ] || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+        filtering_is_enabled "$fresh_status" "$url" allow >/dev/null 2>&1
+        allow_rc=$?
+        if [ "$allow_rc" -eq 0 ]; then remove_line "$pending_next" "$url" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }; continue; fi
+        [ "$allow_rc" -eq 3 ] || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+        chmod 600 "$temp" && mv -f "$temp" "$filter" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+        echo "[进度] 注册本地规则：$name"
+        post_filtering_add "$name" "$filter" block || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+      elif [ "$rc" -eq 0 ]; then
+        printf '%s\n' "$url" >> "$applied_next" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+        remove_line "$pending_next" "$url" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+        continue
+      else
+        rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1
+      fi
+    else
+      filter_enabled=$(filtering_is_enabled "$fresh_status" "$filter" block 2>/dev/null)
+      rc=$?
+      if [ "$rc" -eq 3 ]; then continue; fi
+      [ "$rc" -eq 0 ] || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+      if [ "$filter_enabled" != true ]; then
+        printf '%s\n' "$url" >> "$applied_next" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+        continue
+      fi
+      chmod 600 "$temp" && mv -f "$temp" "$filter" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+      echo "[进度] 更新本地规则：$name"
+      post_filtering_set "$fresh_status" "$filter" block refresh || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+    fi
+    printf '%s\n' "$url" >> "$applied_next" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
+    remove_line "$pending_next" "$url" || { rm -rf "$work"; rm -f "$desired" "$entries" "$applied_next" "$pending_next"; return 1; }
   done < "$entries"
-  "$BB" awk -F '\t' 'NF { print $1 }' "$desired" > "$applied.tmp" && chmod 600 "$applied.tmp" && mv "$applied.tmp" "$applied" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
+  "$BB" sort -u "$applied_next" -o "$applied_next" && chmod 600 "$applied_next" && mv "$applied_next" "$applied" || { rm -rf "$work"; rm -f "$desired" "$entries" "$pending_next"; return 1; }
+  chmod 600 "$pending_next" && mv "$pending_next" "$pending" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
   printf 'local-v2\n' > "$marker.tmp" && chmod 600 "$marker.tmp" && mv "$marker.tmp" "$marker" || { rm -rf "$work"; rm -f "$desired" "$entries"; return 1; }
-  rm -rf "$work"; rm -f "$desired" "$entries" "$live_urls"
+  rm -rf "$work"; rm -f "$desired" "$entries"
 }
 write_personal_filter() {
   filter_dir="$AGH/bin/userfilters"
@@ -897,13 +1104,10 @@ update_rules() {
   api POST /filtering/refresh '{"whitelist":false}' 180 || { update_failed '[!] 规则下载或校验失败。'; return 1; }
   filter_json=$(api GET /filtering/status) || { update_failed '[!] 无法读取更新后的规则状态。'; return 1; }
   count=$(rules_count "$filter_json")
-  if [ "$count" -eq 0 ]; then
-    # Removing every source and personal rule is a valid user choice.
-    if printf '%s\n' "$selected_sources" | "$BB" awk -F '\t' '$1=="source" && $5=="enabled" { found=1 } END { exit !found }' ||
-       [ "${USER_RULE_COUNT:-0}" -gt 0 ] ||
-       ! printf '%s' "$filter_json" | "$BB" tr '\r\n' '  ' | "$BB" grep -Eq '"filters"[[:space:]]*:[[:space:]]*(\[[[:space:]]*\]|null)[[:space:]]*[,}]'; then
-      update_failed '[!] 更新后没有可用过滤规则。'; return 1
-    fi
+  enabled_filter_count=$(printf '%s' "$filter_json" | "$BOOTSTRAP" filtering-enabled-count) || { update_failed '[!] 无法确认 AdGuard Home 当前启用的订阅。'; return 1; }
+  case "$enabled_filter_count" in ''|*[!0-9]*) update_failed '[!] AdGuard Home 返回了无效的订阅状态。'; return 1 ;; esac
+  if [ "$count" -eq 0 ] && { [ "$enabled_filter_count" -gt 0 ] || [ "${USER_RULE_COUNT:-0}" -gt 0 ]; }; then
+    update_failed '[!] 更新后没有可用过滤规则。'; return 1
   fi
   date '+%s' > "$STATE/last-update.tmp" && mv "$STATE/last-update.tmp" "$STATE/last-update" || { update_failed '[!] 无法记录规则更新时间。'; return 1; }
   echo "[成功] 规则更新完成，规则数：$count"
@@ -926,7 +1130,10 @@ auto_update_rules() {
   [ "$attempt" -le "$now" ] || attempt=0
   [ $((now - last)) -ge 86400 ] && [ $((now - attempt)) -ge 3600 ] || return 0
   selected=$("$BB" sh "$MODDIR/webui-config.sh" list-sources) || return 1
-  printf '%s\n' "$selected" | "$BB" awk -F '\t' '$1=="source" && $5=="enabled" { found=1 } END { exit !found }' || return 0
+  filter_json=$(api GET /filtering/status 4) || return 1
+  enabled_filter_count=$(printf '%s' "$filter_json" | "$BOOTSTRAP" filtering-enabled-count) || return 1
+  case "$enabled_filter_count" in ''|*[!0-9]*) return 1 ;; esac
+  if [ "$enabled_filter_count" -eq 0 ] && ! printf '%s\n' "$selected" | "$BB" awk -F '\t' '$1=="source" && $5=="enabled" { found=1 } END { exit !found }'; then return 0; fi
   printf '%s\n' "$now" > "$STATE/auto-update-attempt.tmp" &&
     chmod 600 "$STATE/auto-update-attempt.tmp" && mv "$STATE/auto-update-attempt.tmp" "$STATE/auto-update-attempt" || return 1
   printf '%s [自动更新] 下载已启用的规则来源。\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$AGH/history.log"
@@ -985,6 +1192,8 @@ case "$1" in
     sync_shared_rules
     ;;
   --status) status ;;
+  --subscription-set) subscription_set_action "$2" "$3" "$4" "$5" ;;
+  --subscription-remove) subscription_remove_action "$2" "$3" ;;
   --pause) "$AGH/scripts/tool.sh" stop ;;
   --dns-save|--dns-restore)
     if [ "${ABP_UPDATE_LOCKED:-0}" != 1 ]; then

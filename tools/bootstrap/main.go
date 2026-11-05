@@ -1,12 +1,12 @@
 package main
 
 import (
- "errors"
- "fmt"
- "os"
- "path/filepath"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 
- "golang.org/x/crypto/bcrypt"
+	"golang.org/x/crypto/bcrypt"
 )
 
 // Public first-install default; upgrades never replace an existing account.
@@ -67,55 +67,142 @@ statistics:
 `
 
 func main() {
- if len(os.Args) == 3 && os.Args[1] == "dns" {
-  if err := runDNS(os.Args[2], os.Stdin, os.Stdout); err != nil {
-   fmt.Fprintln(os.Stderr, err)
-   if errors.Is(err, errDNSRollback) { os.Exit(3) }
-   os.Exit(1)
-  }
-  return
- }
- if len(os.Args) != 3 {
-  fmt.Fprintln(os.Stderr, "usage: adblock-bootstrap CONFIG_PATH AUTH_PATH")
-  os.Exit(2)
- }
- if err := createConfig(os.Args[1], os.Args[2]); err != nil {
-  fmt.Fprintln(os.Stderr, "initial configuration failed:", err)
-  os.Exit(1)
- }
- fmt.Println("Local AdGuard Home configuration created on this device.")
+	if len(os.Args) == 2 && os.Args[1] == "filtering-check-status" {
+		if _, err := readFilteringStatus(os.Stdin, "block"); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "filtering-enabled-count" {
+		count, err := countEnabledFilteringEntries(os.Stdin)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, count)
+		return
+	}
+	if len(os.Args) == 4 && os.Args[1] == "filtering-is-enabled" {
+		if err := writeFilteringEnabled(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			if errors.Is(err, errFilterNotFound) {
+				os.Exit(3)
+			}
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "filtering-set-body" {
+		if err := writeFilteringSetBody(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			if errors.Is(err, errFilterNotFound) {
+				os.Exit(3)
+			}
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "filtering-copy-body" {
+		if err := writeFilteringCopyBody(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			if errors.Is(err, errFilterNotFound) {
+				os.Exit(3)
+			}
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "filtering-add-body" {
+		if err := writeFilteringAddBody(os.Args[2:], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			if errors.Is(err, errFilterNotFound) {
+				os.Exit(3)
+			}
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "filtering-new-body" {
+		if err := writeFilteringNewBody(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) >= 2 && os.Args[1] == "filtering-remove-body" {
+		if err := writeFilteringRemoveBody(os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) == 3 && os.Args[1] == "dns" {
+		if err := runDNS(os.Args[2], os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			if errors.Is(err, errDNSRollback) {
+				os.Exit(3)
+			}
+			os.Exit(1)
+		}
+		return
+	}
+	if len(os.Args) != 3 {
+		fmt.Fprintln(os.Stderr, "usage: adblock-bootstrap CONFIG_PATH AUTH_PATH")
+		os.Exit(2)
+	}
+	if err := createConfig(os.Args[1], os.Args[2]); err != nil {
+		fmt.Fprintln(os.Stderr, "initial configuration failed:", err)
+		os.Exit(1)
+	}
+	fmt.Println("Local AdGuard Home configuration created on this device.")
 }
 
 func createConfig(configFile, authFile string) error {
- if _, err := os.Stat(configFile); err == nil {
-  return errors.New("existing DNS configuration must not be overwritten")
- } else if !os.IsNotExist(err) {
-  return err
- }
- if _, err := os.Stat(authFile); err == nil {
-  return errors.New("existing API credentials must not be overwritten")
- } else if !os.IsNotExist(err) {
-  return err
- }
+	if _, err := os.Stat(configFile); err == nil {
+		return errors.New("existing DNS configuration must not be overwritten")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if _, err := os.Stat(authFile); err == nil {
+		return errors.New("existing API credentials must not be overwritten")
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 
- hash, err := bcrypt.GenerateFromPassword([]byte(initialPassword), bcrypt.DefaultCost)
- if err != nil { return err }
- for _, dir := range []string{filepath.Dir(configFile), filepath.Dir(authFile)} {
-  if err := os.MkdirAll(dir, 0700); err != nil { return err }
- }
- // Write both files with private permissions. Nothing secret is printed.
- if err := writeExclusive(configFile, []byte(fmt.Sprintf(initialConfig, string(hash)))); err != nil { return err }
- if err := writeExclusive(authFile, []byte("admin:"+initialPassword+"\n")); err != nil {
-  _ = os.Remove(configFile)
-  return err
- }
- return nil
+	hash, err := bcrypt.GenerateFromPassword([]byte(initialPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	for _, dir := range []string{filepath.Dir(configFile), filepath.Dir(authFile)} {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return err
+		}
+	}
+	// Write both files with private permissions. Nothing secret is printed.
+	if err := writeExclusive(configFile, []byte(fmt.Sprintf(initialConfig, string(hash)))); err != nil {
+		return err
+	}
+	if err := writeExclusive(authFile, []byte("admin:"+initialPassword+"\n")); err != nil {
+		_ = os.Remove(configFile)
+		return err
+	}
+	return nil
 }
 
 func writeExclusive(path string, value []byte) error {
- file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
- if err != nil { return err }
- if _, err := file.Write(value); err != nil { _ = file.Close(); _ = os.Remove(path); return err }
- if err := file.Close(); err != nil { _ = os.Remove(path); return err }
- return nil
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.Write(value); err != nil {
+		_ = file.Close()
+		_ = os.Remove(path)
+		return err
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(path)
+		return err
+	}
+	return nil
 }

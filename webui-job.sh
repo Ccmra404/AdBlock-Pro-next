@@ -87,6 +87,17 @@ case "$1" in
    auto-update|autostart|vpn-compat) case "$3" in on|off) ;; *) exit 1;; esac ;;
    set-mode) case "$3" in light|balanced|strict) ;; *) exit 1;; esac ;;
    set-source) case "$4" in on|off) ;; *) exit 1;; esac; case "$5" in ''|light|balanced|strict) ;; *[!0-9]*) exit 1;; esac; [ ${#5} -le 20 ] || exit 1; case "$3" in shared) ;; https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac ;;
+   subscription-set)
+    case "$3" in https://*|http://*) [ ${#3} -le 2048 ] || exit 1 ;; /data/adb/adblockpro/bin/userfilters/adblock-pro-source-*.txt) ;; *) exit 1 ;; esac
+    case "$4" in block|allow) ;; *) exit 1 ;; esac
+    case "$5" in
+     enabled) case "$6" in true|false) ;; *) exit 1 ;; esac ;;
+     name) name_bytes=$(printf '%s' "$6" | wc -c | tr -d '[:space:]'); [ "$name_bytes" -ge 1 ] && [ "$name_bytes" -le 192 ] || exit 1; name_lines=$(printf '%s' "$6" | wc -l | tr -d '[:space:]'); [ "$name_lines" -eq 0 ] || exit 1; clean_bytes=$(printf '%s' "$6" | "$BB" tr -d '[:cntrl:]' | wc -c | tr -d '[:space:]'); [ "$clean_bytes" -eq "$name_bytes" ] || exit 1 ;;
+     *) exit 1 ;;
+    esac ;;
+   subscription-remove)
+    case "$3" in https://*|http://*) [ ${#3} -le 2048 ] || exit 1 ;; /data/adb/adblockpro/bin/userfilters/adblock-pro-source-*.txt) ;; *) exit 1 ;; esac
+    case "$4" in block|allow) ;; *) exit 1 ;; esac ;;
    add-source) case "$3" in https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac; name_bytes=$(printf '%s' "$4" | wc -c | tr -d '[:space:]'); [ "$name_bytes" -ge 1 ] && [ "$name_bytes" -le 192 ] || exit 1; name_lines=$(printf '%s' "$4" | wc -l | tr -d '[:space:]'); [ "$name_lines" -eq 0 ] || exit 1; clean_bytes=$(printf '%s' "$4" | "$BB" tr -d '[:cntrl:]' | wc -c | tr -d '[:space:]'); [ "$clean_bytes" -eq "$name_bytes" ] || exit 1 ;;
    rename-source) case "$3" in shared) ;; https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac; name_bytes=$(printf '%s' "$4" | wc -c | tr -d '[:space:]'); [ "$name_bytes" -ge 1 ] && [ "$name_bytes" -le 192 ] || exit 1; name_lines=$(printf '%s' "$4" | wc -l | tr -d '[:space:]'); [ "$name_lines" -eq 0 ] || exit 1; clean_bytes=$(printf '%s' "$4" | "$BB" tr -d '[:cntrl:]' | wc -c | tr -d '[:space:]'); [ "$clean_bytes" -eq "$name_bytes" ] || exit 1 ;;
    edit-source) case "$3" in https://*) [ ${#3} -le 2048 ] || exit 1 ;; *) exit 1;; esac; case "$4" in https://*) [ ${#4} -le 2048 ] || exit 1 ;; *) exit 1;; esac; case "$5" in ''|*[!0-9]*) exit 1;; esac; [ ${#5} -le 20 ] || exit 1 ;;
@@ -106,6 +117,8 @@ case "$1" in
     ;;
   esac
   case "$2" in
+   subscription-set) result=$(sh "$MODDIR/bindhosts.sh" --subscription-set "$3" "$4" "$5" "$6" 2>&1); event_id='' ;;
+   subscription-remove) result=$(sh "$MODDIR/bindhosts.sh" --subscription-remove "$3" "$4" 2>&1); event_id='' ;;
     set-source)
      case "$5" in ''|light|balanced|strict) result=$(sh "$CONFIG" "$2" "$3" "$4" "$5" 2>&1); event_id=$6 ;; *) result=$(sh "$CONFIG" "$2" "$3" "$4" 2>&1); event_id=$5 ;; esac
      ;;

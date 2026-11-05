@@ -7,7 +7,7 @@ const DEBUG_BUILD = window.ABP_DEBUG_BUILD === true;
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], sourceRenameUrl: '', sourceEditUrl: '', logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', observationTruncated: false, debugSaveError: '', logFilter: 'all' };
+const state = { page: 'home', theme: localStorage.getItem('abp-theme') === 'dark' ? 'dark' : 'light', status: null, error: '', sourceError: '', logsError: '', listErrors: {}, sources: [], sourceRenameUrl: '', sourceEditUrl: '', subscriptionRenameKey: '', logs: [], logsLoaded: false, logsLoadedAt: 0, logsPromise: null, logPage: 0, logSearch: '', lists: { whitelist: [], blacklist: [] }, listSearch: { whitelist: '', blacklist: '' }, listPage: { whitelist: 0, blacklist: 0 }, busy: false, job: null, observation: null, observationDomains: [], observationPage: 0, observationError: '', observationTruncated: false, debugSaveError: '', logFilter: 'all' };
 Object.assign(state, { rulesView: 'local', sharedRules: [], sharedRevision: '', sharedUpdatedAt: 0, sharedError: '', sharedLoaded: false, sharedSearch: '', sharedPage: 0, apps: [], appsLoaded: false, appsLoading: false, appsError: '', appQuery: '', selectedApp: null, observeDuration: '10', observationResultsOpen: false, selectedObservationDomains: [] });
 Object.assign(state, { aiOpen: false, aiSettingsOpen: false, aiConfig: null, aiBusy: false, aiError: '', aiResults: [], aiSelected: [], aiPage: 0, personalApplyMessage: '', personalApplyError: false });
 Object.assign(state, { dnsOpen: false, dnsInfo: null, dnsDraft: null, dnsBusy: false, dnsError: '', dnsResults: [], dnsMessage: '' });
@@ -171,13 +171,46 @@ function sourceRows() {
     const editing = state.sourceEditUrl === source.url;
     const detail = source.url === 'shared' ? '维护者审核的共享抓包规则' : source.id === 'goodbyeads' ? `${source.url} · 拦截与放行成对更新；与秋风部分重复，按需选择` : source.url;
     const shared = source.url === 'shared' ? state.status?.dns_filter_json?.filters?.find(x => x.url?.endsWith('/adblock-pro-shared-app-rules.txt')) : null;
-    const actions = `<div class="source-actions"><button class="btn" data-action="source-toggle" data-url="${esc(source.url)}" data-enabled="${source.enabled}">${enabled ? '停用' : '导入'}</button>${source.url === 'shared' ? '' : `<button class="btn" data-action="source-url-open" data-url="${esc(source.url)}">修改链接</button>`}<button class="btn" data-action="source-rename-open" data-url="${esc(source.url)}">重命名</button><button class="btn btn-danger" data-action="source-delete" data-url="${esc(source.url)}">移除</button></div>`;
+    const actions = `<div class="source-actions"><button class="btn" data-action="source-toggle" data-url="${esc(source.url)}" data-enabled="${source.enabled}">${enabled ? '移出目录' : '加入目录'}</button>${source.url === 'shared' ? '' : `<button class="btn" data-action="source-url-open" data-url="${esc(source.url)}">修改链接</button>`}<button class="btn" data-action="source-rename-open" data-url="${esc(source.url)}">编辑来源名称</button><button class="btn btn-danger" data-action="source-delete" data-url="${esc(source.url)}">移除目录项</button></div>`;
     const rename = renaming ? `<form class="source-rename-form btn-row" data-url="${esc(source.url)}"><input class="field" name="name" maxlength="64" value="${esc(source.label)}" aria-label="规则来源名称" required><button class="btn btn-primary" type="submit">保存名称</button><button class="btn" type="button" data-action="source-rename-cancel">取消</button></form>` : '';
     const edit = editing ? `<form class="source-edit-form btn-row" data-url="${esc(source.url)}"><input class="field" name="url" type="url" value="${esc(source.url)}" aria-label="规则订阅链接" autocapitalize="none" required><button class="btn btn-primary" type="submit">保存链接</button><button class="btn" type="button" data-action="source-url-cancel">取消</button></form>` : '';
     const subtitle = source.url === 'shared' ? `${detail} · ${shared ? fmt(shared.rules_count) + ' 条已加载' : '随模块预置'}` : detail;
-    return `<div class="source-row" data-source-url="${esc(source.url)}"><div class="source-copy"><strong>${esc(source.label)}</strong><small>${esc(subtitle)}</small></div><span class="tag ${enabled ? 'green' : ''}">${enabled ? '已启用' : '未导入'}</span>${actions}${rename}${edit}</div>`;
+    return `<div class="source-row" data-source-url="${esc(source.url)}"><div class="source-copy"><strong>${esc(source.label)}</strong><small>${esc(subtitle)}</small></div><span class="tag ${enabled ? 'green' : ''}">${enabled ? '已加入模块目录' : '目录外'}</span>${actions}${rename}${edit}</div>`;
   }).join('');
   return rows;
+}
+function externalSubscriptionsMarkup() {
+  const status = state.status?.dns_filter_json;
+  const hasFilterLists = status && Object.prototype.hasOwnProperty.call(status, 'filters') && Object.prototype.hasOwnProperty.call(status, 'whitelist_filters');
+  const filters = status?.filters === null ? [] : status?.filters;
+  const whitelistFilters = status?.whitelist_filters === null ? [] : status?.whitelist_filters;
+  const heading = `<div class="panel-head"><div><h2 class="section-title">当前订阅</h2><p class="section-sub">与 AdGuard Home 后台共用同一份订阅状态；这里的操作会立即同步到后台</p></div></div>`;
+  if (!hasFilterLists || !Array.isArray(filters) || !Array.isArray(whitelistFilters)) {
+    return `<section class="panel" id="external-subscriptions">${heading}<div class="empty-state">${state.status ? '暂时无法读取完整订阅状态；为避免显示错误数据，请检查 DNS 核心和管理接口。' : '尚未读取 AdGuard Home 订阅。'}</div></section>`;
+  }
+  const moduleMap = new Map(String(state.status.module_source_map || '').split('|').filter(Boolean).map(pair => {
+    const split = pair.indexOf('\t');
+    return split < 0 ? ['', ''] : [pair.slice(0, split), pair.slice(split + 1)];
+  }).filter(([source, target]) => source && target));
+  const originalByFilter = new Map([...moduleMap].map(([source, target]) => [target, source]));
+  const subscriptions = [...filters.map(filter => ({ ...filter, list: 'block' })), ...whitelistFilters.map(filter => ({ ...filter, list: 'allow' }))].filter(filter => {
+    const url = String(filter?.url || '');
+    return url && !url.endsWith('/adblock-pro-user-rules.txt') && !url.endsWith('/adblock-pro-shared-app-rules.txt');
+  });
+  const rows = subscriptions.map(filter => {
+    const url = String(filter.url);
+    const sourceUrl = originalByFilter.get(url) || (moduleMap.has(url) ? url : '');
+    const key = `${filter.list}:${url}`;
+    const enabled = filter.enabled === true;
+    const type = filter.list === 'allow' ? '放行订阅' : '拦截订阅';
+    const count = filter.rules_count != null && Number.isFinite(Number(filter.rules_count)) ? ` · ${fmt(filter.rules_count)} 条规则` : '';
+    const address = sourceUrl ? `来源：${sourceUrl}` : url;
+    const actions = `<div class="source-actions"><button class="btn" data-action="subscription-toggle" data-url="${esc(url)}" data-list="${filter.list}" data-enabled="${enabled}">${enabled ? '停用' : '启用'}</button><button class="btn" data-action="subscription-rename-open" data-url="${esc(url)}" data-list="${filter.list}">改名</button><button class="btn btn-danger" data-action="subscription-remove" data-url="${esc(url)}" data-list="${filter.list}">移除</button></div>`;
+    const rename = state.subscriptionRenameKey === key ? `<form class="subscription-rename-form btn-row" data-url="${esc(url)}" data-list="${filter.list}"><input class="field" name="name" maxlength="64" value="${esc(filter.name || '')}" aria-label="订阅名称" required><button class="btn btn-primary" type="submit">保存名称</button><button class="btn" type="button" data-action="subscription-rename-cancel">取消</button></form>` : '';
+    return `<div class="source-row" data-subscription-key="${esc(key)}"><div class="source-copy"><strong>${esc(filter.name || url)}</strong><small>${esc(type)}${sourceUrl ? ' · 模块镜像来源' : ' · AdGuard Home 管理'}${esc(count)}<br>${esc(address)}</small></div><span class="tag ${enabled ? 'green' : ''}">${enabled ? '已启用' : '已停用'}</span>${actions}${rename}</div>`;
+  }).join('');
+  const content = rows || '<div class="empty-state">AdGuard Home 当前没有普通订阅。个人名单和共享抓包规则仍由模块单独管理。</div>';
+  return `<section class="panel" id="external-subscriptions">${heading}<p class="field-help">停用、改名或移除会立即作用于 AdGuard Home。模块更新不会重新启用或自动恢复你在此移除的订阅。</p><div class="source-list">${content}</div></section>`;
 }
 function ruleList(kind) {
   const items = state.lists[kind] || [];
@@ -282,7 +315,8 @@ function rulesPage() {
   const selectedCount = state.sources.filter(source => source.enabled === 'enabled').length;
   return `${heading('规则管理', '来源、更新与历史回滚')}
     <div class="stack"><section id="update-progress" class="panel progress-card hidden" aria-live="polite"><div class="panel-head"><b class="section-title">规则更新</b><span id="update-elapsed" class="small muted"></span></div><div id="update-stage" class="small">等待任务</div><div class="progress-track"><span class="progress-bar"></span></div><p id="update-help" class="field-help">下载期间本页面仍可切换；不要重复启动更新。</p></section>
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">规则来源</h2><p class="section-sub">逐项导入、停用、移除或重命名；订阅内容先下载校验，再交给本地 DNS 核心加载</p></div><span class="tag" data-source-count>${state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : `${selectedCount} 个已启用`}</span></div><div id="source-list" class="source-list">${sourceRows()}</div><form id="source-form" class="btn-row"><input class="field" name="name" maxlength="64" placeholder="来源名称" required><input class="field" name="url" type="url" placeholder="HTTPS 订阅地址" autocapitalize="none" required><button class="btn" type="submit">导入来源</button></form><p id="rules-feedback" class="field-help" aria-live="polite">默认来源也可以停用或移除；移除内置来源只从当前订阅中移除，仍可随时重新导入。更新失败会保留上一版规则。</p><div class="divider"></div><div class="btn-row"><button class="btn btn-primary" data-action="update">立即检查并更新</button><select id="history-select" class="field" aria-label="选择要恢复的规则历史"><option value="">选择历史版本</option>${(s?.history || []).map(item => { const [key, count] = item.split(':'); return `<option value="${esc(key)}">${esc(key.slice(0,4)+'-'+key.slice(4,6)+'-'+key.slice(6,8)+' '+key.slice(8,10)+':'+key.slice(10,12))} · ${fmt(count)} 条</option>`; }).join('')}</select><button class="btn btn-danger" data-action="rollback">恢复</button></div></section>
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">模块规则源目录</h2><p class="section-sub">这里管理模块下载、校验和镜像回退的来源；当前启用与移除状态以 AdGuard Home 的订阅列表为准</p></div><span class="tag" data-source-count>${state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : `${selectedCount} 个已加入目录`}</span></div><div id="source-list" class="source-list">${sourceRows()}</div><form id="source-form" class="btn-row"><input class="field" name="name" maxlength="64" placeholder="来源名称" required><input class="field" name="url" type="url" placeholder="HTTPS 订阅地址" autocapitalize="none" required><button class="btn" type="submit">加入模块目录</button></form><p id="rules-feedback" class="field-help" aria-live="polite">加入目录后，点“立即检查并更新”会下载校验并注册本地规则。对已存在的订阅，模块不会覆盖 AdGuard Home 的名称、启用或删除状态。</p><div class="divider"></div><div class="btn-row"><button class="btn btn-primary" data-action="update">立即检查并更新</button><select id="history-select" class="field" aria-label="选择要恢复的规则历史"><option value="">选择历史版本</option>${(s?.history || []).map(item => { const [key, count] = item.split(':'); return `<option value="${esc(key)}">${esc(key.slice(0,4)+'-'+key.slice(4,6)+'-'+key.slice(6,8)+' '+key.slice(8,10)+':'+key.slice(10,12))} · ${fmt(count)} 条</option>`; }).join('')}</select><button class="btn btn-danger" data-action="rollback">恢复</button></div></section>
+    ${externalSubscriptionsMarkup()}
     <section class="panel"><div class="panel-head"><div><h2 class="section-title">域名检查</h2><p class="section-sub">查看本地过滤规则的判定，排查疑似误拦截</p></div></div><label class="field-label" for="check-domain">要检查的域名</label><form id="domain-form" class="btn-row"><input id="check-domain" class="field" name="domain" value="${esc(state.domainCheckInput)}" placeholder="例如 ads.example.com" autocapitalize="none" spellcheck="false" required><button class="btn" type="submit" ${state.domainCheck?.pending ? 'disabled' : ''}>${state.domainCheck?.pending ? '检查中…' : '检查'}</button></form><div id="domain-result" class="domain-check-result" role="status" aria-live="polite" aria-atomic="true" aria-busy="${Boolean(state.domainCheck?.pending)}">${domainCheckMarkup()}</div><p class="field-help">此检查不测试网络速度或网站可达性，也不能证明应用广告已消失。</p></section></div>`;
 }
 function personalRulesPage() {
@@ -778,6 +812,7 @@ function syncStatusView() {
       if (input && !state.busy && !input.disabled) input.checked = Boolean(s && on);
     }
   } else if (state.page === 'rules') {
+    updateExternalSubscriptionsView();
     const select = $('#history-select');
     const history = (s?.history || []).join(',');
     if (select && select.dataset.history !== history && document.activeElement !== select) {
@@ -802,8 +837,13 @@ function updateSourcesView() {
       list.dataset.renderSignature = signature;
     }
   }
-  setText('[data-source-count]', state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : state.sources.filter(source => source.enabled === 'enabled').length + ' 个已启用');
+  setText('[data-source-count]', state.sourceError ? (state.sourceError === '正在读取规则来源…' ? '加载中' : '设备未连接') : state.sources.filter(source => source.enabled === 'enabled').length + ' 个已加入目录');
   if (state.busy) setBusy(true);
+}
+function updateExternalSubscriptionsView() {
+  const panel = $('#external-subscriptions');
+  const markup = externalSubscriptionsMarkup();
+  if (panel && panel.outerHTML !== markup) panel.outerHTML = markup;
 }
 function syncListsView() {
   if (state.page !== 'lists') return;
@@ -1623,12 +1663,30 @@ document.addEventListener('click', async event => {
     case 'source-toggle': {
       const url = button.dataset.url; const next = button.dataset.enabled === 'enabled' ? 'off' : 'on';
       await withButtonPending(button, async () => {
-        try { await runConfig('set-source', url, next); invalidateSources(); await loadSources(); toast(next === 'on' ? '规则来源已导入；更新后生效' : '规则来源已停用；更新后从过滤中移除'); } catch (e) { toast(e.message); }
+        try { await runConfig('set-source', url, next); invalidateSources(); await loadSources(); toast(next === 'on' ? '已加入模块目录；点“立即检查并更新”后生效' : '已移出模块目录；AdGuard Home 当前订阅不会被改动'); } catch (e) { toast(e.message); }
       });
       break;
     }
     case 'source-delete': {
-      const url = button.dataset.url; confirm('移除这条规则来源？', '移除后会从列表隐藏，下一次规则更新时生效。内置来源可重新添加，共享来源可在共享规则库中恢复。', '移除来源', async () => { try { await runConfig('remove-source', url); state.sourceRenameUrl = ''; state.sourceEditUrl = ''; invalidateSources(); await loadSources(); toast('规则来源已移除；当前规则将在更新后改变'); } catch (e) { toast(e.message); } }); break;
+      const url = button.dataset.url; confirm('移除模块目录项？', '这只会移除模块的下载来源元数据，不会删除或停用 AdGuard Home 当前订阅。', '移除目录项', async () => { try { await runConfig('remove-source', url); state.sourceRenameUrl = ''; state.sourceEditUrl = ''; invalidateSources(); await loadSources(); toast('已从模块目录移除；当前订阅状态未更改'); } catch (e) { toast(e.message); } }); break;
+    }
+    case 'subscription-toggle': {
+      const url = button.dataset.url, list = button.dataset.list, next = button.dataset.enabled === 'true' ? 'false' : 'true';
+      await withButtonPending(button, async () => {
+        try { await runConfig('subscription-set', url, list, 'enabled', next); await refreshStatus(true, true); toast(next === 'true' ? 'AdGuard Home 订阅已启用' : 'AdGuard Home 订阅已停用'); }
+        catch (e) { await refreshStatus(true, true); toast(e.message); }
+      });
+      break;
+    }
+    case 'subscription-rename-open': state.subscriptionRenameKey = `${button.dataset.list}:${button.dataset.url}`; updateExternalSubscriptionsView(); break;
+    case 'subscription-rename-cancel': state.subscriptionRenameKey = ''; updateExternalSubscriptionsView(); break;
+    case 'subscription-remove': {
+      const url = button.dataset.url, list = button.dataset.list;
+      confirm('从 AdGuard Home 移除订阅？', '会立即移除当前订阅。之后模块更新不会自动恢复；需要时可从模块规则源目录重新加入。', '移除订阅', async () => {
+        try { await runConfig('subscription-remove', url, list); state.subscriptionRenameKey = ''; await refreshStatus(true, true); invalidateSources(); await loadSources(); toast('订阅已从 AdGuard Home 移除'); }
+        catch (e) { await refreshStatus(true, true); toast(e.message); }
+      });
+      break;
     }
     case 'source-rename-open': state.sourceRenameUrl = button.dataset.url; state.sourceEditUrl = ''; updateSourcesView(); break;
     case 'source-rename-cancel': state.sourceRenameUrl = ''; updateSourcesView(); break;
@@ -1706,6 +1764,10 @@ document.addEventListener('submit', async event => {
   } else if (form.matches('.source-edit-form')) {
     event.preventDefault(); const oldUrl = form.dataset.url; const newUrl = new FormData(form).get('url')?.toString().trim();
     try { await runConfig('edit-source', oldUrl, newUrl); state.sourceEditUrl = ''; invalidateSources(); await loadSources(); toast('规则订阅链接已保存；执行规则更新后生效'); } catch (e) { toast(e.message); }
+  } else if (form.matches('.subscription-rename-form')) {
+    event.preventDefault(); const url = form.dataset.url, list = form.dataset.list, name = new FormData(form).get('name')?.toString().trim();
+    try { await runConfig('subscription-set', url, list, 'name', name); state.subscriptionRenameKey = ''; await refreshStatus(true, true); toast('订阅名称已同步到 AdGuard Home'); }
+    catch (e) { await refreshStatus(true, true); toast(e.message); }
   } else if (form.matches('.domain-form')) {
     event.preventDefault(); const kind = form.dataset.kind, domain = new FormData(form).get('domain')?.toString().trim();
     try { await savePersonalDomain(`add-${kind}`, domain, kind); form.reset(); } catch (e) { toast(e.message); }

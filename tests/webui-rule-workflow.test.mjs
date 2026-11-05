@@ -10,18 +10,18 @@ function harness() {
     localStorage:{getItem:k=>storage.get(k)??null,setItem:(k,v)=>storage.set(k,v),removeItem:k=>storage.delete(k)},window:{},
     exec:command=>new Promise(resolve=>pending.push({command,resolve})),setTimeout,clearTimeout,setInterval(){return 1;},requestAnimationFrame(){},cancelAnimationFrame(){} });
   vm.runInContext(source,context);
-  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,saveExportFile,observationAIPrompt,communityIssueUrl,parseObservationSnapshot,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,rulesPage,sourceRows,sharedResultsMarkup,startObservation,savePersonalDomain})',context)};
+  return {context,pending,handlers,...vm.runInContext('({state,parsePersonalImport,preparePersonalImport,importPersonalFile,loadList,loadSharedRules,loadApplications,resolveApplication,applicationResults,observationPanel,observationRows,observationSelectionTools,selectedObservationDomains,observationExportText,exportObservedDomains,saveExportFile,observationAIPrompt,communityIssueUrl,parseObservationSnapshot,loadObservationResult,startJob,personalRulesPage,sharedRulesPage,logsPage,rulesPage,sourceRows,externalSubscriptionsMarkup,sharedResultsMarkup,startObservation,savePersonalDomain})',context)};
 }
 
-test('the optional paired source explains its scope and uses the existing import and remove controls', () => {
+test('the optional paired source explains its scope and uses the module directory controls', () => {
   const h = harness();
   h.state.sources = [{id:'goodbyeads', label:'GOODBYEADS DNS（含配套放行）', url:'https://filters.example/dns.txt', enabled:'disabled'}];
   const markup = h.sourceRows();
   assert.match(markup, /拦截与放行成对更新/);
   assert.match(markup, /与秋风部分重复，按需选择/);
-  assert.match(markup, /data-action="source-toggle"[^>]*>导入/);
+  assert.match(markup, /data-action="source-toggle"[^>]*>加入目录/);
   assert.match(markup, /data-action="source-delete"/);
-  assert.match(markup, /未导入/);
+  assert.match(markup, /目录外/);
 });
 
 test('a manual allow action refreshes both lists before applying the moved rule', async () => {
@@ -177,20 +177,57 @@ test('rule source page has no tiers and makes every bundled or custom source man
  ];
  const page=h.rulesPage();
  assert.doesNotMatch(page,/轻量|均衡|严格|档位/);
- assert.match(page,/10007/);assert.match(page,/data-action="source-toggle"[^>]*>停用/);
- assert.match(page,/data-action="source-toggle"[^>]*>导入/);
+ assert.match(page,/10007/);assert.match(page,/data-action="source-toggle"[^>]*>移出目录/);
+ assert.match(page,/data-action="source-toggle"[^>]*>加入目录/);
  assert.match(page,/data-action="source-delete"/);assert.match(page,/data-action="source-rename-open"/);
  assert.match(page,/data-action="source-url-open"/);
  assert.match(page,/name="name" maxlength="64"/);assert.match(page,/name="url"/);
 });
 
-test('confirmed source removal invalidates cached rows and reloads the source list',async()=>{
+test('rule page shows module and native AdGuard Home subscriptions in one actionable list',()=>{
+ const h=harness();
+ h.state.sources=[{id:'custom',label:'Module source',url:'https://module.example/list.txt',enabled:'enabled'}];
+ const local='/data/adb/adblockpro/bin/userfilters/adblock-pro-source-abc.txt';
+ h.state.status={module_source_map:`https://module.example/list.txt\t${local}|https://legacy-module.example/list.txt\t/data/adb/adblockpro/bin/userfilters/adblock-pro-source-old.txt`,dns_filter_json:{filters:[
+  {name:'Manual subscription <test>',url:'https://manual.example/list.txt?token=fixture',enabled:true,rules_count:42},
+  {name:'Legacy module subscription',url:'/data/adb/adblockpro/bin/userfilters/adblock-pro-source-old.txt',enabled:false,rules_count:10},
+  {name:'Module source',url:local,enabled:true,rules_count:20},
+  {name:'Personal rules',url:'/data/adb/adblockpro/bin/userfilters/adblock-pro-user-rules.txt',enabled:true,rules_count:4},
+ ],whitelist_filters:[{name:'Manual allow list',url:'https://allow.example/list.txt',enabled:true,rules_count:3}]}};
+ const external=h.externalSubscriptionsMarkup();
+ assert.match(external,/当前订阅/);
+ assert.match(external,/manual\.example\/list\.txt\?token=fixture/);
+ assert.match(external,/Manual subscription &lt;test&gt;/);
+ assert.match(external,/42 条/);
+ assert.match(external,/来源：https:\/\/module\.example\/list\.txt/);
+ assert.match(external,/allow\.example\/list\.txt/);
+ assert.match(external,/已停用/);
+ assert.doesNotMatch(external,/adblock-pro-user-rules|adblock-pro-shared-app-rules/);
+ assert.doesNotMatch(external,/<small>[^<]*adblock-pro-source-/,'module cache paths are not shown as the subscription address');
+ assert.match(external,/data-action="subscription-toggle"/);
+ assert.match(external,/data-action="subscription-rename-open"/);
+ assert.match(external,/data-action="subscription-remove"/);
+ assert.match(h.rulesPage(),/id="external-subscriptions"/);
+});
+
+test('native subscription panel distinguishes unavailable status from an empty list',()=>{
+ const h=harness();
+ assert.match(h.externalSubscriptionsMarkup(),/尚未读取 AdGuard Home 订阅/);
+ h.state.status={dns_health:'api_failed',dns_filter_json:{}};
+ assert.match(h.externalSubscriptionsMarkup(),/暂时无法读取/);
+ h.state.status={dns_filter_json:{filters:[],whitelist_filters:[]}};
+ assert.match(h.externalSubscriptionsMarkup(),/AdGuard Home 当前没有普通订阅/);
+ h.state.status={dns_filter_json:{filters:null,whitelist_filters:null}};
+ assert.match(h.externalSubscriptionsMarkup(),/AdGuard Home 当前没有普通订阅/);
+});
+
+test('removing a module directory entry leaves current AdGuard Home subscriptions untouched',async()=>{
  const h=harness(),modal={},toast={textContent:'',hidden:true};
  h.state.sources=[{id:'shared',label:'共享抓包规则',url:'shared',enabled:'enabled',removable:'removable'}];
  h.context.document.querySelector=s=>s==='#modal'?modal:s==='#toast'?toast:null;h.context.setTimeout=()=>1;
  const button={dataset:{action:'source-delete',url:'shared'}};
  await h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});
- assert.match(modal.innerHTML,/移除后会从列表隐藏/);
+ assert.match(modal.innerHTML,/不会删除或停用 AdGuard Home 当前订阅/);
  const remove=modal.callback();
  assert.match(h.pending[0].command,/config remove-source 'shared'/);
  h.pending.shift().resolve({errno:0,stdout:'removed'});
@@ -199,7 +236,7 @@ test('confirmed source removal invalidates cached rows and reloads the source li
  h.pending.shift().resolve({errno:0,stdout:'mode\tbalanced\n'});
  await remove;
  assert.deepEqual(Array.from(h.state.sources),[]);
- assert.match(toast.textContent,/规则来源已移除/);
+ assert.match(toast.textContent,/当前订阅状态未更改/);
 });
 
 test('operation log page can copy recent detailed task output',async()=>{

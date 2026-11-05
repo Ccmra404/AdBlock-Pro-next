@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {readFileSync, writeFileSync, mkdirSync, existsSync} from 'node:fs';
 import path from 'node:path';
 import {spawnSync} from 'node:child_process';
-import {rootFixture, shellPath} from './shell-fixture.mjs';
+import {rootFixture, shellPath, filteringBootstrap} from './shell-fixture.mjs';
 
 const source = readFileSync(new URL('../bindhosts.sh', import.meta.url), 'utf8');
 const automatic = source.slice(source.indexOf('auto_update_rules() {'), source.indexOf('\ndiagnose() {'));
@@ -19,16 +19,24 @@ function fixture(t, options = {}) {
   if (options.disabled) writeFileSync(path.join(mod, 'disable'), '');
   writeFileSync(path.join(mod, 'sources'), options.empty ? '' : 'source\tcustom\tFeed\thttps://feed.example\tenabled\n');
   writeFileSync(path.join(mod, 'webui-config.sh'), '#!/bin/sh\ncat "${0%/*}/sources"\n');
+  const filterStatus = path.join(f.dir, 'filtering-status.json');
+  writeFileSync(filterStatus, JSON.stringify({
+    filters: options.empty ? [] : [{ url: 'https://feed.example', name: 'Feed', enabled: true }],
+    whitelist_filters: [],
+  }));
+  const bootstrap = filteringBootstrap(f);
   const script = path.join(f.dir, 'auto.sh');
   writeFileSync(script, [
     'BB=' + shellPath(f.paths.Magisk), 'STATE=' + shellPath(state), 'AGH=' + shellPath(agh), 'MODDIR=' + shellPath(mod),
+    'BOOTSTRAP=$ABP_BOOTSTRAP',
+    'api() { [ "$1:$2" = GET:/filtering/status ] || return 1; cat "$FILTER_STATUS"; }',
     'date() { printf "2000000000\\n"; }',
     `is_our_process() { return ${options.dead ? 1 : 0}; }`,
     `is_dns_listening() { return ${options.noListener ? 1 : 0}; }`,
     'update_rules() { echo "$AUTO_UPDATE" >> "$STATE/calls"; ' + (options.failure ? 'return 1;' : 'echo 2000000000 > "$STATE/last-update";') + ' }',
     automatic, 'auto_update_rules',
   ].join('\n'));
-  return {state, agh, mod, run:() => spawnSync('bash', [shellPath(script)], {encoding:'utf8', env:f.env('Magisk')})};
+  return {state, agh, mod, run:() => spawnSync('bash', [shellPath(script)], {encoding:'utf8', env:{...f.env('Magisk'), ABP_BOOTSTRAP:bootstrap, FILTER_STATUS:shellPath(filterStatus)}})};
 }
 
 test('due automatic update calls the real update entry semantics once and respects the last success', t => {
