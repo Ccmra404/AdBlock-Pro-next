@@ -89,7 +89,7 @@ def extract_engine(archive: bytes) -> bytes:
     with tarfile.open(fileobj=io.BytesIO(archive), mode="r:gz") as tf:
         members = [
             member for member in tf.getmembers()
-            if member.name == "AdGuardHome/AdGuardHome"
+            if member.name.removeprefix("./") == "AdGuardHome/AdGuardHome"
         ]
         if len(members) != 1 or not members[0].isfile():
             raise ValueError("invalid AdGuard Home archive layout")
@@ -160,3 +160,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

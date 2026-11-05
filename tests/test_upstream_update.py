@@ -125,6 +125,11 @@ class UpstreamSafetyTests(unittest.TestCase):
         archive = compressed("AdGuardHome/AdGuardHome", data)
         self.assertEqual(updater.extract_engine(archive), data)
 
+    def test_archive_accepts_root_dot_slash_prefix(self):
+        data = dummy_arm64()
+        archive = compressed("./AdGuardHome/AdGuardHome", data)
+        self.assertEqual(updater.extract_engine(archive), data)
+
     def test_rejects_symlink_or_unexpected_archive_path(self):
         with self.assertRaises(ValueError):
             updater.extract_engine(compressed("AdGuardHome/AdGuardHome", b"", tarfile.SYMTYPE))
@@ -156,3 +161,4 @@ class UpstreamSafetyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
