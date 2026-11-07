@@ -8,6 +8,7 @@ import argparse
 import base64
 import json
 import os
+import shlex
 import shutil
 from pathlib import Path
 import socket
@@ -73,14 +74,16 @@ def exercise(engine, bootstrap):
         # paths, real credentials, network subscriptions or a DNS service restart.
         module_source = Path(__file__).resolve().parents[1] / 'bindhosts.sh'
         bb = root / 'busybox-fixture'
-        bb.write_text('#!/bin/sh\nexec "$@"\n')
+        bb.write_text('#!/bin/sh\nif [ "$1" = --list ]; then printf "%s\\n" sh awk flock nohup setuidgid inotifyd; exit; fi\nexec "$@"\n')
         bb.chmod(0o700)
         entry = root / 'bindhosts.sh'
         script = module_source.read_text(encoding='utf-8')
         script = script.replace('AGH=/data/adb/adblockpro', 'AGH=' + str(root))
         script = script.replace('STATE=/data/adb/bindhosts_personal', 'STATE=' + str(root / 'state'))
         script = script.replace('API=http://127.0.0.1:3000/control', f'API=http://127.0.0.1:{http_port}/control')
-        script = script.replace('. "$MODDIR/scripts/compat.sh" || exit 1', 'BB=' + str(bb) + '\nCURL=' + shutil.which('curl'))
+        compat = Path(__file__).resolve().parents[1] / 'scripts/compat.sh'
+        script = script.replace('. "$MODDIR/scripts/compat.sh" || exit 1',
+            'BB=' + shlex.quote(str(bb)) + '\n. ' + shlex.quote(str(compat)) + ' || exit 1\nCURL=' + shlex.quote(shutil.which('curl')))
         entry.write_text(script, encoding='utf-8')
         state = root / 'state'
         state.mkdir()
