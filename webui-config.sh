@@ -203,7 +203,7 @@ save_source_names() {
 
 init_profiles() {
   [ -f "$DIR/profiles-initialized" ] && return 0
-  mkdir -p "$PROFILE_DIR" || return 1
+  abp_mkdir_p "$PROFILE_DIR" || return 1
   [ -f "$PROFILE_DIR/light.txt" ] || : > "$PROFILE_DIR/light.txt"
   [ -f "$PROFILE_DIR/balanced.txt" ] || printf '%s\n' "$AWAVENUE" > "$PROFILE_DIR/balanced.txt"
   [ -f "$PROFILE_DIR/strict.txt" ] || : > "$PROFILE_DIR/strict.txt"

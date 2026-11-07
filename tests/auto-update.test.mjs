@@ -89,15 +89,15 @@ test('daily check shares both locks and is launched separately from the crash wa
 for (const lock of ['update.lock', 'webui-jobs/worker.lock']) {
   test(`automatic download cannot enter while ${lock} is owned by another operation`, t => {
     if (process.platform === 'win32' || spawnSync('flock', ['--version']).status !== 0) return t.skip('requires Linux flock');
-    const f = rootFixture(t); mkdirSync(path.join(f.dir, 'webui-jobs'));
+    const f = rootFixture(t); f.addBusybox('Magisk'); mkdirSync(path.join(f.dir, 'webui-jobs'));
     const script = path.join(f.dir, 'entry.sh');
     const entry = source.slice(source.indexOf('  --auto-update)'), source.indexOf('  --update)'));
-    writeFileSync(script, ['STATE=' + shellPath(f.dir), 'BB=env',
+    writeFileSync(script, ['. "' + shellPath(f.compatFile) + '" || exit 1', 'STATE=' + shellPath(f.dir), 'BB=env',
       'auto_update_rules() { echo ENTERED; }', 'case "$1" in', entry, 'esac'].join('\n'));
-    const r = spawnSync('flock', ['-n', path.join(f.dir, lock), 'bash', script, '--auto-update'], {encoding:'utf8'});
+    const r = spawnSync('flock', ['-n', path.join(f.dir, lock), 'bash', script, '--auto-update'], {encoding:'utf8', env:f.env('Magisk')});
     assert.equal(r.status, 1, r.stderr + r.stdout);
     assert.doesNotMatch(r.stdout, /ENTERED/);
-    const released = spawnSync('bash', [script, '--auto-update'], {encoding:'utf8'});
+    const released = spawnSync('bash', [script, '--auto-update'], {encoding:'utf8', env:f.env('Magisk')});
     assert.equal(released.status, 0, released.stderr);
     assert.match(released.stdout, /ENTERED/);
   });

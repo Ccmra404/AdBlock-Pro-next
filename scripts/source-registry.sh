@@ -69,7 +69,7 @@ case "$1" in
     [ -s "$AGH/certs/cacert.pem" ] || { echo '[提醒] CA 证书缺失，沿用现有线路清单。' >&2; exit 0; }
     CURL=${CURL:-$(abp_find_curl)}
     [ -n "$CURL" ] || { echo '[提醒] 下载工具不可用，沿用现有线路清单。' >&2; exit 0; }
-    mkdir -p "$STATE" || exit 1
+    abp_mkdir_p "$STATE" || exit 1
     temp="$STATE/.source-registry.$$"
     trap 'rm -f "$temp"' EXIT
     registry_urls=$SOURCE
