@@ -110,7 +110,7 @@ case "$1" in
    list-whitelist|list-blacklist|list-sources|shared-rules|export-file|app-filter-list) ;;
    *)
     if [ "${ABP_JOB_CONFIG_LOCKED:-0}" != 1 ]; then
-     mkdir -p "$DIR" || exit 1
+     abp_mkdir_p "$DIR" || exit 1
      export ABP_JOB_CONFIG_LOCKED=1
      exec "$BB" flock -n "$DIR/worker.lock" "$BB" sh "$0" "$@"
     fi
@@ -139,7 +139,7 @@ case "$1" in
   esac
   case "$event_id" in ''|*[!0-9]*) loggable=0 ;; esac
   if [ "$loggable" = 1 ] && [ ${#event_id} -le 20 ]; then
-   mkdir -p "$DIR" || exit "$code"
+   abp_mkdir_p "$DIR" || exit "$code"
    argument=$3; [ "$2" != import-lists ] || argument=''
    printf '%s\n%s\n' "$2" "$argument" > "$DIR/$event_id.action.tmp" && mv "$DIR/$event_id.action.tmp" "$DIR/$event_id.action" || exit "$code"
    printf '%s\n' "$result" > "$DIR/$event_id.log.tmp" && mv "$DIR/$event_id.log.tmp" "$DIR/$event_id.log" || exit "$code"
@@ -151,7 +151,7 @@ case "$1" in
  diagnose)
   case "$2" in ''|*[!0-9]*) exit 1;; esac
   [ ${#2} -le 20 ] || exit 1
-  mkdir -p "$DIR" || exit 1
+  abp_mkdir_p "$DIR" || exit 1
   [ ! -e "$DIR/$2.log" ] || exit 1
   printf '%s\n\n' diagnose > "$DIR/$2.action.tmp" && mv "$DIR/$2.action.tmp" "$DIR/$2.action" || exit 1
   echo '正在执行环境诊断…' > "$DIR/$2.log"
@@ -163,11 +163,11 @@ case "$1" in
   exit "$code"
   ;;
  list)
-  mkdir -p "$DIR"
+  abp_mkdir_p "$DIR"
   for file in "$DIR"/*.done; do [ -f "$file" ] || continue; key=${file##*/}; key=${key%.done}; printf '%s\n' "$key"; done | "$BB" sort -r | "$BB" head -n 8
   ;;
  recent)
-  mkdir -p "$DIR" || exit 1
+  abp_mkdir_p "$DIR" || exit 1
   keys="$DIR/.recent-keys.$$"
   for file in "$DIR"/*.log; do [ -f "$file" ] || continue; key=${file##*/}; key=${key%.log}; printf '%s\n' "$key"; done |
    "$BB" sort -r | "$BB" head -n 120 > "$keys" || { rm -f "$keys"; exit 1; }
@@ -182,7 +182,7 @@ case "$1" in
   rm -f "$keys"
   ;;
  recent-full)
-  mkdir -p "$DIR" || exit 1
+  abp_mkdir_p "$DIR" || exit 1
   keys="$DIR/.recent-full-keys.$$"
   for file in "$DIR"/*.log; do [ -f "$file" ] || continue; key=${file##*/}; key=${key%.log}; printf '%s\n' "$key"; done |
    "$BB" sort -r | "$BB" head -n 20 > "$keys" || { rm -f "$keys"; exit 1; }
@@ -207,7 +207,7 @@ case "$1" in
   tail -c 12000 "$DIR/$2.log"
   ;;
  clear)
-  mkdir -p "$DIR" || exit 1
+  abp_mkdir_p "$DIR" || exit 1
   # Never delete an in-progress job's .log: poll needs that file even
   # when another WebUI session clears completed records.
   for file in "$DIR"/*.done; do
@@ -226,7 +226,7 @@ case "$1" in
   case "$3" in --filtering|--takeover) case "$4" in on|off) ;; *) exit 1;; esac ;; esac
   if [ "$3" = --observe ]; then case "$4" in 5|10|15|30|60|90) ;; *) exit 1;; esac; fi
   if [ "$3" = --rollback-history ]; then echo "$4" | "$BB" grep -Eq '^[0-9]{14}-[0-9]+$' || exit 1; fi
-  mkdir -p "$DIR" || exit 1
+  abp_mkdir_p "$DIR" || exit 1
   # Atomic exclusive creation rejects a duplicate job ID.
   ( set -C; : > "$DIR/$2.log" ) 2>/dev/null || exit 1
   log_argument=$4
@@ -300,7 +300,7 @@ case "$1" in
   [ -n "$encoded" ] && [ ${#encoded} -le 100000 ] || exit 1
   case "$encoded" in *[!A-Za-z0-9+/=]*) exit 1 ;; esac
   debug_dir=/data/adb/bindhosts_personal/debug
-  mkdir -p "$debug_dir" || exit 1
+  abp_mkdir_p "$debug_dir" || exit 1
   chmod 700 "$debug_dir" || exit 1
   tmp="$debug_dir/observation.tmp.$$"
   printf '%s' "$encoded" | "$BB" base64 -d > "$tmp" || { rm -f "$tmp"; exit 1; }

@@ -5,7 +5,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
 
-function installFixture(t, family, preference, failWrite = false, failPermission = false) {
+function installFixture(t, family, preference, failWrite = false, failPermission = false, mkdirFault = '') {
   const root = rootFixture(t); root.addBusybox(family);
   const state = path.join(root.dir, 'state'), runtime = path.join(root.dir, 'runtime');
   const module = path.join(root.dir, 'module'), stage = path.join(root.dir, 'stage');
@@ -40,11 +40,52 @@ function installFixture(t, family, preference, failWrite = false, failPermission
   writeFileSync(script, 'ui_print() { echo "$1"; }\nabort() { echo "$1" >&2; exit 1; }\ngetprop() { echo arm64-v8a; }\niptables() { return 0; }\nchown() { :; }\n' +
     (failPermission ? `chmod() { if [ "$1" = 700 ] && [ "$2" = '${shellPath(runtime)}/bin' ]; then return 1; fi; command chmod "$@"; }\n` : '') +
     (failWrite ? 'mv() { case "$2" in */dns-takeover) return 1;; esac; command mv "$@"; }\n' : '') + remap(readFileSync(new URL('../customize.sh', import.meta.url), 'utf8')));
+  let mockPath = process.env.PATH;
+  if (mkdirFault) {
+    const mockBin = path.join(root.dir, 'mock-bin');
+    mkdirSync(mockBin);
+    const mockMkdir = path.join(mockBin, 'mkdir');
+    writeFileSync(mockMkdir, `#!/bin/sh
+if [ "$1" = -p ]; then
+  case "$2" in /*) echo "mkdir: can't create directory '/': Invalid argument" >&2; exit 1;; esac
+fi
+if [ "\${ABP_TEST_BLOCKED:-}" = "$2" ] && [ "$1" = -- ]; then
+  echo 'simulated permission denied' >&2; exit 1
+fi
+exec /bin/mkdir "$@"
+`);
+    chmodSync(mockMkdir, 0o755);
+    mockPath = mockBin + path.delimiter + mockPath;
+  }
   const install = () => spawnSync('bash', [shellPath(script)], { timeout: 20000, encoding: 'utf8', env: {
     ...root.env(family), MODPATH: shellPath(module), TMPDIR: shellPath(root.dir), ZIPFILE: shellPath(zip),
+    PATH: mockPath, ABP_TEST_BLOCKED: mkdirFault === 'deny' ? shellPath(runtime) : '',
   } });
-  return { state, runtime, module, install };
+  return { state, runtime, module, install, mockPath };
 }
+
+test('fresh installation works when BusyBox mkdir -p rejects absolute paths', t => {
+  if (process.platform === 'win32') return t.skip('Unix shell fixture');
+  const f = installFixture(t, 'KernelSU', undefined, false, false, 'root');
+  const control = spawnSync('mkdir', ['-p', shellPath(path.join(f.runtime, 'control'))],
+    { encoding: 'utf8', env: { ...process.env, PATH: f.mockPath } });
+  assert.notEqual(control.status, 0);
+  assert.match(control.stderr, /Invalid argument/);
+  const result = f.install();
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(existsSync(path.join(f.runtime, 'bin/userfilters/adblock-pro-user-rules.txt')), true);
+  assert.equal(existsSync(path.join(f.state, 'shared-app-domains.txt')), true);
+});
+
+test('fresh installation still stops on a real directory creation failure', t => {
+  if (process.platform === 'win32') return t.skip('Unix shell fixture');
+  const f = installFixture(t, 'KernelSU', undefined, false, false, 'deny');
+  const result = f.install();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /Cannot create module data directories/);
+  assert.match(result.stderr, /simulated permission denied/);
+  assert.equal(existsSync(f.runtime), false);
+});
 
 for (const family of ['KernelSU', 'Magisk', 'APatch']) {
   test(family + ': first install enables takeover without bundling device-specific personal rules', t => {

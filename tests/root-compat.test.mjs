@@ -12,6 +12,40 @@ test('KernelSU description updates provide the module context expected by ksud',
   assert.doesNotMatch(base, /MODULE_ID="\$module_id" \/data\/adb\/ksud/);
 });
 
+test('KernelSU WebUI jobs and personal rules work when absolute mkdir -p fails', t => {
+  if (process.platform === 'win32') return t.skip('Unix shell fixture');
+  const fixture = rootFixture(t);
+  fixture.addBusybox('KernelSU');
+  const state = path.join(fixture.dir, 'state');
+  mkdirSync(state);
+  const mockBin = path.join(fixture.dir, 'mock-bin');
+  mkdirSync(mockBin);
+  const mockMkdir = path.join(mockBin, 'mkdir');
+  writeFileSync(mockMkdir, `#!/bin/sh
+if [ "$1" = -p ]; then
+  case "$2" in /*) echo "mkdir: can't create directory '/': Invalid argument" >&2; exit 1;; esac
+fi
+exec /bin/mkdir "$@"
+`);
+  chmodSync(mockMkdir, 0o755);
+  for (const file of ['webui-job.sh', 'webui-config.sh']) {
+    const source = readFileSync(new URL('../' + file, import.meta.url), 'utf8')
+      .replaceAll('/data/adb/bindhosts_personal', shellPath(state))
+      .replaceAll('/system/bin/sh', 'bash');
+    writeFileSync(path.join(fixture.dir, file), source);
+  }
+  const env = { ...fixture.env('KernelSU'), PATH: mockBin + path.delimiter + process.env.PATH };
+  const control = spawnSync('mkdir', ['-p', shellPath(path.join(state, 'control'))], { encoding: 'utf8', env });
+  assert.notEqual(control.status, 0);
+  assert.match(control.stderr, /Invalid argument/);
+  const job = shellPath(path.join(fixture.dir, 'webui-job.sh'));
+  const result = spawnSync('bash', [job, 'config', 'add-whitelist', 'login.example.com', '1001'],
+    { encoding: 'utf8', env, timeout: 10000 });
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(readFileSync(path.join(state, 'whitelist.txt'), 'utf8').trim(), 'login.example.com');
+  assert.equal(readFileSync(path.join(state, 'webui-jobs', '1001.done'), 'utf8').trim(), '0');
+});
+
 for (const family of ['KernelSU', 'Magisk', 'APatch']) {
   test(family + ': reads logs, saves personal rules and launches workers with its own tools', async t => {
     const fixture = rootFixture(t);

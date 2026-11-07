@@ -38,7 +38,7 @@ restore_state() {
     [ -e "$item" ] || [ -L "$item" ] || continue
     name=${item##*/}
     if [ "$name" = ai ]; then
-      mkdir -p "$STATE/ai" || return 1
+      abp_mkdir_p "$STATE/ai" || return 1
       for ai_item in "$item"/* "$item"/.[!.]* "$item"/..?*; do
         [ -e "$ai_item" ] || [ -L "$ai_item" ] || continue
         mv "$ai_item" "$STATE/ai/" || return 1
@@ -55,7 +55,7 @@ restore_runtime() {
   for item in settings.conf admin.auth bin/AdGuardHome.yaml bin/data bin/userfilters; do
     if [ -e "$stage/old-runtime/$item" ]; then
       rm -rf "$AGH/$item" || return 1
-      mkdir -p "${AGH}/$(dirname "$item")" || return 1
+      abp_mkdir_p "${AGH}/$(dirname "$item")" || return 1
       mv "$stage/old-runtime/$item" "$AGH/$item" || return 1
     elif [ "$runtime_moved" = 1 ]; then
       rm -rf "$AGH/$item" || return 1
@@ -115,11 +115,11 @@ reset_defaults() {
   }
 
   backup_dir=${ABP_EXPORT_DIR:-/sdcard/Download/AdBlock Pro}
-  mkdir -p "$backup_dir" || { echo '[!] Cannot create the AdBlock Pro download directory.' >&2; return 1; }
+  abp_mkdir_p "$backup_dir" || { echo '[!] Cannot create the AdBlock Pro download directory.' >&2; return 1; }
   chmod 755 "$backup_dir" || { echo '[!] Cannot make the AdBlock Pro download directory accessible.' >&2; return 1; }
   stamp=$(date '+%Y%m%d-%H%M%S')
   private_dir="$AGH/backups"
-  [ ! -L "$private_dir" ] && mkdir -p "$private_dir" && chmod 700 "$private_dir" || {
+  [ ! -L "$private_dir" ] && abp_mkdir_p "$private_dir" && chmod 700 "$private_dir" || {
     echo '[!] Cannot protect the private recovery directory; nothing was changed.' >&2; return 1;
   }
   backup="$private_dir/AdBlock-Pro-default-settings-$stamp.tar.gz"
@@ -137,7 +137,7 @@ reset_defaults() {
   stopped=0
   state_moved=0
   runtime_moved=0
-  mkdir -p "$old_state" "$old_runtime/bin" "$new_state" "$new_runtime/bin/data/filters" "$new_runtime/bin/userfilters" "$backup_state" "$backup_runtime/bin" || {
+  abp_mkdir_p "$old_state" "$old_runtime/bin" "$new_state" "$new_runtime/bin/data/filters" "$new_runtime/bin/userfilters" "$backup_state" "$backup_runtime/bin" || {
     rm -rf "$stage"; echo '[!] Cannot prepare a safe reset workspace.' >&2; return 1;
   }
 
@@ -191,7 +191,7 @@ reset_defaults() {
     }
   done
   for item in settings.conf admin.auth bin/AdGuardHome.yaml bin/data bin/userfilters; do
-    mkdir -p "$backup_runtime/$(dirname "$item")" || {
+    abp_mkdir_p "$backup_runtime/$(dirname "$item")" || {
       rm -rf "$stage"; echo '[!] Cannot prepare AdGuard Home backup files; original settings were not changed.' >&2; return 1;
     }
     cp -R "$AGH/$item" "$backup_runtime/$item" || {
@@ -213,7 +213,7 @@ reset_defaults() {
   # Shared storage cannot enforce Root-only permissions. Export only known
   # rule lists/preferences; credentials, subscription URLs and logs stay private.
   export_stage="$stage/rules-export"
-  mkdir -p "$export_stage" || { rm -rf "$stage"; return 1; }
+  abp_mkdir_p "$export_stage" || { rm -rf "$stage"; return 1; }
   for name in blacklist.txt whitelist.txt auto-update autostart dns-takeover vpn-compat; do
     [ ! -f "$STATE/$name" ] || cp "$STATE/$name" "$export_stage/$name" || { rm -rf "$stage"; return 1; }
   done
@@ -235,7 +235,7 @@ reset_defaults() {
     [ -e "$item" ] || [ -L "$item" ] || continue
     name=${item##*/}
     if [ "$name" = ai ]; then
-      mkdir -p "$old_state/ai" || fail_after_stop "Cannot stage existing AI settings."
+      abp_mkdir_p "$old_state/ai" || fail_after_stop "Cannot stage existing AI settings."
       for ai_item in "$STATE/ai"/* "$STATE/ai"/.[!.]* "$STATE/ai"/..?*; do
         [ -e "$ai_item" ] || [ -L "$ai_item" ] || continue
         [ "${ai_item##*/}" = worker.lock ] && continue
@@ -249,14 +249,14 @@ reset_defaults() {
   state_moved=1
 
   for item in settings.conf admin.auth bin/AdGuardHome.yaml bin/data bin/userfilters; do
-    mkdir -p "$old_runtime/$(dirname "$item")" || fail_after_stop "Cannot prepare runtime rollback files."
+    abp_mkdir_p "$old_runtime/$(dirname "$item")" || fail_after_stop "Cannot prepare runtime rollback files."
     mv "$AGH/$item" "$old_runtime/$item" || fail_after_stop "Cannot stage existing AdGuard Home data."
   done
   runtime_moved=1
 
-  mkdir -p "$AGH/bin" || fail_after_stop 'Cannot prepare AdGuard Home runtime directories.'
+  abp_mkdir_p "$AGH/bin" || fail_after_stop 'Cannot prepare AdGuard Home runtime directories.'
   for item in settings.conf admin.auth bin/AdGuardHome.yaml bin/data bin/userfilters; do
-    mkdir -p "$AGH/$(dirname "$item")" || fail_after_stop 'Cannot prepare AdGuard Home runtime directories.'
+    abp_mkdir_p "$AGH/$(dirname "$item")" || fail_after_stop 'Cannot prepare AdGuard Home runtime directories.'
     mv "$new_runtime/$item" "$AGH/$item" || fail_after_stop 'Cannot install fresh AdGuard Home defaults.'
   done
   for item in "$new_state"/*; do
@@ -294,7 +294,7 @@ case "${1:-}" in
     case "$1" in *[!0-9]*) echo '[!] 默认设置恢复任务编号无效。' >&2; exit 1 ;; esac
     [ ${#1} -le 20 ] || { echo '[!] 默认设置恢复任务编号无效。' >&2; exit 1; }
     [ -d "$AGH" ] && [ -d "$STATE" ] || { echo '[!] Module data paths are incomplete; nothing was changed.' >&2; exit 1; }
-    mkdir -p "$STATE/ai" || { echo '[!] Cannot prepare the AI task lock.' >&2; exit 1; }
+    abp_mkdir_p "$STATE/ai" || { echo '[!] Cannot prepare the AI task lock.' >&2; exit 1; }
     reset_guard="$AGH/factory-reset.active"
     if [ -e "$reset_guard" ]; then
       old_pid=$(cat "$reset_guard" 2>/dev/null)
