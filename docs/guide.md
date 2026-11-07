@@ -183,7 +183,9 @@ AdBlock-Pro/
 └── .github/workflows/      # GitHub Actions 自动检查
 ```
 
-运行时的个人设置保存在 `/data/adb/bindhosts_personal/`，AdGuard Home 相关文件保存在 `/data/adb/adblockpro/`。公开源码不预置设备个人黑白名单；安装后可通过 WebUI 添加和管理自己的域名。
+运行时的个人设置保存在 `/data/adb/adblockpro/state/`，AdGuard Home 相关文件仍保存在 `/data/adb/adblockpro/`。新版启用后的重启过程中会尝试将旧目录 `/data/adb/bindhosts_personal/` 原子迁入新位置；迁移成功后，旧路径保留为指向新目录的兼容符号链接，实际数据只有一份。如果设备不支持迁移所需的原子操作，模块会保留旧目录布局并继续运行，不代表所有设备都已迁移。公开源码不预置设备个人黑白名单；安装后可通过 WebUI 添加和管理自己的域名。
+
+降级到 v0.14.4 或更旧版本前，请在新版仍运行时以 Root 执行 `/data/adb/adblockpro/bin/adblock-bootstrap prepare-downgrade`。命令成功后立即安装旧版本安装包，再重启设备；如果命令失败，请先保留当前版本并检查错误。若准备后先重启且仍运行新版，新版开机时会自动再次迁回新目录，因此需要重新执行准备命令，再安装旧包并重启。
 
 ## 版本与验证
 

@@ -41,7 +41,7 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) {
         .replaceAll('/data/adb/modules/bindhosts_personal', shellPath(module))
         .replaceAll('/data/adb/modules/AdGuardHome', shellPath(path.join(root.dir, 'absent-conflicting-module')));
     }
-    const files = ['action.sh', 'module.prop', 'service.sh', 'uninstall.sh', 'bindhosts.sh',
+    const files = ['action.sh', 'module.prop', 'post-fs-data.sh', 'service.sh', 'uninstall.sh', 'bindhosts.sh',
       'webui-config.sh', 'webui-job.sh', 'settings.conf', 'config-blacklist.txt', 'config-whitelist.txt',
       'rules/shared-app-domains.txt', 'rules/source-registry.tsv', 'certs/cacert.pem',
       ...readdirSync(new URL('../scripts/', import.meta.url)).map(name => 'scripts/' + name),

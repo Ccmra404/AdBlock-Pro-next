@@ -9,7 +9,7 @@ import struct
 import zipfile
 
 REQUIRED = {
-    'module.prop', 'customize.sh', 'service.sh', 'uninstall.sh', 'action.sh',
+    'module.prop', 'customize.sh', 'post-fs-data.sh', 'service.sh', 'uninstall.sh', 'action.sh',
     'bindhosts.sh', 'webui-config.sh', 'webui-job.sh', 'settings.conf',
     'config-blacklist.txt', 'config-whitelist.txt', 'webroot/index.html',
     'webroot/app.js', 'webroot/kernelsu.js', 'scripts/compat.sh',

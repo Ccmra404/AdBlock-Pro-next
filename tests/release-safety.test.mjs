@@ -43,7 +43,7 @@ test('rule and shared-list HTTPS downloads explicitly use the bundled CA without
 
 test('changes to every installable file family trigger ARM64 package validation', () => {
   for (const pattern of [
-    'tools/bootstrap/**', 'customize.sh', 'module.prop', 'action.sh',
+    'tools/bootstrap/**', 'customize.sh', 'post-fs-data.sh', 'module.prop', 'action.sh',
     'service.sh', 'uninstall.sh', 'bindhosts.sh', 'webui-config.sh',
     'webui-job.sh', 'scripts/**', 'rules/**', 'settings.conf', 'webroot/**',
     'META-INF/**', 'bin/AdGuardHome', 'bin/data/filters/**', 'certs/**',
@@ -58,6 +58,7 @@ test('unprivileged packaging cannot publish and validates exact candidate conten
   assert.match(workflow.split('jobs:')[0], /contents: read/);
   assert.doesNotMatch(packageJob, /contents: write|gh release create/);
   assert.match(packageJob, /validate_module_zip.py/);
+  assert.match(packageJob, /cp module\.prop[^\n]*post-fs-data\.sh/);
   assert.match(workflow, /sha256sum -c/);
   assert.match(workflow, /github.event.pull_request.head.sha/);
 });
