@@ -64,7 +64,7 @@ fi
 abp_mkdir_error="$TMPDIR/adblock-pro-mkdir-error.$$"
 abp_mkdir_failed=0
 for abp_dir in "$MODPATH" "$DATA_DIR" "$STATE_DIR"; do
-  if ! mkdir -p "$abp_dir" 2>"$abp_mkdir_error"; then
+  if ! abp_mkdir_p "$abp_dir" 2>"$abp_mkdir_error"; then
     abp_mkdir_failed=1
     ui_print "[AdBlock Pro] Cannot create directory: $abp_dir"
     while IFS= read -r abp_line || [ -n "$abp_line" ]; do
@@ -75,14 +75,14 @@ done
 rm -f "$abp_mkdir_error"
 [ "$abp_mkdir_failed" -eq 0 ] || fail "Cannot create module data directories."
 # OpenSSL cannot use Android's old-hash CA directory as its native trust store.
-mkdir -p "$DATA_DIR/certs" || fail "Cannot prepare the CA certificate directory."
+abp_mkdir_p "$DATA_DIR/certs" || fail "Cannot prepare the CA certificate directory."
 cp "$ca_file" "$DATA_DIR/certs/cacert.pem" || fail "Cannot install the CA certificate bundle."
 chmod 644 "$DATA_DIR/certs/cacert.pem" || fail "Cannot read the installed CA certificate bundle."
 
 # Keep the current package defaults separately from persistent user settings so
 # the WebUI can safely restore a fresh-install state after an overlay upgrade.
 defaults_tmp="$DATA_DIR/.defaults.new.$$"
-mkdir -p "$defaults_tmp" || fail "Cannot prepare factory-reset defaults."
+abp_mkdir_p "$defaults_tmp" || fail "Cannot prepare factory-reset defaults."
 unzip -oq "$ZIPFILE" "settings.conf" "config-blacklist.txt" "config-whitelist.txt" \
   "bin/data/filters/10007.txt" "bin/data/filters/1791638912.txt" -d "$defaults_tmp" || {
     rm -rf "$defaults_tmp"
@@ -91,7 +91,7 @@ unzip -oq "$ZIPFILE" "settings.conf" "config-blacklist.txt" "config-whitelist.tx
 for file in settings.conf config-blacklist.txt config-whitelist.txt bin/data/filters/10007.txt bin/data/filters/1791638912.txt; do
   [ -s "$defaults_tmp/$file" ] || { rm -rf "$defaults_tmp"; fail "Factory-reset default is missing: $file."; }
 done
-mkdir -p "$DATA_DIR/defaults/filters" || { rm -rf "$defaults_tmp"; fail "Cannot install factory-reset defaults."; }
+abp_mkdir_p "$DATA_DIR/defaults/filters" || { rm -rf "$defaults_tmp"; fail "Cannot install factory-reset defaults."; }
 mv -f "$defaults_tmp/settings.conf" "$DATA_DIR/defaults/settings.conf" &&
   mv -f "$defaults_tmp/config-blacklist.txt" "$DATA_DIR/defaults/config-blacklist.txt" &&
   mv -f "$defaults_tmp/config-whitelist.txt" "$DATA_DIR/defaults/config-whitelist.txt" &&
@@ -164,7 +164,7 @@ for file in bindhosts.sh webui-config.sh webui-job.sh; do
 done
 
 unzip -oq "$ZIPFILE" "scripts/*" -d "$DATA_DIR" || fail "Cannot extract runtime scripts."
-mkdir -p "$MODPATH/scripts" || fail "Cannot prepare shared root helpers."
+abp_mkdir_p "$MODPATH/scripts" || fail "Cannot prepare shared root helpers."
 cp "$compat_file" "$MODPATH/scripts/compat.sh" || fail "Cannot install the root compatibility helper."
 unzip -oq "$ZIPFILE" "scripts/adb-debug.sh" -d "$MODPATH" || fail "Cannot install the ADB diagnostics helper."
 chmod 755 "$MODPATH/scripts/adb-debug.sh" || fail "Cannot prepare the ADB diagnostics helper."
@@ -172,7 +172,7 @@ if unzip -l "$ZIPFILE" | grep -Eq '^[[:space:]]*[0-9]+[[:space:]].*[[:space:]]de
   unzip -oq "$ZIPFILE" "debug-build" -d "$MODPATH" || fail "Cannot enable the Debug build marker."
 fi
 : > "$MODPATH/skip_mount"
-mkdir -p "$DATA_DIR/.install/bin" "$DATA_DIR/bin" || fail "Cannot prepare the AdGuard Home upgrade directory."
+abp_mkdir_p "$DATA_DIR/.install/bin" "$DATA_DIR/bin" || fail "Cannot prepare the AdGuard Home upgrade directory."
 cp "$CURL" "$DATA_DIR/bin/curl" || fail "Cannot install the bundled curl binary."
 chmod 755 "$DATA_DIR/bin/curl" || fail "Cannot make the bundled curl binary executable."
 unzip -oq "$ZIPFILE" "bin/adblock-ai" -d "$DATA_DIR/.install" || fail "Missing optional AI analysis helper."
@@ -217,7 +217,7 @@ fi
 ensure_user_filter_path() {
   yaml="$DATA_DIR/bin/AdGuardHome.yaml"
   pattern='/data/adb/adblockpro/bin/userfilters/*'
-  mkdir -p "$DATA_DIR/bin/userfilters" || return 1
+  abp_mkdir_p "$DATA_DIR/bin/userfilters" || return 1
   "$BB" grep -Fq "$pattern" "$yaml" && return 0
   backup="$STATE_DIR/AdGuardHome.yaml.before-user-filter"
   [ -f "$backup" ] || cp -p "$yaml" "$backup" || return 1
@@ -250,7 +250,7 @@ ensure_user_filter_path || fail "Cannot safely allow the module's private rule f
 chmod 600 "$DATA_DIR/admin.auth" "$DATA_DIR/bin/AdGuardHome.yaml" || fail "Cannot protect local DNS credentials."
 
 if [ ! -f "$STATE_DIR/v3-installed" ]; then
-  mkdir -p "$STATE_DIR/legacy-hosts-v2"
+  abp_mkdir_p "$STATE_DIR/legacy-hosts-v2"
   for file in sources.txt custom-sources.txt disabled-sources.txt blocking-mode auto-update; do
     [ ! -f "$STATE_DIR/$file" ] || cp -p "$STATE_DIR/$file" "$STATE_DIR/legacy-hosts-v2/$file"
   done

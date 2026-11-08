@@ -60,4 +60,28 @@ abp_find_curl() {
   return 1
 }
 
+# Some Android kernels incorrectly reject BusyBox mkdir -p when it probes /.
+abp_mkdir_one() {
+  local dir parent
+  dir=$1
+  [ -n "$dir" ] || { echo 'mkdir: empty directory name' >&2; return 1; }
+  while [ "$dir" != / ] && [ "${dir%/}" != "$dir" ]; do dir=${dir%/}; done
+  [ -d "$dir" ] && return 0
+  case "$dir" in
+    */*) parent=${dir%/*}; [ -n "$parent" ] || parent=/ ;;
+    *) parent=. ;;
+  esac
+  [ "$parent" != "$dir" ] || return 1
+  abp_mkdir_one "$parent" || return 1
+  [ -d "$dir" ] && return 0
+  case "$dir" in .|..|*/.|*/..) return 1 ;; esac
+  "$BB" mkdir -- "$dir" || [ -d "$dir" ]
+}
+
+abp_mkdir_p() {
+  local dir
+  [ "$#" -gt 0 ] || { echo 'mkdir: missing directory name' >&2; return 1; }
+  for dir do abp_mkdir_one "$dir" || return 1; done
+}
+
 abp_find_busybox || return 1

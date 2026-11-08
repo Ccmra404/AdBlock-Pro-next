@@ -15,7 +15,7 @@ RUNTIME_REQUEST=$RUNTIME_STATE/runtime-request
 # can cancel a slow start. A newer request always supersedes an older one.
 record_runtime_request() {
   umask 077
-  mkdir -p "$RUNTIME_STATE" || return 1
+  abp_mkdir_p "$RUNTIME_STATE" || return 1
   runtime_request="$1:$(date +%s):$$"
   printf '%s\n' "$runtime_request" > "$RUNTIME_REQUEST.$$.tmp" &&
     mv -f "$RUNTIME_REQUEST.$$.tmp" "$RUNTIME_REQUEST"
@@ -246,7 +246,7 @@ __transition_locked)
 recover)
   runtime_request=$(cat "$RUNTIME_REQUEST" 2>/dev/null)
   case "$runtime_request" in run:*) ;; *) exit 75 ;; esac
-  mkdir -p "$RUNTIME_STATE/webui-jobs" || exit 1
+  abp_mkdir_p "$RUNTIME_STATE/webui-jobs" || exit 1
   # Busy maintenance is not a failed recovery attempt. Acquired-lock failures
   # return 2 below, distinct from flock's busy exit 1 and stale request 75.
   exec "$BB" flock -n "$RUNTIME_STATE/webui-jobs/worker.lock" "$BB" flock -n "$RUNTIME_STATE/update.lock" \

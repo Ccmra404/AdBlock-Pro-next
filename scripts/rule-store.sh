@@ -8,7 +8,7 @@ SOURCE=${ABP_SHARED_RULES_URL:-https://raw.githubusercontent.com/Ccmra404/AdBloc
 SHARED=$STATE/shared-app-domains.txt
 FILTER=$AGH/bin/userfilters/adblock-pro-shared-app-rules.txt
 umask 077
-mkdir -p "$STATE" "$AGH/bin/userfilters" || exit 1
+abp_mkdir_p "$STATE" "$AGH/bin/userfilters" || exit 1
 work="$STATE/.rule-store.$$"
 mkdir "$work" || exit 1
 trap 'rm -rf "$work"' EXIT
@@ -177,7 +177,7 @@ case "$1" in
     case "$3" in ''|*[!0-9]*) exit 1 ;; esac
     [ ${#3} -le 20 ] || exit 1
     folder=${ABP_EXPORT_DIR:-/sdcard/Download/AdBlock Pro}
-    mkdir -p "$folder" || exit 1
+    abp_mkdir_p "$folder" || exit 1
     chmod 755 "$folder" || exit 1
     case "$2" in local) export_name=personal-rules ;; shared) export_name=shared-rules ;; esac
     file="$folder/AdBlock-Pro-$export_name-$3.txt"
@@ -204,7 +204,7 @@ case "$1" in
     case "$4" in ''|*[!A-Za-z0-9+/=]*) exit 1 ;; esac
     [ ${#4} -le 90000 ] || exit 1
     folder=${ABP_EXPORT_DIR:-/sdcard/Download/AdBlock Pro}
-    mkdir -p "$folder" || exit 1
+    abp_mkdir_p "$folder" || exit 1
     chmod 755 "$folder" || exit 1
     printf '%s' "$4" | "$BB" base64 -d > "$work/export" || exit 1
     [ -s "$work/export" ] && [ "$(wc -c < "$work/export" | tr -d '[:space:]')" -le 65536 ] || exit 1

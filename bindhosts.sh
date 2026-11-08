@@ -150,7 +150,7 @@ observe_capture() {
     observe_activity=$(cmd package resolve-activity --brief --user 0 -a android.intent.action.MAIN -c android.intent.category.LAUNCHER "$observe_package" 2>/dev/null | "$BB" tail -n 1)
     case "$observe_activity" in "$observe_package/"*) ;; *) echo '[!] 应用未安装或没有可启动入口，请重新选择。' >&2; return 1 ;; esac
   fi
-  mkdir -p "$OBS_DIR" || return 1
+  abp_mkdir_p "$OBS_DIR" || return 1
   chmod 700 "$OBS_DIR" 2>/dev/null
   if ! mkdir "$OBS_DIR/lock" 2>/dev/null; then echo '[!] A DNS observation is already active.' >&2; return 1; fi
   # The module normally keeps query logs in memory only. Refuse to start if
@@ -424,7 +424,7 @@ save_snapshot() {
   stamp=$(date '+%Y%m%d%H%M%S')
   key="$stamp-$count"
   stage="$HISTORY/.stage.$$"
-  mkdir -p "$stage/bin/data" "$stage/state" || return 1
+  abp_mkdir_p "$stage/bin/data" "$stage/state" || return 1
   cp "$AGH/bin/AdGuardHome.yaml" "$stage/bin/AdGuardHome.yaml" || { rm -rf "$stage"; return 1; }
   [ ! -d "$AGH/bin/data/filters" ] || cp -R "$AGH/bin/data/filters" "$stage/bin/data/filters" || { rm -rf "$stage"; return 1; }
   [ ! -d "$AGH/bin/userfilters" ] || cp -R "$AGH/bin/userfilters" "$stage/bin/userfilters" || { rm -rf "$stage"; return 1; }
@@ -433,7 +433,7 @@ save_snapshot() {
   done
   [ ! -f "$STATE/profiles-initialized" ] || cp "$STATE/profiles-initialized" "$stage/state/profiles-initialized" || { rm -rf "$stage"; return 1; }
   [ ! -d "$STATE/profiles" ] || cp -R "$STATE/profiles" "$stage/state/profiles" || { rm -rf "$stage"; return 1; }
-  mkdir -p "$HISTORY" || { rm -rf "$stage"; return 1; }
+  abp_mkdir_p "$HISTORY" || { rm -rf "$stage"; return 1; }
   tar -czf "$HISTORY/$key.tar.gz" -C "$stage" . || { rm -rf "$stage"; return 1; }
   rm -rf "$stage"
   LAST_SNAPSHOT=$key
@@ -446,7 +446,7 @@ restore_snapshot() {
   archive="$HISTORY/$key.tar.gz"
   [ -f "$archive" ] || { echo '[!] Snapshot not found.' >&2; return 1; }
   restore="$HISTORY/.restore.$$"
-  mkdir -p "$restore" || return 1
+  abp_mkdir_p "$restore" || return 1
   tar -xzf "$archive" -C "$restore" || { rm -rf "$restore"; return 1; }
   # Never overwrite a live resolver's configuration if safe stop failed.
   "$AGH/scripts/tool.sh" stop || { rm -rf "$restore"; echo '[!] Cannot stop DNS safely; rollback aborted.' >&2; return 1; }
@@ -789,7 +789,7 @@ sync_sources() {
   "$BB" sh "$config" list-sources > "$raw" || { rm -f "$raw" "$desired"; return 1; }
   "$BB" awk -F '\t' '$1=="source" && $5=="enabled" && $4!="shared" { print $4 "\t" $3 }' "$raw" > "$desired" || { rm -f "$raw" "$desired"; return 1; }
   rm -f "$raw"
-  mkdir -p "$work" "$AGH/bin/userfilters" || { rm -f "$desired"; return 1; }
+  abp_mkdir_p "$work" "$AGH/bin/userfilters" || { rm -f "$desired"; return 1; }
   api GET /filtering/status 8 > "$status_file" || { rm -rf "$work"; rm -f "$desired"; return 1; }
   "$BOOTSTRAP" filtering-check-status < "$status_file" >/dev/null || {
     echo '[!] AdGuard Home returned an invalid filter list; subscription state was not changed.' >&2
@@ -926,7 +926,7 @@ sync_sources() {
 }
 write_personal_filter() {
   filter_dir="$AGH/bin/userfilters"
-  mkdir -p "$filter_dir" || return 1
+  abp_mkdir_p "$filter_dir" || return 1
   tmp="$USER_FILTER.tmp.$$"
   printf '! AdBlock Pro personal allow and block rules\n' > "$tmp" || return 1
   for kind in blacklist whitelist; do
@@ -1216,7 +1216,7 @@ case "$1" in
     ;;
   --auto-update)
     if [ "${ABP_UPDATE_LOCKED:-0}" != 1 ]; then
-      mkdir -p "$STATE/webui-jobs" || exit 1
+      abp_mkdir_p "$STATE/webui-jobs" || exit 1
       export ABP_UPDATE_LOCKED=1
       exec "$BB" flock -n "$STATE/webui-jobs/worker.lock" "$BB" flock -n "$STATE/update.lock" "$BB" sh "$0" --auto-update
     fi

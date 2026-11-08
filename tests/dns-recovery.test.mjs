@@ -16,6 +16,7 @@ function fixture(t, { realStart = false } = {}) {
   const tool = path.join(agh, 'scripts/tool.sh'), calls = path.join(f.dir, 'calls');
   writeFileSync(path.join(agh, 'bin/agh.pid'), '777\n');
   const prefix = `#!/usr/bin/env bash
+. '${shellPath(f.compatFile)}' || exit 1
 BB='${shellPath(f.paths.Magisk)}'
 AGH_DIR='${shellPath(agh)}'
 BIN_DIR="$AGH_DIR/bin"
@@ -129,7 +130,7 @@ for (const lock of ['runtime.lock', 'update.lock', 'webui-jobs/worker.lock']) {
     if (process.platform === 'win32' || spawnSync('flock', ['--version']).status !== 0) return t.skip('requires Linux flock');
     const f = fixture(t); f.request('run:manual');
     // Use real flock, unlike rootFixture's cross-platform capability stub.
-    writeFileSync(f.f.paths.Magisk, '#!/bin/sh\n[ "$1" != sh ] || { shift; exec bash "$@"; }\nexec "$@"\n');
+    writeFileSync(f.f.paths.Magisk, '#!/bin/sh\n[ "$1" != --list ] || { printf "%s\\n" sh awk flock nohup setuidgid inotifyd; exit; }\n[ "$1" != sh ] || { shift; exec bash "$@"; }\nexec "$@"\n');
     const r = spawnSync('flock', ['-n', path.join(f.state, lock), 'bash', f.tool, 'recover'], { encoding: 'utf8', env: f.f.env('Magisk') });
     assert.equal(r.status, 1, r.stderr);
     assert.equal(f.output(), '');
@@ -148,7 +149,7 @@ test('a queued pause supersedes a slow start while the real lifecycle lock is he
   if (process.platform === 'win32' || spawnSync('flock', ['--version']).status !== 0) return t.skip('requires Linux flock');
   const f = fixture(t, { realStart: true });
   writeFileSync(path.join(f.agh, 'alive'), '');
-  writeFileSync(f.f.paths.Magisk, '#!/bin/sh\n[ "$1" != sh ] || { shift; exec bash "$@"; }\nexec "$@"\n');
+  writeFileSync(f.f.paths.Magisk, '#!/bin/sh\n[ "$1" != --list ] || { printf "%s\\n" sh awk flock nohup setuidgid inotifyd; exit; }\n[ "$1" != sh ] || { shift; exec bash "$@"; }\nexec "$@"\n');
   const children = [];
   const launch = (action, env = {}) => {
     const child = spawn('bash', [f.tool, action], { env: { ...f.f.env('Magisk'), ...env }, stdio: 'ignore' });
