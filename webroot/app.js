@@ -221,7 +221,8 @@ function ruleList(kind) {
 function listResultsMarkup(kind) {
   const items = state.lists[kind] || [];
   const query = state.listSearch[kind].trim().toLowerCase();
-  const matches = query ? items.filter(domain => domain.toLowerCase().includes(query)) : items;
+  // loadList canonicalizes saved domains to lowercase before they enter state.
+  const matches = query ? items.filter(domain => domain.includes(query)) : items;
   const needsPagination = matches.length > LIST_PAGINATION_THRESHOLD;
   const pageCount = needsPagination ? Math.ceil(matches.length / LIST_PAGE_SIZE) : 1;
   state.listPage[kind] = Math.min(state.listPage[kind], pageCount - 1);
@@ -422,7 +423,7 @@ function appFilterEntries() {
     }
     const excluded = new Set(state.appFilterExcluded);
     const sorted = [...entries.values()].sort((a, b) => Number(excluded.has(b.key)) - Number(excluded.has(a.key)) || a.label.localeCompare(b.label, 'zh-CN'));
-    appFilterCache = { apps: state.apps, excluded: state.appFilterExcluded, entries: sorted,
+    appFilterCache = { apps: state.apps, excluded: state.appFilterExcluded, excludedKeys: excluded, entries: sorted,
       search: sorted.map(app => `${app.label} ${app.key}`.normalize('NFKC').toLowerCase()) };
   }
   const query = state.appFilterQuery.trim().normalize('NFKC').toLowerCase();
@@ -433,7 +434,7 @@ function appFilterResultsMarkup() {
   state.appFilterPage = Math.min(Math.max(0, state.appFilterPage), count - 1);
   const disabled = state.busy || state.appFilterBusy || state.appFilterLoading || !state.appFilterLoaded;
   const rows = entries.slice(state.appFilterPage * LIST_PAGE_SIZE, (state.appFilterPage + 1) * LIST_PAGE_SIZE).map(app => {
-    const excluded = state.appFilterExcluded.includes(app.key);
+    const excluded = appFilterCache.excludedKeys.has(app.key);
     const detail = `${app.packageName}${app.key.startsWith('0:') ? '' : ` · 用户 ${app.key.split(':')[0]}`}${app.listed ? '' : ' · 当前应用列表不可见，可恢复参与过滤'}`;
     return `<div class="app-filter-row"><div class="app-filter-copy"><strong>${esc(app.label)}</strong><small>${esc(detail)}</small><span class="${excluded ? 'status-warn' : 'status-good'}">${excluded ? '已排除' : '参与过滤'}</span></div><label class="switch" aria-label="${esc(`${app.label} 参与模块 DNS 过滤`)}"><input type="checkbox" data-app-filter="${esc(app.key)}" ${excluded ? '' : 'checked'} ${disabled ? 'disabled' : ''}><span class="track"></span></label></div>`;
   }).join('');
@@ -524,8 +525,19 @@ function renderLogList() {
   if (list) list.innerHTML = logListMarkup();
 }
 function domainInList(domain, list) {
-  return (list || []).some(item => domain === item || domain.endsWith(`.${item}`));
+  const entries = Array.isArray(list) ? list : [];
+  if (entries.length < 64) return entries.some(item => domain === item || domain.endsWith(`.${item}`));
+  // loadList replaces these canonical arrays when server data changes.
+  let index = domainListIndexes.get(entries);
+  if (!index) { index = new Set(entries); domainListIndexes.set(entries, index); }
+  for (let candidate = domain; ; ) {
+    if (index.has(candidate)) return true;
+    const dot = candidate.indexOf('.');
+    if (dot < 0) return false;
+    candidate = candidate.slice(dot + 1);
+  }
 }
+const domainListIndexes = new WeakMap();
 function classifyObservedDomain(item) {
   const domain = item.domain;
   if (domainInList(domain, state.lists.whitelist)) return { label: '白名单', tone: 'yellow', add: false };
@@ -536,9 +548,15 @@ function classifyObservedDomain(item) {
   return adHint ? { label: '疑似广告/跟踪', tone: 'yellow', add: true } : { label: '未识别，需核对', tone: '', add: true };
 }
 function selectedObservationDomains() {
-  const observed = new Set(state.observationDomains.map(item => item.domain));
+  const domains = state.observationDomains;
+  let observed = observationDomainIndexes.get(domains);
+  if (!observed) {
+    observed = new Set(domains.map(item => item.domain));
+    observationDomainIndexes.set(domains, observed);
+  }
   return [...new Set(state.selectedObservationDomains || [])].filter(domain => validObservedDomain(domain) && observed.has(domain));
 }
+const observationDomainIndexes = new WeakMap();
 function observationExportText() {
   const selected = selectedObservationDomains();
   return selected.length ? `${selected.join('\n')}\n` : '';
@@ -1469,6 +1487,7 @@ async function importPersonalFile(file) {
 }
 
 let applicationsPending = null;
+let applicationCatalogueIndex = null;
 let applicationMatchesCache = null;
 async function loadApplications(force = false) {
   if (applicationsPending) return applicationsPending;
@@ -1484,15 +1503,22 @@ async function loadApplications(force = false) {
 function matchingApplications() {
   const query = state.appQuery.trim().normalize('NFKC').toLowerCase();
   if (!query) return [];
+  if (!applicationCatalogueIndex || applicationCatalogueIndex.apps !== state.apps) {
+    applicationCatalogueIndex = { apps: state.apps, entries: state.apps.map(app => ({
+      app, label: app.label.normalize('NFKC').toLowerCase(), packageName: app.packageName.toLowerCase(),
+    })) };
+    applicationMatchesCache = null;
+  }
   if (!applicationMatchesCache || applicationMatchesCache.apps !== state.apps || applicationMatchesCache.query !== query) {
-    applicationMatchesCache = { apps: state.apps, query, matches: state.apps.filter(x => x.label.normalize('NFKC').toLowerCase().includes(query) || x.packageName.toLowerCase().includes(query)) };
+    const entries = applicationCatalogueIndex.entries.filter(x => x.label.includes(query) || x.packageName.includes(query));
+    applicationMatchesCache = { apps: state.apps, query, matches: entries.map(x => x.app), exact: entries.filter(x => x.label === query || x.packageName === query).map(x => x.app) };
   }
   return applicationMatchesCache.matches;
 }
 function resolveApplication() {
   const matches = matchingApplications();
   const query = state.appQuery.trim().normalize('NFKC').toLowerCase();
-  const exact = matches.filter(x => x.label.normalize('NFKC').toLowerCase() === query || x.packageName.toLowerCase() === query);
+  const exact = applicationMatchesCache?.apps === state.apps && applicationMatchesCache.query === query ? applicationMatchesCache.exact : [];
   state.selectedApp = exact.length === 1 ? exact[0] : matches.length === 1 ? matches[0] : null;
 }
 function applicationResults() {
@@ -1854,3 +1880,4 @@ document.addEventListener('visibilitychange', () => {
   void refreshStatus(true);
   if (state.page === 'lists' && state.rulesView === 'local' && (state.appsLoaded || state.appQuery.trim())) void loadApplications(true);
 });
+
