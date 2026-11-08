@@ -56,6 +56,21 @@ test('search and paging only change visible rows, never saved exclusions', async
   assert.deepEqual(Array.from(h.state.appFilterExcluded), ['10:com.example.hidden']); assert.equal(h.pending.length, 0);
 });
 
+test('application search refreshes cached ordering and names when exclusions or catalogue change', () => {
+  const h = harness();
+  h.state.apps = [{ label: '全角Ａpp', packageName: 'com.example.one' }, { label: 'Music', packageName: 'com.example.two' }];
+  h.state.appFilterExcluded = ['0:com.example.two'];
+  assert.equal(h.appFilterEntries()[0].key, '0:com.example.two');
+  h.state.appFilterQuery = 'APP';
+  assert.deepEqual(Array.from(h.appFilterEntries(), item => item.key), ['0:com.example.one']);
+  h.state.appFilterExcluded = ['0:com.example.one'];
+  h.state.appFilterQuery = '';
+  assert.equal(h.appFilterEntries()[0].key, '0:com.example.one');
+  h.state.apps = [{ label: 'Replacement', packageName: 'com.example.new' }];
+  h.state.appFilterQuery = 'replacement';
+  assert.deepEqual(Array.from(h.appFilterEntries(), item => item.key), ['0:com.example.new']);
+});
+
 test('a single toggle sends only that package and preserves hidden exclusions', async () => {
   const h = harness(); h.state.apps = [visible]; await load(h, 'excluded\t10:com.example.hidden\n');
   const write = h.setAppFilter('0:com.example.music', false);

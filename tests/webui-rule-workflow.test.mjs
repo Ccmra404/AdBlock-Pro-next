@@ -454,6 +454,21 @@ test('selected observed domains are imported only after explicit confirmation an
  assert.match(toast.textContent,/已加入个人拦截名单/);
 });
 
+test('observed-domain import skips existing parent and child rules without changing the selected batch', async () => {
+ const h=harness(),modal={};
+ const selected=['ads.allowed.example','blocked.example','tracker.example','new.example','child.new.example'];
+ h.state.observationDomains=selected.map(domain=>({domain,count:1}));
+ h.state.selectedObservationDomains=selected;
+ h.state.lists.whitelist=['allowed.example'];
+ h.state.lists.blacklist=['blocked.example','deep.tracker.example'];
+ h.context.document.querySelector=s=>s==='#modal'?modal:null;
+ const button={dataset:{action:'observe-import-personal'}};
+ await h.handlers.click({target:{closest:s=>s.includes('[data-action]')?button:null}});
+ assert.equal(h.pending.length,0);
+ assert.match(modal.innerHTML,/新增 2 个拦截域名，跳过现有黑白名单重复或重叠项 3 个/);
+ assert.deepEqual(Array.from(h.state.selectedObservationDomains),selected);
+});
+
 test('AI or manual TXT import previews additions and skips existing or overlapping entries until confirmed',async()=>{
  const h=harness(),modal={},toast={};h.state.lists.blacklist=['ads.example'];h.state.lists.whitelist=['login.example'];
  h.context.document.querySelector=s=>s==='#modal'?modal:s==='#toast'?toast:null;h.context.setTimeout=()=>1;vm.runInContext('render=()=>{}',h.context);
