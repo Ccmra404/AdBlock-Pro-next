@@ -1,20 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, chmodSync, rmSync, lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
 
-function installFixture(t, family, preference, failWrite = false, failPermission = false, mkdirFault = '') {
+function installFixture(t, family, preference, failWrite = false, failPermission = false, mkdirFault = '', failMkdir = false) {
   const root = rootFixture(t); root.addBusybox(family);
   const state = path.join(root.dir, 'state'), runtime = path.join(root.dir, 'runtime');
   const module = path.join(root.dir, 'module'), stage = path.join(root.dir, 'stage');
+  if (failMkdir) {
+    const busybox = root.paths[family];
+    const source = readFileSync(busybox, 'utf8');
+    const hook = `  mkdir) shift; if [ "$1" = -- ] && [ "$2" = '${shellPath(runtime)}' ]; then echo 'mkdir fixture refusal: ${shellPath(runtime)}' >&2; exit 1; fi; exec /bin/mkdir "$@" ;;\n`;
+    writeFileSync(busybox, source.replace('case "$1" in\n', 'case "$1" in\n' + hook));
+  }
   for (const dir of [state, module, stage]) mkdirSync(dir);
   if (preference !== undefined) writeFileSync(path.join(state, 'dns-takeover'), preference);
   const remap = text => text.replaceAll('/data/adb/adblockpro', shellPath(runtime))
     .replaceAll('/data/adb/bindhosts_personal', shellPath(state))
     .replaceAll('/data/adb/modules/AdGuardHome', shellPath(path.join(root.dir, 'absent')));
-  const files = ['action.sh', 'module.prop', 'service.sh', 'uninstall.sh', 'bindhosts.sh', 'webui-config.sh', 'webui-job.sh',
+  const files = ['action.sh', 'module.prop', 'post-fs-data.sh', 'service.sh', 'uninstall.sh', 'bindhosts.sh', 'webui-config.sh', 'webui-job.sh',
     'settings.conf', 'config-blacklist.txt', 'config-whitelist.txt',
     'rules/shared-app-domains.txt', 'rules/source-registry.tsv', 'certs/cacert.pem',
     ...readdirSync(new URL('../scripts/', import.meta.url)).map(name => 'scripts/' + name),
@@ -83,7 +89,7 @@ test('fresh installation still stops on a real directory creation failure', t =>
   const result = f.install();
   assert.notEqual(result.status, 0);
   assert.match(result.stdout, /Cannot create module data directories/);
-  assert.match(result.stderr, /simulated permission denied/);
+  assert.match(result.stdout, /mkdir: simulated permission denied/);
   assert.equal(existsSync(f.runtime), false);
 });
 
@@ -183,4 +189,48 @@ test('failed DNS working directory protection stops installation explicitly', t 
   const result = f.install();
   assert.notEqual(result.status, 0);
   assert.match(result.stdout, /Cannot protect local DNS working directory/);
+});
+
+test('restores the old state path to the existing data directory without overwriting user lists', t => {
+  const f = installFixture(t, 'Magisk');
+  const currentState = path.join(f.runtime, 'state');
+  mkdirSync(currentState, { recursive: true });
+  rmSync(f.state, { recursive: true, force: true });
+  const blacklist = 'keep.this.personal.rule\n';
+  const whitelist = 'keep.this.personal.allow\n';
+  writeFileSync(path.join(currentState, 'blacklist.txt'), blacklist);
+  writeFileSync(path.join(currentState, 'whitelist.txt'), whitelist);
+  writeFileSync(path.join(currentState, 'v3-installed'), '');
+
+  const result = f.install();
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(lstatSync(f.state).isSymbolicLink(), true);
+  assert.equal(realpathSync(f.state), realpathSync(currentState));
+  assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), blacklist);
+  assert.equal(readFileSync(path.join(f.state, 'whitelist.txt'), 'utf8'), whitelist);
+});
+
+test('rejects two real state directories and preserves both sides', t => {
+  const f = installFixture(t, 'Magisk');
+  const currentState = path.join(f.runtime, 'state');
+  mkdirSync(currentState, { recursive: true });
+  const oldData = 'old-state-data\n';
+  const currentData = 'current-state-data\n';
+  writeFileSync(path.join(f.state, 'blacklist.txt'), oldData);
+  writeFileSync(path.join(currentState, 'blacklist.txt'), currentData);
+
+  const result = f.install();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /Conflicting state directories; both were preserved/);
+  assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), oldData);
+  assert.equal(readFileSync(path.join(currentState, 'blacklist.txt'), 'utf8'), currentData);
+});
+
+test('reports the failed mkdir target and captured mkdir error', t => {
+  const f = installFixture(t, 'Magisk', undefined, false, false, '', true);
+  const result = f.install();
+  assert.notEqual(result.status, 0);
+  assert.ok(result.stdout.includes(`Cannot create directory: ${shellPath(f.runtime)}`));
+  assert.ok(result.stdout.includes(`mkdir: mkdir fixture refusal: ${shellPath(f.runtime)}`));
+  assert.match(result.stdout, /Cannot create module data directories/);
 });

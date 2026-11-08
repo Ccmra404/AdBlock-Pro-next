@@ -205,16 +205,31 @@ touch "$TMPDIR/modified"
 for (const stopResult of [0, 1]) {
   test('uninstall ' + (stopResult ? 'retains resolver files after failed shutdown' : 'removes safely stopped runtime files'), t => {
     const fixture = rootFixture(t);
+    fixture.addBusybox('Magisk');
     const runtime = path.join(fixture.dir, 'runtime');
     mkdirSync(path.join(runtime, 'scripts'), { recursive: true });
+    writeFileSync(path.join(runtime, 'scripts/compat.sh'), readFileSync(fixture.compatFile, 'utf8'));
     const tool = path.join(runtime, 'scripts/tool.sh');
     writeFileSync(tool, '#!/bin/sh\nexit ' + stopResult + '\n');
     chmodSync(tool, 0o755);
     const source = readFileSync(new URL('../uninstall.sh', import.meta.url), 'utf8')
-      .replaceAll('/data/adb/adblockpro', shellPath(runtime));
-    const result = spawnSync('bash', ['-c', `iptables() { printf '%s\\n' '-P OUTPUT ACCEPT'; }
-ip6tables() { echo "ip6tables: can't initialize ip6tables table nat: Table does not exist" >&2; return 3; }
-` + source], { encoding: 'utf8' });
+      .replaceAll('/data/adb/adblockpro', shellPath(runtime))
+      .replaceAll('/data/adb/bindhosts_personal', shellPath(path.join(fixture.dir, 'state')));
+    const commands = path.join(fixture.dir, 'commands');
+    mkdirSync(commands);
+    for (const [name, body] of [
+      ['iptables', "printf '%s\\n' '-P OUTPUT ACCEPT'"],
+      ['ip6tables', "echo \"ip6tables: can't initialize ip6tables table nat: Table does not exist\" >&2; exit 3"],
+    ]) {
+      const file = path.join(commands, name);
+      writeFileSync(file, '#!/bin/sh\n' + body + '\n');
+      chmodSync(file, 0o755);
+    }
+    const uninstall = path.join(fixture.dir, 'uninstall.sh');
+    writeFileSync(uninstall, source);
+    const result = spawnSync('bash', [shellPath(uninstall)], { encoding: 'utf8', env: {
+      ...fixture.env('Magisk'), PATH: commands + path.delimiter + process.env.PATH,
+    } });
     assert.equal(result.status, stopResult, result.stderr);
     assert.equal(existsSync(runtime), stopResult !== 0);
   });

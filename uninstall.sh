@@ -2,6 +2,23 @@
 
 # Keep rc.3's conservative shutdown: failure must leave the resolver available.
 AGH_DIR=/data/adb/adblockpro
+LEGACY_STATE=/data/adb/bindhosts_personal
+NEW_STATE=$AGH_DIR/state
+if [ -d "$LEGACY_STATE" ]; then
+  LAYOUT_LOCK=$LEGACY_STATE/.state-layout.lock
+  FALLBACK_LOCK=0
+elif [ -d "$NEW_STATE" ] && [ ! -L "$NEW_STATE" ]; then
+  LAYOUT_LOCK=$NEW_STATE/.state-layout.lock
+  FALLBACK_LOCK=0
+else
+  LAYOUT_LOCK=$AGH_DIR/.state-layout.lock
+  FALLBACK_LOCK=1
+fi
+# Take the same exclusive lock as state-layout migration and keep it through cleanup.
+. "$AGH_DIR/scripts/compat.sh" || exit 1
+if [ "$1" != __layout_locked ]; then
+  exec "$BB" flock "$LAYOUT_LOCK" "$BB" sh "$0" __layout_locked
+fi
 if ! "$AGH_DIR/scripts/tool.sh" stop; then
   echo '[AdBlock Pro] DNS shutdown failed; runtime files retained for recovery.' >&2
   exit 1
@@ -53,4 +70,22 @@ verify_no_jump iptables nat ADGUARD_REDIRECT_DNS || exit 1
 # Explicitly unsupported IPv6 tables do not prevent safe IPv4-only uninstall.
 verify_no_jump ip6tables nat ADGUARD_REDIRECT_DNS6 || exit 1
 verify_no_jump ip6tables filter ADGUARD_BLOCK_DNS || exit 1
-rm -rf "$AGH_DIR"
+if [ -L "$AGH_DIR" ]; then
+  echo '[AdBlock Pro] Runtime directory is a symlink; keeping files.' >&2
+  exit 1
+fi
+for entry in "$AGH_DIR"/* "$AGH_DIR"/.[!.]* "$AGH_DIR"/..?*; do
+  [ -e "$entry" ] || [ -L "$entry" ] || continue
+  case "${entry##*/}" in state|.state-layout.lock) continue ;; esac
+  rm -rf "$entry" || {
+    echo '[AdBlock Pro] Runtime cleanup failed; preserving remaining files.' >&2
+    exit 1
+  }
+done
+if [ "$FALLBACK_LOCK" = 1 ]; then
+  rm -f "$LAYOUT_LOCK" || {
+    echo '[AdBlock Pro] Cannot remove temporary state-layout lock; preserving runtime directory.' >&2
+    exit 1
+  }
+fi
+rmdir "$AGH_DIR" 2>/dev/null || :

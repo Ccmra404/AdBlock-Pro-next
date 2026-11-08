@@ -40,7 +40,40 @@ if [ -d /data/adb/modules/AdGuardHome ] && [ ! -f /data/adb/modules/AdGuardHome/
   fail "Another AdGuardHome module is enabled. Disable it before switching engines."
 fi
 
-abp_mkdir_p "$MODPATH" "$DATA_DIR" "$STATE_DIR" || fail "Cannot create module data directories."
+# Restore the compatibility entry before creating defaults. Never choose
+# between two real state directories or replace an unexpected link.
+abp_current_state="$DATA_DIR/state"
+if [ -d "$abp_current_state" ] && [ ! -L "$abp_current_state" ]; then
+  if [ ! -e "$STATE_DIR" ] && [ ! -L "$STATE_DIR" ]; then
+    ln -s "$abp_current_state" "$STATE_DIR" || {
+      [ -L "$STATE_DIR" ] && [ "$(readlink "$STATE_DIR" 2>/dev/null)" = "$abp_current_state" ] ||
+        fail "Cannot restore the existing state directory link."
+    }
+  elif [ ! -L "$STATE_DIR" ] || [ "$(readlink "$STATE_DIR" 2>/dev/null)" != "$abp_current_state" ]; then
+    fail "Conflicting state directories; both were preserved."
+  fi
+elif [ -e "$abp_current_state" ] || [ -L "$abp_current_state" ]; then
+  if [ ! -L "$abp_current_state" ] || [ "$(readlink "$abp_current_state" 2>/dev/null)" != "$abp_current_state" ] ||
+     [ ! -d "$STATE_DIR" ] || [ -L "$STATE_DIR" ]; then
+    fail "Unexpected state directory layout; existing data was preserved."
+  fi
+elif [ -L "$STATE_DIR" ]; then
+  fail "Existing state directory link is unavailable; existing data was preserved."
+fi
+
+abp_mkdir_error="$TMPDIR/adblock-pro-mkdir-error.$$"
+abp_mkdir_failed=0
+for abp_dir in "$MODPATH" "$DATA_DIR" "$STATE_DIR"; do
+  if ! abp_mkdir_p "$abp_dir" 2>"$abp_mkdir_error"; then
+    abp_mkdir_failed=1
+    ui_print "[AdBlock Pro] Cannot create directory: $abp_dir"
+    while IFS= read -r abp_line || [ -n "$abp_line" ]; do
+      ui_print "[AdBlock Pro] mkdir: $abp_line"
+    done < "$abp_mkdir_error"
+  fi
+done
+rm -f "$abp_mkdir_error"
+[ "$abp_mkdir_failed" -eq 0 ] || fail "Cannot create module data directories."
 # OpenSSL cannot use Android's old-hash CA directory as its native trust store.
 abp_mkdir_p "$DATA_DIR/certs" || fail "Cannot prepare the CA certificate directory."
 cp "$ca_file" "$DATA_DIR/certs/cacert.pem" || fail "Cannot install the CA certificate bundle."
@@ -121,7 +154,7 @@ migrate_vpn_compat_default() {
 }
 migrate_vpn_compat_default
 
-for file in action.sh module.prop service.sh uninstall.sh; do
+for file in action.sh module.prop post-fs-data.sh service.sh uninstall.sh; do
   unzip -oq "$ZIPFILE" "$file" -d "$MODPATH" || fail "Cannot extract $file."
 done
 unzip -oq "$ZIPFILE" "webroot/*" -d "$MODPATH" || fail "Cannot extract WebUI files."

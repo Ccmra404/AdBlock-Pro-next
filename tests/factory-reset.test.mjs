@@ -37,6 +37,7 @@ function fixture(t, options = {}) {
   put(path.join(state, 'ai/worker.lock'), '');
   put(path.join(state, 'webui-jobs/worker.lock'), '');
   put(path.join(state, 'runtime.lock'), 'lifecycle-lock-inode\n');
+  put(path.join(state, '.state-layout.lock'), 'migration-lock-inode\n');
   put(path.join(state, 'webui-jobs/2000.log'), 'current reset task\n');
   put(path.join(state, 'webui-jobs/2000.action'), '--factory-reset\n');
   put(path.join(state, 'webui-jobs/1000.log'), 'old log\n');
@@ -75,6 +76,7 @@ function fixture(t, options = {}) {
 test('factory reset keeps full recovery private and exports only lists/preferences to Downloads', t => {
   const f = fixture(t);
   const lockInode = statSync(path.join(f.state, 'runtime.lock')).ino;
+  const layoutLockInode = statSync(path.join(f.state, '.state-layout.lock')).ino;
   const result = f.run(['2000']);
   assert.equal(result.status, 0, result.stderr + result.stdout);
   assert.match(result.stdout, /Root 私有完整备份和下载目录规则备份/);
@@ -98,6 +100,7 @@ test('factory reset keeps full recovery private and exports only lists/preferenc
   assert.equal(existsSync(path.join(f.state, 'ai/worker.lock')), true);
   assert.equal(statSync(path.join(f.state, 'runtime.lock')).ino, lockInode);
   assert.equal(readFileSync(path.join(f.state, 'runtime.lock'), 'utf8'), 'lifecycle-lock-inode\n');
+  assert.equal(statSync(path.join(f.state, '.state-layout.lock')).ino, layoutLockInode);
   assert.equal(existsSync(path.join(f.agh, 'bin/userfilters/custom.txt')), false);
   assert.equal(existsSync(path.join(f.agh, 'bin/userfilters/adblock-pro-shared-app-rules.txt')), true);
   assert.equal(existsSync(path.join(f.agh, 'bin/userfilters/adblock-pro-user-rules.txt')), true);
@@ -118,6 +121,7 @@ test('factory reset keeps full recovery private and exports only lists/preferenc
   assert.match(backupContents.stdout, /module-state\/ai\/config\.json/);
   assert.match(backupContents.stdout, /adguard-home\/admin\.auth/);
   assert.doesNotMatch(backupContents.stdout, /\.tmp|backups\//, 'the backup must not contain itself or prior backup archives');
+  assert.doesNotMatch(backupContents.stdout, /\.state-layout\.lock/);
   assert.doesNotMatch(result.stderr, /file is the archive; skipping/);
   const exported = readdirSync(f.exports).filter(name => name.endsWith('.tar.gz'));
   assert.equal(exported.length, 1);
@@ -189,11 +193,14 @@ test('queued or running AI jobs block reset before backup or DNS changes', t => 
 });
 
 test('a failed fresh DNS start restores previous settings and attempts to restart them', t => {
-  const f = fixture(t, { firstStartFailure: true }); const result = f.run(['2000']);
+  const f = fixture(t, { firstStartFailure: true });
+  const layoutLockInode = statSync(path.join(f.state, '.state-layout.lock')).ino;
+  const result = f.run(['2000']);
   assert.notEqual(result.status, 0);
   assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), 'private-block.example\n');
   assert.equal(readFileSync(path.join(f.agh, 'settings.conf'), 'utf8'), 'custom_setting=true\n');
   assert.equal(readFileSync(path.join(f.agh, 'admin.auth'), 'utf8'), 'private:old-password-hash\n');
   assert.equal(readFileSync(path.join(f.state, 'ai/config.json'), 'utf8'), '{"key":"private-secret"}\n');
+  assert.equal(statSync(path.join(f.state, '.state-layout.lock')).ino, layoutLockInode);
   assert.deepEqual(readFileSync(f.trace, 'utf8').trim().split('\n'), ['stop', 'start', 'stop', 'start']);
 });

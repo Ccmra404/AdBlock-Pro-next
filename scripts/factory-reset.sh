@@ -22,7 +22,7 @@ restore_state() {
       [ -e "$item" ] || [ -L "$item" ] || continue
       name=${item##*/}
       case "$name" in
-      webui-jobs|update.lock|runtime.lock|root-family|backups) continue ;;
+      webui-jobs|update.lock|runtime.lock|root-family|backups|.state-layout.lock) continue ;;
         ai)
           for ai_item in "$STATE/ai"/* "$STATE/ai"/.[!.]* "$STATE/ai"/..?*; do
             [ -e "$ai_item" ] || [ -L "$ai_item" ] || continue
@@ -185,7 +185,7 @@ reset_defaults() {
   for item in "$STATE"/* "$STATE"/.[!.]* "$STATE"/..?*; do
     [ -e "$item" ] || [ -L "$item" ] || continue
     name=${item##*/}
-    case "$name" in backups|.factory-reset-stage.*) continue ;; esac
+    case "$name" in backups|.factory-reset-stage.*|.state-layout.lock) continue ;; esac
     cp -R "$item" "$backup_state/" || {
       rm -rf "$stage"; echo '[!] Cannot stage private module data for backup; original settings were not changed.' >&2; return 1;
     }
@@ -243,7 +243,7 @@ reset_defaults() {
       done
       continue
     fi
-      case "$name" in webui-jobs|update.lock|runtime.lock|root-family|backups) continue ;; esac
+      case "$name" in webui-jobs|update.lock|runtime.lock|root-family|backups|.state-layout.lock) continue ;; esac
     mv "$item" "$old_state/" || fail_after_stop "Cannot stage existing module state."
   done
   state_moved=1
