@@ -8,15 +8,24 @@ FILE=$STATE_DIR/app-exclusions.txt
 umask 077
 [ -n "${BB:-}" ] || . "$AGH_DIR/scripts/compat.sh" || exit 1
 
-# Detached WebUI workers may not inherit Android's system PATH.
+# Keep Package Manager stderr off the detached worker log descriptor while
+# callers capture its stdout; replay diagnostics only when the query fails.
 run_pm() {
-  if [ -x /system/bin/pm ]; then
-    # Android's pm shell wrapper invokes cmd by name, so the wrapper itself
-    # must also see the system binary directory in detached WebUI workers.
-    PATH="/system/bin:/system/xbin:${PATH:-}" /system/bin/pm "$@"
+  local error_file rc
+  error_file=${ABP_PM_STDERR_DIR:-/data/local/tmp}/adblockpro-pm.$$.err
+  if [ -x /system/bin/cmd ]; then
+    /system/bin/cmd package "$@" 2>"$error_file"
+    rc=$?
+  elif [ -x /system/bin/pm ]; then
+    PATH="/system/bin:/system/xbin:${PATH:-}" /system/bin/pm "$@" 2>"$error_file"
+    rc=$?
   else
-    pm "$@"
+    pm "$@" 2>"$error_file"
+    rc=$?
   fi
+  [ "$rc" -eq 0 ] || { cat "$error_file" >&2 2>/dev/null; }
+  rm -f "$error_file" || return 1
+  return "$rc"
 }
 
 valid_key() {
