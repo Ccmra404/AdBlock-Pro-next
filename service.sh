@@ -19,6 +19,9 @@ boot_network_wait=20
 # Clamp untrusted/malformed settings to prevent accidental endless boot waits.
 case "$boot_start_delay" in ''|*[!0-9]*) boot_start_delay=8 ;; esac
 case "$boot_network_wait" in ''|*[!0-9]*) boot_network_wait=20 ;; esac
+# Keep numeric test operands within Android mksh's signed 32-bit range.
+[ ${#boot_start_delay} -le 2 ] || boot_start_delay=60
+[ ${#boot_network_wait} -le 2 ] || boot_network_wait=90
 [ "$boot_start_delay" -le 60 ] || boot_start_delay=60
 [ "$boot_network_wait" -le 90 ] || boot_network_wait=90
 
