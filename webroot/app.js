@@ -1880,4 +1880,3 @@ document.addEventListener('visibilitychange', () => {
   void refreshStatus(true);
   if (state.page === 'lists' && state.rulesView === 'local' && (state.appsLoaded || state.appQuery.trim())) void loadApplications(true);
 });
-
