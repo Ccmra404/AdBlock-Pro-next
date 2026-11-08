@@ -221,7 +221,8 @@ function ruleList(kind) {
 function listResultsMarkup(kind) {
   const items = state.lists[kind] || [];
   const query = state.listSearch[kind].trim().toLowerCase();
-  const matches = query ? items.filter(domain => domain.toLowerCase().includes(query)) : items;
+  // loadList canonicalizes saved domains to lowercase before they enter state.
+  const matches = query ? items.filter(domain => domain.includes(query)) : items;
   const needsPagination = matches.length > LIST_PAGINATION_THRESHOLD;
   const pageCount = needsPagination ? Math.ceil(matches.length / LIST_PAGE_SIZE) : 1;
   state.listPage[kind] = Math.min(state.listPage[kind], pageCount - 1);
@@ -328,7 +329,7 @@ function personalRulesPage() {
 }
 function sharedResultsMarkup() {
   const query = state.sharedSearch.trim().toLowerCase();
-  const matches = state.sharedRules.filter(x => x.includes(query));
+  const matches = query ? state.sharedRules.filter(x => x.includes(query)) : state.sharedRules;
   const pageCount = Math.max(1, Math.ceil(matches.length / LIST_PAGE_SIZE));
   state.sharedPage = Math.min(state.sharedPage, pageCount - 1);
   const start = state.sharedPage * LIST_PAGE_SIZE;
@@ -340,8 +341,9 @@ function renderSharedResults() {
 }
 function sharedRulesPage() {
   const syncing = state.job?.action === '--sync-shared';
+  const selectedCount = selectedObservationDomains().length;
   return `${heading('共享抓包规则库', '维护者确认后发布，各设备使用同一份公开名单', '<button class="btn" data-action="shared-back">返回个人规则</button>')}
-    <section class="panel"><div class="panel-head"><div><h2 class="section-title">共享规则</h2><p class="section-sub">10007、秋风 AdGuard 全规则和本规则库共同构成模块基础</p></div>${tag(`${state.sharedRules.length} 条`)}</div><p class="field-help">修订 ${esc(state.sharedRevision || '—')} · ${state.sharedUpdatedAt ? new Date(state.sharedUpdatedAt * 1000).toLocaleString('zh-CN') : '随模块预置'}。同步会读取 GitHub 上已确认的规则，保留本机个人黑白名单；放行名单可以覆盖共享规则。</p><div class="btn-row"><button class="btn btn-primary" data-action="shared-sync" ${syncing ? 'disabled' : ''}>${syncing ? '正在同步…' : '同步并应用'}</button><button class="btn" data-action="shared-source-add">加入规则来源</button><button class="btn" data-action="shared-submit-candidate">提交候选${selectedObservationDomains().length ? `（${fmt(selectedObservationDomains().length)}）` : ''}</button></div><p class="field-help">候选只包含你在域名观察中勾选的域名。按钮会复制 GitHub 草稿链接；检查内容后由你手动提交，维护者审核通过后才会进入共享规则。</p>${state.sharedError ? `<div class="notice warn">${esc(state.sharedError)}</div>` : ''}<input id="shared-search" class="field" type="search" value="${esc(state.sharedSearch)}" placeholder="搜索共享域名" aria-label="搜索共享域名"><div id="shared-results">${sharedResultsMarkup()}</div></section>`;
+    <section class="panel"><div class="panel-head"><div><h2 class="section-title">共享规则</h2><p class="section-sub">10007、秋风 AdGuard 全规则和本规则库共同构成模块基础</p></div>${tag(`${state.sharedRules.length} 条`)}</div><p class="field-help">修订 ${esc(state.sharedRevision || '—')} · ${state.sharedUpdatedAt ? new Date(state.sharedUpdatedAt * 1000).toLocaleString('zh-CN') : '随模块预置'}。同步会读取 GitHub 上已确认的规则，保留本机个人黑白名单；放行名单可以覆盖共享规则。</p><div class="btn-row"><button class="btn btn-primary" data-action="shared-sync" ${syncing ? 'disabled' : ''}>${syncing ? '正在同步…' : '同步并应用'}</button><button class="btn" data-action="shared-source-add">加入规则来源</button><button class="btn" data-action="shared-submit-candidate">提交候选${selectedCount ? `（${fmt(selectedCount)}）` : ''}</button></div><p class="field-help">候选只包含你在域名观察中勾选的域名。按钮会复制 GitHub 草稿链接；检查内容后由你手动提交，维护者审核通过后才会进入共享规则。</p>${state.sharedError ? `<div class="notice warn">${esc(state.sharedError)}</div>` : ''}<input id="shared-search" class="field" type="search" value="${esc(state.sharedSearch)}" placeholder="搜索共享域名" aria-label="搜索共享域名"><div id="shared-results">${sharedResultsMarkup()}</div></section>`;
 }
 function dnsFeedbackMarkup() {
   return `${state.dnsBusy ? '<p class="field-help" role="status">正在读取或测试 DNS，请稍候…</p>' : ''}${state.dnsError ? `<p class="notice warn" role="alert">${esc(state.dnsError)}</p>` : ''}${state.dnsMessage ? `<p class="field-help" role="status">${esc(state.dnsMessage)}</p>` : ''}${state.dnsResults.length ? `<div class="dns-test-results">${state.dnsResults.map(row => `<div><code>${esc(row.server)}</code><strong class="${row.ok ? 'status-good' : 'status-bad'}">${row.ok ? '测试通过' : '测试失败'}</strong></div>`).join('')}</div><p class="field-help">这里只验证所填 DNS 的测试查询；通过不代表所有域名都能访问或广告一定消失。</p>` : ''}`;
@@ -411,22 +413,28 @@ async function saveDNS(restore = false) {
   } catch (error) { state.dnsError = error.message; renderDNSSettings(); }
 }
 function validAppFilterKey(key) { return typeof key === 'string' && key.length <= 265 && /^(0|[1-9][0-9]{0,4}):[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/.test(key) && Number(key.split(':')[0]) <= 21473; }
+let appFilterCache = null;
 function appFilterEntries() {
-  const entries = new Map(state.apps.map(app => [`0:${app.packageName}`, { ...app, key: `0:${app.packageName}`, listed: true }]));
-  for (const key of state.appFilterExcluded) {
-    if (!entries.has(key)) entries.set(key, { key, packageName: key.split(':')[1], label: key.split(':')[1], listed: false });
+  // Catalogue reloads and exclusion changes replace their arrays, invalidating this cache.
+  if (!appFilterCache || appFilterCache.apps !== state.apps || appFilterCache.excluded !== state.appFilterExcluded) {
+    const entries = new Map(state.apps.map(app => [`0:${app.packageName}`, { ...app, key: `0:${app.packageName}`, listed: true }]));
+    for (const key of state.appFilterExcluded) {
+      if (!entries.has(key)) entries.set(key, { key, packageName: key.split(':')[1], label: key.split(':')[1], listed: false });
+    }
+    const excluded = new Set(state.appFilterExcluded);
+    const sorted = [...entries.values()].sort((a, b) => Number(excluded.has(b.key)) - Number(excluded.has(a.key)) || a.label.localeCompare(b.label, 'zh-CN'));
+    appFilterCache = { apps: state.apps, excluded: state.appFilterExcluded, excludedKeys: excluded, entries: sorted,
+      search: sorted.map(app => `${app.label} ${app.key}`.normalize('NFKC').toLowerCase()) };
   }
-  const excluded = new Set(state.appFilterExcluded);
   const query = state.appFilterQuery.trim().normalize('NFKC').toLowerCase();
-  return [...entries.values()].filter(app => !query || `${app.label} ${app.key}`.normalize('NFKC').toLowerCase().includes(query))
-    .sort((a, b) => Number(excluded.has(b.key)) - Number(excluded.has(a.key)) || a.label.localeCompare(b.label, 'zh-CN'));
+  return query ? appFilterCache.entries.filter((app, index) => appFilterCache.search[index].includes(query)) : appFilterCache.entries.slice();
 }
 function appFilterResultsMarkup() {
   const entries = appFilterEntries(), count = Math.max(1, Math.ceil(entries.length / LIST_PAGE_SIZE));
   state.appFilterPage = Math.min(Math.max(0, state.appFilterPage), count - 1);
   const disabled = state.busy || state.appFilterBusy || state.appFilterLoading || !state.appFilterLoaded;
   const rows = entries.slice(state.appFilterPage * LIST_PAGE_SIZE, (state.appFilterPage + 1) * LIST_PAGE_SIZE).map(app => {
-    const excluded = state.appFilterExcluded.includes(app.key);
+    const excluded = appFilterCache.excludedKeys.has(app.key);
     const detail = `${app.packageName}${app.key.startsWith('0:') ? '' : ` · 用户 ${app.key.split(':')[0]}`}${app.listed ? '' : ' · 当前应用列表不可见，可恢复参与过滤'}`;
     return `<div class="app-filter-row"><div class="app-filter-copy"><strong>${esc(app.label)}</strong><small>${esc(detail)}</small><span class="${excluded ? 'status-warn' : 'status-good'}">${excluded ? '已排除' : '参与过滤'}</span></div><label class="switch" aria-label="${esc(`${app.label} 参与模块 DNS 过滤`)}"><input type="checkbox" data-app-filter="${esc(app.key)}" ${excluded ? '' : 'checked'} ${disabled ? 'disabled' : ''}><span class="track"></span></label></div>`;
   }).join('');
@@ -517,11 +525,19 @@ function renderLogList() {
   if (list) list.innerHTML = logListMarkup();
 }
 function domainInList(domain, list) {
-  return (list || []).some(item => domain === item || domain.endsWith(`.${item}`));
+  const entries = Array.isArray(list) ? list : [];
+  if (entries.length < 64) return entries.some(item => domain === item || domain.endsWith(`.${item}`));
+  // loadList replaces these canonical arrays when server data changes.
+  let index = domainListIndexes.get(entries);
+  if (!index) { index = new Set(entries); domainListIndexes.set(entries, index); }
+  for (let candidate = domain; ; ) {
+    if (index.has(candidate)) return true;
+    const dot = candidate.indexOf('.');
+    if (dot < 0) return false;
+    candidate = candidate.slice(dot + 1);
+  }
 }
-function domainTouchesList(domain, list) {
-  return (list || []).some(item => domain === item || domain.endsWith(`.${item}`) || item.endsWith(`.${domain}`));
-}
+const domainListIndexes = new WeakMap();
 function classifyObservedDomain(item) {
   const domain = item.domain;
   if (domainInList(domain, state.lists.whitelist)) return { label: '白名单', tone: 'yellow', add: false };
@@ -532,18 +548,24 @@ function classifyObservedDomain(item) {
   return adHint ? { label: '疑似广告/跟踪', tone: 'yellow', add: true } : { label: '未识别，需核对', tone: '', add: true };
 }
 function selectedObservationDomains() {
-  const observed = new Set(state.observationDomains.map(item => item.domain));
+  const domains = state.observationDomains;
+  let observed = observationDomainIndexes.get(domains);
+  if (!observed) {
+    observed = new Set(domains.map(item => item.domain));
+    observationDomainIndexes.set(domains, observed);
+  }
   return [...new Set(state.selectedObservationDomains || [])].filter(domain => validObservedDomain(domain) && observed.has(domain));
 }
+const observationDomainIndexes = new WeakMap();
 function observationExportText() {
   const selected = selectedObservationDomains();
   return selected.length ? `${selected.join('\n')}\n` : '';
 }
-function observationSelectionTools() {
-  const selected = selectedObservationDomains();
+function observationSelectionTools(selected = selectedObservationDomains()) {
+  const selectedSet = new Set(selected);
   const start = state.observationPage * OBSERVATION_PAGE_SIZE;
   const visible = state.observationDomains.slice(start, start + OBSERVATION_PAGE_SIZE).map(item => item.domain).filter(validObservedDomain);
-  const allVisibleSelected = visible.length > 0 && visible.every(domain => selected.includes(domain));
+  const allVisibleSelected = visible.length > 0 && visible.every(domain => selectedSet.has(domain));
   const disabled = selected.length ? '' : 'disabled';
   const aiDisabled = state.aiBusy || !selected.length || selected.length > 50;
   const aiLabel = state.aiBusy ? 'AI 分析中…' : selected.length > 50 ? 'AI 一次最多 50 个' : `AI 分析所选（${selected.length}）`;
@@ -571,8 +593,9 @@ async function copyText(text) {
 }
 function renderObservationSelection() {
   const selected = selectedObservationDomains();
-  $$('[data-observation-domain]').forEach(input => { input.checked = selected.includes(input.dataset.observationDomain); });
-  const tools = $('#observation-selection-tools'); if (tools) tools.innerHTML = observationSelectionTools();
+  const selectedSet = new Set(selected);
+  $$('[data-observation-domain]').forEach(input => { input.checked = selectedSet.has(input.dataset.observationDomain); });
+  const tools = $('#observation-selection-tools'); if (tools) tools.innerHTML = observationSelectionTools(selected);
   if (state.aiOpen) renderAI();
 }
 function observationRows() {
@@ -582,11 +605,11 @@ function observationRows() {
   state.observationPage = Math.min(state.observationPage, pageCount - 1);
   const start = state.observationPage * OBSERVATION_PAGE_SIZE;
   const visible = state.observationDomains.slice(start, start + OBSERVATION_PAGE_SIZE);
+  const selected = new Set(selectedObservationDomains());
   return `${visible.map(item => {
     const classification = classifyObservedDomain(item);
     const action = `<div class="btn-row">${classification.add ? `<button class="btn" data-action="observe-add" data-domain="${esc(item.domain)}">拦截</button>` : ''}${!domainInList(item.domain, state.lists.whitelist) ? `<button class="btn" data-action="observe-allow" data-domain="${esc(item.domain)}">放行</button>` : ''}</div>`;
-    const selected = selectedObservationDomains().includes(item.domain);
-    return `<div class="observe-row"><label class="observe-select"><input type="checkbox" data-observation-domain="${esc(item.domain)}" aria-label="选择 ${esc(item.domain)}" ${selected ? 'checked' : ''}></label><div class="observe-copy"><strong>${esc(item.domain)}</strong><small>${fmt(item.count)} 次请求${item.filterId ? ` · 规则 ${esc(item.filterId)}` : ''}</small></div>${tag(classification.label, classification.tone)}${action}</div>`;
+    return `<div class="observe-row"><label class="observe-select"><input type="checkbox" data-observation-domain="${esc(item.domain)}" aria-label="选择 ${esc(item.domain)}" ${selected.has(item.domain) ? 'checked' : ''}></label><div class="observe-copy"><strong>${esc(item.domain)}</strong><small>${fmt(item.count)} 次请求${item.filterId ? ` · 规则 ${esc(item.filterId)}` : ''}</small></div>${tag(classification.label, classification.tone)}${action}</div>`;
   }).join('')}<nav class="observe-pagination logs-pagination" aria-label="观察结果分页"><button class="btn" data-action="observe-page" data-page="${state.observationPage - 1}" ${state.observationPage === 0 ? 'disabled' : ''}>上一页</button><span>第 ${state.observationPage + 1} / ${pageCount} 页 · ${start + 1}–${start + visible.length} 条，共 ${candidateCount} 条</span><button class="btn" data-action="observe-page" data-page="${state.observationPage + 1}" ${state.observationPage >= pageCount - 1 ? 'disabled' : ''}>下一页</button></nav>`;
 }
 function observationPanel() {
@@ -1378,7 +1401,8 @@ function parsePersonalImport(text) {
     });
     result[kind] = [...new Set(result[kind])];
   }
-  if (result.blacklist.some(domain => result.whitelist.includes(domain))) throw new Error('同一域名不能同时加入拦截和放行名单');
+  const allowed = new Set(result.whitelist);
+  if (result.blacklist.some(domain => allowed.has(domain))) throw new Error('同一域名不能同时加入拦截和放行名单');
   if (!result.blacklist.length && !result.whitelist.length) throw new Error('文件中没有可导入的域名');
   if (result.blacklist.length + result.whitelist.length > 5000) throw new Error('单次最多导入 5,000 条域名');
   return result;
@@ -1386,10 +1410,28 @@ function parsePersonalImport(text) {
 function preparePersonalImport(lists) {
   const prepared = { blacklist: [], whitelist: [] };
   let skipped = 0;
+  let maxLength = 0;
+  for (const kind of ['blacklist', 'whitelist']) for (const domain of lists[kind]) maxLength = Math.max(maxLength, domain.length);
+  if (!lists.blacklist.length && !lists.whitelist.length) return { lists: prepared, skipped };
+  // Index only the saved lists so overlapping entries in this batch keep their existing behavior.
+  const existing = new Set([...(state.lists.blacklist || []), ...(state.lists.whitelist || [])]);
+  const parents = new Set();
+  for (const domain of existing) {
+    // Longer suffixes cannot match an incoming domain; avoid expanding malformed long saved lines.
+    for (let dot = domain.indexOf('.', Math.max(0, domain.length - maxLength - 1)); dot !== -1; dot = domain.indexOf('.', dot + 1)) parents.add(domain.slice(dot + 1));
+  }
+  function overlaps(domain) {
+    if (parents.has(domain)) return true;
+    for (let part = domain; ; ) {
+      if (existing.has(part)) return true;
+      const dot = part.indexOf('.');
+      if (dot === -1) return false;
+      part = part.slice(dot + 1);
+    }
+  }
   for (const kind of ['blacklist', 'whitelist']) {
-    const opposite = kind === 'blacklist' ? 'whitelist' : 'blacklist';
     for (const domain of lists[kind]) {
-      if (domainTouchesList(domain, state.lists[kind]) || domainTouchesList(domain, state.lists[opposite])) skipped++;
+      if (overlaps(domain)) skipped++;
       else prepared[kind].push(domain);
     }
   }
@@ -1445,6 +1487,8 @@ async function importPersonalFile(file) {
 }
 
 let applicationsPending = null;
+let applicationCatalogueIndex = null;
+let applicationMatchesCache = null;
 async function loadApplications(force = false) {
   if (applicationsPending) return applicationsPending;
   if (state.appsLoaded && !force) return;
@@ -1458,12 +1502,23 @@ async function loadApplications(force = false) {
 }
 function matchingApplications() {
   const query = state.appQuery.trim().normalize('NFKC').toLowerCase();
-  return query ? state.apps.filter(x => x.label.normalize('NFKC').toLowerCase().includes(query) || x.packageName.toLowerCase().includes(query)) : [];
+  if (!query) return [];
+  if (!applicationCatalogueIndex || applicationCatalogueIndex.apps !== state.apps) {
+    applicationCatalogueIndex = { apps: state.apps, entries: state.apps.map(app => ({
+      app, label: app.label.normalize('NFKC').toLowerCase(), packageName: app.packageName.toLowerCase(),
+    })) };
+    applicationMatchesCache = null;
+  }
+  if (!applicationMatchesCache || applicationMatchesCache.apps !== state.apps || applicationMatchesCache.query !== query) {
+    const entries = applicationCatalogueIndex.entries.filter(x => x.label.includes(query) || x.packageName.includes(query));
+    applicationMatchesCache = { apps: state.apps, query, matches: entries.map(x => x.app), exact: entries.filter(x => x.label === query || x.packageName === query).map(x => x.app) };
+  }
+  return applicationMatchesCache.matches;
 }
 function resolveApplication() {
   const matches = matchingApplications();
   const query = state.appQuery.trim().normalize('NFKC').toLowerCase();
-  const exact = matches.filter(x => x.label.normalize('NFKC').toLowerCase() === query || x.packageName.toLowerCase() === query);
+  const exact = applicationMatchesCache?.apps === state.apps && applicationMatchesCache.query === query ? applicationMatchesCache.exact : [];
   state.selectedApp = exact.length === 1 ? exact[0] : matches.length === 1 ? matches[0] : null;
 }
 function applicationResults() {
@@ -1628,8 +1683,8 @@ document.addEventListener('click', async event => {
       break;
     case 'observe-import-personal': {
       const chosen = selectedObservationDomains();
-      const domains = chosen.filter(domain => !domainTouchesList(domain, state.lists.blacklist) && !domainTouchesList(domain, state.lists.whitelist));
-      const skipped = chosen.length - domains.length;
+      const preview = preparePersonalImport({ blacklist: chosen, whitelist: [] });
+      const domains = preview.lists.blacklist, skipped = preview.skipped;
       if (!domains.length) { toast('所选域名已存在于个人名单或与现有规则重叠，无需重复导入'); break; }
       confirm('加入个人拦截名单？', `预览：新增 ${domains.length} 个拦截域名，跳过现有黑白名单重复或重叠项 ${skipped} 个。加入后会拦截该域名及其子域名，保存后自动应用，无需更新订阅。`, '确认导入', async () => {
         try { await importPersonalLists({ blacklist: domains, whitelist: [] }, `已加入个人拦截名单，共 ${domains.length} 个域名`); }
