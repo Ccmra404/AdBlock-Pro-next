@@ -65,6 +65,36 @@ for (const family of ['KernelSU', 'Magisk', 'APatch']) test(`${family}: personal
   assert.ok(existsSync(f.marker)); assert.doesNotMatch(result.stdout, /更新完成/);
 });
 
+test('large personal lists render normalized, deduplicated block and allow rules', t => {
+  const f = fixture(t);
+  const domains = Array.from({ length: 1000 }, (_, i) => `ads${i}.example`);
+  writeFileSync(path.join(f.state, 'blacklist.txt'), `# comment\n${domains.join('\n')}\nADS0.EXAMPLE\n`);
+  writeFileSync(path.join(f.state, 'whitelist.txt'), 'LOGIN.EXAMPLE\nallow.example\n');
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  const rows = readFileSync(f.personal, 'utf8').split('\n').filter(row => row && !row.startsWith('!')).sort();
+  assert.deepEqual(rows, [...domains.map(domain => `||${domain}^`), '@@||login.example^', '@@||allow.example^'].sort());
+});
+
+test('an incomplete final line keeps the existing read-loop behavior', t => {
+  const f = fixture(t);
+  writeFileSync(path.join(f.state, 'blacklist.txt'), 'complete.example\nincomplete.example');
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(readFileSync(f.personal, 'utf8'), /\|\|complete\.example\^/);
+  assert.doesNotMatch(readFileSync(f.personal, 'utf8'), /incomplete\.example/);
+});
+
+test('invalid data after valid entries leaves the existing applied filter intact', t => {
+  const f = fixture(t);
+  const input = `valid.example\n${'a'.repeat(64)}.example\n`;
+  writeFileSync(path.join(f.state, 'blacklist.txt'), input);
+  const result = f.run();
+  assert.notEqual(result.status, 0);
+  assert.equal(readFileSync(f.personal, 'utf8'), '||old.example^\n');
+  assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), input);
+});
+
 test('missing personal filter is registered despite a stale marker', t => {
   const f = fixture(t, { present: false }); assert.equal(f.run().status, 0);
   assert.deepEqual(f.requests().map(x => x.route), ['/filtering/status', '/filtering/add_url', '/filtering/set_url']);
