@@ -67,6 +67,22 @@ statistics:
 `
 
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "migrate-state" {
+		if err := migrateProductionState(); err != nil {
+			fmt.Fprintln(os.Stderr, "state migration failed:", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "State directory migration complete.")
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "prepare-downgrade" {
+		if err := prepareProductionDowngrade(); err != nil {
+			fmt.Fprintln(os.Stderr, "downgrade preparation failed:", err)
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "State directory is ready for downgrade.")
+		return
+	}
 	if len(os.Args) == 2 && os.Args[1] == "filtering-check-status" {
 		if _, err := readFilteringStatus(os.Stdin, "block"); err != nil {
 			fmt.Fprintln(os.Stderr, err)

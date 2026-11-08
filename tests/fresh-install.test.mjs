@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, chmodSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, statSync, chmodSync, rmSync, lstatSync, realpathSync } from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { rootFixture, shellPath } from './shell-fixture.mjs';
 
-function installFixture(t, family, preference, failWrite = false, failPermission = false) {
+function installFixture(t, family, preference, failWrite = false, failPermission = false, failMkdir = '') {
   const root = rootFixture(t); root.addBusybox(family);
   const state = path.join(root.dir, 'state'), runtime = path.join(root.dir, 'runtime');
   const module = path.join(root.dir, 'module'), stage = path.join(root.dir, 'stage');
@@ -14,7 +14,7 @@ function installFixture(t, family, preference, failWrite = false, failPermission
   const remap = text => text.replaceAll('/data/adb/adblockpro', shellPath(runtime))
     .replaceAll('/data/adb/bindhosts_personal', shellPath(state))
     .replaceAll('/data/adb/modules/AdGuardHome', shellPath(path.join(root.dir, 'absent')));
-  const files = ['action.sh', 'module.prop', 'service.sh', 'uninstall.sh', 'bindhosts.sh', 'webui-config.sh', 'webui-job.sh',
+  const files = ['action.sh', 'module.prop', 'post-fs-data.sh', 'service.sh', 'uninstall.sh', 'bindhosts.sh', 'webui-config.sh', 'webui-job.sh',
     'settings.conf', 'config-blacklist.txt', 'config-whitelist.txt',
     'rules/shared-app-domains.txt', 'rules/source-registry.tsv', 'certs/cacert.pem',
     ...readdirSync(new URL('../scripts/', import.meta.url)).map(name => 'scripts/' + name),
@@ -39,6 +39,7 @@ function installFixture(t, family, preference, failWrite = false, failPermission
   const script = path.join(root.dir, 'install.sh');
   writeFileSync(script, 'ui_print() { echo "$1"; }\nabort() { echo "$1" >&2; exit 1; }\ngetprop() { echo arm64-v8a; }\niptables() { return 0; }\nchown() { :; }\n' +
     (failPermission ? `chmod() { if [ "$1" = 700 ] && [ "$2" = '${shellPath(runtime)}/bin' ]; then return 1; fi; command chmod "$@"; }\n` : '') +
+    (failMkdir ? `mkdir() { if [ "$1" = -p ] && [ "$2" = '${shellPath(runtime)}' ]; then echo 'mkdir fixture refusal: ${shellPath(runtime)}' >&2; return 1; fi; command mkdir "$@"; }\n` : '') +
     (failWrite ? 'mv() { case "$2" in */dns-takeover) return 1;; esac; command mv "$@"; }\n' : '') + remap(readFileSync(new URL('../customize.sh', import.meta.url), 'utf8')));
   const install = () => spawnSync('bash', [shellPath(script)], { timeout: 20000, encoding: 'utf8', env: {
     ...root.env(family), MODPATH: shellPath(module), TMPDIR: shellPath(root.dir), ZIPFILE: shellPath(zip),
@@ -142,4 +143,48 @@ test('failed DNS working directory protection stops installation explicitly', t 
   const result = f.install();
   assert.notEqual(result.status, 0);
   assert.match(result.stdout, /Cannot protect local DNS working directory/);
+});
+
+test('restores the old state path to the existing data directory without overwriting user lists', t => {
+  const f = installFixture(t, 'Magisk');
+  const currentState = path.join(f.runtime, 'state');
+  mkdirSync(currentState, { recursive: true });
+  rmSync(f.state, { recursive: true, force: true });
+  const blacklist = 'keep.this.personal.rule\n';
+  const whitelist = 'keep.this.personal.allow\n';
+  writeFileSync(path.join(currentState, 'blacklist.txt'), blacklist);
+  writeFileSync(path.join(currentState, 'whitelist.txt'), whitelist);
+  writeFileSync(path.join(currentState, 'v3-installed'), '');
+
+  const result = f.install();
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(lstatSync(f.state).isSymbolicLink(), true);
+  assert.equal(realpathSync(f.state), realpathSync(currentState));
+  assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), blacklist);
+  assert.equal(readFileSync(path.join(f.state, 'whitelist.txt'), 'utf8'), whitelist);
+});
+
+test('rejects two real state directories and preserves both sides', t => {
+  const f = installFixture(t, 'Magisk');
+  const currentState = path.join(f.runtime, 'state');
+  mkdirSync(currentState, { recursive: true });
+  const oldData = 'old-state-data\n';
+  const currentData = 'current-state-data\n';
+  writeFileSync(path.join(f.state, 'blacklist.txt'), oldData);
+  writeFileSync(path.join(currentState, 'blacklist.txt'), currentData);
+
+  const result = f.install();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout, /Conflicting state directories; both were preserved/);
+  assert.equal(readFileSync(path.join(f.state, 'blacklist.txt'), 'utf8'), oldData);
+  assert.equal(readFileSync(path.join(currentState, 'blacklist.txt'), 'utf8'), currentData);
+});
+
+test('reports the failed mkdir target and captured mkdir error', t => {
+  const f = installFixture(t, 'Magisk', undefined, false, false, true);
+  const result = f.install();
+  assert.notEqual(result.status, 0);
+  assert.ok(result.stdout.includes(`Cannot create directory: ${shellPath(f.runtime)}`));
+  assert.ok(result.stdout.includes(`mkdir: mkdir fixture refusal: ${shellPath(f.runtime)}`));
+  assert.match(result.stdout, /Cannot create module data directories/);
 });

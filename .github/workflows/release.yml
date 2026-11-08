@@ -12,6 +12,7 @@ on:
       - "action.sh"
       - "service.sh"
       - "uninstall.sh"
+      - "post-fs-data.sh"
       - "bindhosts.sh"
       - "webui-config.sh"
       - "webui-job.sh"
@@ -147,7 +148,7 @@ jobs:
         run: python3 tools/test_personal_filter.py --engine ./bin/AdGuardHome --bootstrap /tmp/adblock-bootstrap-native
       - name: Run project checks
         run: |
-          for script in action.sh bindhosts.sh customize.sh service.sh uninstall.sh webui-config.sh webui-job.sh scripts/*.sh; do
+          for script in action.sh bindhosts.sh customize.sh post-fs-data.sh service.sh uninstall.sh webui-config.sh webui-job.sh scripts/*.sh; do
             bash -n "$script"
           done
           node --input-type=module --check < webroot/app.js
@@ -167,7 +168,7 @@ jobs:
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
           stage="$(mktemp -d)"
           mkdir -p "$stage/bin/data/filters" "$stage/licenses" dist
-          cp module.prop action.sh customize.sh service.sh uninstall.sh bindhosts.sh webui-config.sh webui-job.sh settings.conf config-blacklist.txt config-whitelist.txt LICENSE THIRD_PARTY_NOTICES.md "$stage/"
+          cp module.prop action.sh customize.sh post-fs-data.sh service.sh uninstall.sh bindhosts.sh webui-config.sh webui-job.sh settings.conf config-blacklist.txt config-whitelist.txt LICENSE THIRD_PARTY_NOTICES.md "$stage/"
           if [ "$GITHUB_REF" != refs/heads/main ]; then
             TAG="${TAG}-dev.${ARTIFACT_SHA:0:7}"
             sed -i "s/^version=.*/version=$TAG/" "$stage/module.prop"

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -12,16 +12,18 @@ const helper = new URL('../scripts/footprint.sh', import.meta.url);
 const jobScript = readFileSync(new URL('../webui-job.sh', import.meta.url), 'utf8');
 const diagnoseScript = readFileSync(new URL('../bindhosts.sh', import.meta.url), 'utf8');
 
-function runFixture(t, processPresent = true) {
+function runFixture(t, processPresent = true, migrated = false) {
   const root = mkdtempSync(path.join(tmpdir(), 'abp-footprint-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const agh = path.join(root, 'runtime');
   const moduleDir = path.join(root, 'module');
   const state = path.join(root, 'state');
+  const physicalState = migrated ? path.join(agh, 'state') : state;
   const proc = path.join(root, 'proc');
   for (const dir of [path.join(agh, 'bin', 'data', 'filters'), moduleDir,
-                     path.join(state, 'webui-jobs'), path.join(state, 'dns-history'), proc])
+                     path.join(physicalState, 'webui-jobs'), path.join(physicalState, 'dns-history'), proc])
     mkdirSync(dir, { recursive: true });
+  if (migrated) symlinkSync(physicalState, state, 'dir');
   const engine = path.join(agh, 'bin', 'AdGuardHome');
   writeFileSync(engine, Buffer.alloc(14000, 65));
   writeFileSync(path.join(agh, 'bin', 'data', 'filters', '10007.txt'), '||ads.example^\n');
@@ -51,6 +53,11 @@ function runFixture(t, processPresent = true) {
       return [row.slice(0, index), row.slice(index + 1)];
     }),
   );
+  if (migrated) {
+    const diskSize = target => Number(spawnSync('du', ['-sk', target], { encoding: 'utf8' }).stdout.split(/\s/)[0]);
+    assert.equal(Number(values.diag_disk_state_kb), diskSize(state + '/'));
+    assert.equal(Number(values.diag_disk_runtime_kb), diskSize(agh) - diskSize(state + '/'));
+  }
   return values;
 }
 
@@ -69,6 +76,12 @@ test('missing process reports unavailable RAM instead of fabricating zeros', t =
   const result = runFixture(t, false);
   assert.equal(result.diag_mem_rss_kb, 'unavailable');
   assert.equal(result.diag_mem_pss_kb, 'unavailable');
+});
+
+test('migrated state is measured through its compatibility link without double counting', t => {
+  const result = runFixture(t, false, true);
+  assert(Number(result.diag_disk_state_kb) > 0);
+  assert(Number(result.diag_disk_runtime_kb) >= Number(result.diag_disk_engine_binary_kb));
 });
 
 test('status polling remains lightweight: footprint is only on diagnostics', () => {

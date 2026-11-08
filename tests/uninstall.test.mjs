@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -12,11 +12,18 @@ const firewallSource = readFileSync(new URL('../scripts/iptables.sh', import.met
 function fixture(t, overrides = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'abp-uninstall-'));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
-  const runtime = path.join(dir, 'runtime'), state = path.join(dir, 'state');
+  const runtime = path.join(dir, 'runtime'), legacyState = path.join(dir, 'bindhosts_personal');
+  const state = overrides.NEW_STATE === '1' ? path.join(runtime, 'state') : legacyState;
   mkdirSync(path.join(runtime, 'scripts'), { recursive: true });
-  mkdirSync(state);
+  mkdirSync(path.join(state, 'ai'), { recursive: true });
   writeFileSync(path.join(runtime, 'admin.auth'), 'fixture-only');
+  writeFileSync(path.join(runtime, '.private-cache'), 'fixture-only');
   writeFileSync(path.join(state, 'whitelist.txt'), 'keep.example\n');
+  writeFileSync(path.join(state, 'ai', 'settings.json'), '{"enabled":true}\n');
+  if (overrides.NEW_STATE === '1') {
+    writeFileSync(path.join(state, 'whitelist.txt'), 'new-layout.example\n');
+    symlinkSync(path.relative(path.dirname(legacyState), state), legacyState, 'dir');
+  }
   const tool = path.join(runtime, 'scripts/tool.sh');
   if (overrides.REAL_STOP === '1') {
     const firewall = path.join(runtime, 'scripts/iptables.sh');
@@ -38,6 +45,24 @@ stop_adguardhome
 `);
   } else writeFileSync(tool, '#!/bin/sh\nexit "${STOP_RESULT:-0}"\n');
   chmodSync(tool, 0o755);
+  const compat = path.join(runtime, 'scripts/compat.sh');
+  const busybox = path.join(dir, 'busybox');
+  writeFileSync(compat, `#!/bin/sh\nBB='${shellPath(busybox)}'\nexport BB\n`);
+  chmodSync(compat, 0o755);
+  writeFileSync(busybox, `#!/bin/sh
+case "$1" in
+  flock)
+    shift
+    [ "$REAL_FLOCK" != 1 ] || exec flock "$@"
+    : >> "$1"
+    [ "$BUSYBOX_FLOCK_FAIL" != 1 ] || exit 1
+    shift
+    exec "$@" ;;
+  sh) shift; exec bash "$@" ;;
+esac
+exit 2
+`);
+  chmodSync(busybox, 0o755);
   const bin = path.join(dir, 'bin');
   mkdirSync(bin);
   const mock = `#!/bin/sh
@@ -75,18 +100,29 @@ exit 2
     const file = path.join(bin, name);
     writeFileSync(file, mock); chmodSync(file, 0o755);
   }
-  const result = spawnSync('bash', ['-c', source.replaceAll('/data/adb/adblockpro', shellPath(runtime))], {
+  const uninstall = path.join(dir, 'uninstall.sh');
+  writeFileSync(uninstall, source.replaceAll('/data/adb/adblockpro', shellPath(runtime))
+    .replaceAll('/data/adb/bindhosts_personal', shellPath(legacyState)));
+  const command = overrides.HOLD_LAYOUT_LOCK === '1' ? 'flock' : 'bash';
+  const args = overrides.HOLD_LAYOUT_LOCK === '1'
+    ? [path.join(state, '.state-layout.lock'), 'timeout', '0.4', 'bash', uninstall]
+    : [uninstall];
+  const result = spawnSync(command, args, {
     encoding: 'utf8', timeout: 10000,
     env: { ...process.env, PATH: bin + path.delimiter + process.env.PATH, ...overrides },
   });
-  assert.equal(readFileSync(path.join(state, 'whitelist.txt'), 'utf8'), 'keep.example\n');
-  return { result, runtime };
+  assert.equal(readFileSync(path.join(state, 'whitelist.txt'), 'utf8'),
+    overrides.NEW_STATE === '1' ? 'new-layout.example\n' : 'keep.example\n');
+  assert.equal(readFileSync(path.join(state, 'ai', 'settings.json'), 'utf8'), '{"enabled":true}\n');
+  assert.equal(existsSync(path.join(state, '.state-layout.lock')), true);
+  return { result, runtime, state };
 }
 
 for (const options of [
   { STOP_RESULT: '1' }, { IP4_JUMP: '1' }, { IP4_QUERY_RESULT: '1' }, { IP4_QUERY_RESULT: '2' },
   { IP6_JUMP: '1' }, { IP6_QUERY_RESULT: '1' }, { IP6_QUERY_RESULT: '2' },
   { IP6_QUERY_RESULT: '1', IP6_PROBE_FAILURE: '1' },
+  { BUSYBOX_FLOCK_FAIL: '1' },
   { EMPTY_SNAPSHOT: '1' }, { INVALID_SNAPSHOT: '1' },
 ]) {
   test('unsafe uninstall preserves runtime: ' + JSON.stringify(options), t => {
@@ -113,3 +149,30 @@ for (const options of [{}, { IP6_UNAVAILABLE: '1' }, { REAL_STOP: '1' }, { REAL_
     assert.equal(existsSync(runtime), false);
   });
 }
+
+test('verified cleanup follows the migrated compatibility symlink and preserves state and its lock', t => {
+  const { result, runtime, state } = fixture(t, { NEW_STATE: '1' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(path.join(state, 'whitelist.txt'), 'utf8'), 'new-layout.example\n');
+  assert.equal(readFileSync(path.join(state, 'ai', 'settings.json'), 'utf8'), '{"enabled":true}\n');
+  assert.equal(existsSync(path.join(state, '.state-layout.lock')), true);
+  assert.equal(existsSync(path.join(runtime, 'admin.auth')), false);
+  assert.equal(existsSync(path.join(runtime, '.private-cache')), false);
+  assert.equal(existsSync(runtime), true);
+});
+
+test('lock acquisition failure keeps runtime files and skips DNS shutdown', t => {
+  const { result, runtime } = fixture(t, { BUSYBOX_FLOCK_FAIL: '1', REAL_STOP: '1' });
+  assert.notEqual(result.status, 0, result.stderr);
+  assert.equal(existsSync(path.join(runtime, 'admin.auth')), true);
+  assert.equal(existsSync(path.join(runtime, 'live')), true);
+  assert.equal(existsSync(path.join(runtime, 'killed')), false);
+});
+
+test('uninstall waits while migration holds the same state lock through the new path', t => {
+  const { result, runtime } = fixture(t, { NEW_STATE: '1', REAL_FLOCK: '1', HOLD_LAYOUT_LOCK: '1', REAL_STOP: '1' });
+  assert.equal(result.status, 124, result.stderr);
+  assert.equal(existsSync(path.join(runtime, 'admin.auth')), true);
+  assert.equal(existsSync(path.join(runtime, 'live')), true);
+  assert.equal(existsSync(path.join(runtime, 'killed')), false);
+});
