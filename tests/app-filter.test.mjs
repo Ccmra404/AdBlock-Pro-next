@@ -12,12 +12,14 @@ function fixture(t) {
   const script = path.join(agh, 'scripts/app-filter.sh');
   writeFileSync(path.join(agh, 'scripts/compat.sh'), readFileSync(root.compatFile, 'utf8'));
   const bin = path.join(root.dir, 'mock-bin'); mkdirSync(bin);
-  const systemPm = path.join(root.dir, 'system/bin/pm'); mkdirSync(path.dirname(systemPm), { recursive: true });
+  const systemBin = path.join(root.dir, 'system/bin'); mkdirSync(systemBin, { recursive: true });
+  const systemPm = path.join(systemBin, 'pm');
   const put = (file, content) => { writeFileSync(file, content); chmodSync(file, 0o755); };
   put(path.join(bin, 'pm'), '#!/bin/sh\n[ "${TEST_PM_FAIL:-0}" != 1 ] || exit 1\nif [ "$2" = users ]; then printf "%s\\n" "$TEST_USERS"; exit; fi\ncase "$5" in 0) printf "%s\\n" "$TEST_PACKAGES" ;; 10) printf "%s\\n" "$TEST_PROFILE_PACKAGES" ;; *) exit 1 ;; esac\n');
-  put(systemPm, '#!/bin/sh\n[ "${TEST_SYSTEM_PM_FAIL:-0}" != 1 ] || exit 1\nif [ "$2" = users ]; then printf "%s\\n" "$TEST_USERS"; exit; fi\ncase "$5" in 0) printf "%s\\n" "$TEST_PACKAGES" ;; 10) printf "%s\\n" "$TEST_PROFILE_PACKAGES" ;; *) exit 1 ;; esac\n');
+  put(path.join(systemBin, 'cmd'), '#!/bin/sh\nexit 0\n');
+  put(systemPm, '#!/bin/sh\ncommand -v cmd >/dev/null 2>&1 || { echo "cmd: inaccessible or not found"; exit 1; }\n[ "${TEST_SYSTEM_PM_FAIL:-0}" != 1 ] || exit 1\nif [ "$2" = users ]; then printf "%s\\n" "$TEST_USERS"; exit; fi\ncase "$5" in 0) printf "%s\\n" "$TEST_PACKAGES" ;; 10) printf "%s\\n" "$TEST_PROFILE_PACKAGES" ;; *) exit 1 ;; esac\n');
   writeFileSync(script, readFileSync(new URL('../scripts/app-filter.sh', import.meta.url), 'utf8')
-    .replaceAll('/system/bin/pm', shellPath(systemPm)));
+    .replaceAll('/system/bin', shellPath(systemBin)));
   put(path.join(agh, 'scripts/vpn-compat.sh'), '#!/bin/sh\nprintf "%s\\n" "$1" >> "$ABP_STATE_DIR/refresh.trace"\nif [ "${TEST_APPLY_FAIL:-0}" = 1 ] && grep -q "0:com.example.new" "$ABP_STATE_DIR/app-exclusions.txt"; then exit 1; fi\necho "[+] scope refreshed"\n');
   const file = path.join(state, 'app-exclusions.txt');
   const env = { ...root.env('Magisk'), PATH: bin + path.delimiter + process.env.PATH,
@@ -86,7 +88,7 @@ test('resolves installed packages and profiles, deduplicates shared UIDs, skips 
   assert.match(f.run(['list']).stdout, /excluded\t0:com.example.removed/);
 });
 
-test('UID lookup uses the Android Package Manager path when a detached worker PATH pm fails', t => {
+test('UID lookup supplies system PATH for Android pm wrapper when detached worker PATH lacks pm and cmd', t => {
   const f = fixture(t); writeFileSync(f.file, '0:com.example.one\n');
   const r = f.run(['uids'], { TEST_PM_FAIL: '1' });
   assert.equal(r.status, 0, r.stderr); assert.equal(r.stdout, '10123\n');

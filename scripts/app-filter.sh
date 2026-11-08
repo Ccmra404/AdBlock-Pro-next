@@ -11,7 +11,9 @@ umask 077
 # Detached WebUI workers may not inherit Android's system PATH.
 run_pm() {
   if [ -x /system/bin/pm ]; then
-    /system/bin/pm "$@"
+    # Android's pm shell wrapper invokes cmd by name, so the wrapper itself
+    # must also see the system binary directory in detached WebUI workers.
+    PATH="/system/bin:/system/xbin:${PATH:-}" /system/bin/pm "$@"
   else
     pm "$@"
   fi
