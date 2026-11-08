@@ -10,11 +10,14 @@ function fixture(t) {
   const state = path.join(root.dir, 'state'), agh = path.join(root.dir, 'agh');
   mkdirSync(state); mkdirSync(path.join(agh, 'scripts'), { recursive: true });
   const script = path.join(agh, 'scripts/app-filter.sh');
-  writeFileSync(script, readFileSync(new URL('../scripts/app-filter.sh', import.meta.url), 'utf8'));
   writeFileSync(path.join(agh, 'scripts/compat.sh'), readFileSync(root.compatFile, 'utf8'));
   const bin = path.join(root.dir, 'mock-bin'); mkdirSync(bin);
+  const systemPm = path.join(root.dir, 'system/bin/pm'); mkdirSync(path.dirname(systemPm), { recursive: true });
   const put = (file, content) => { writeFileSync(file, content); chmodSync(file, 0o755); };
   put(path.join(bin, 'pm'), '#!/bin/sh\n[ "${TEST_PM_FAIL:-0}" != 1 ] || exit 1\nif [ "$2" = users ]; then printf "%s\\n" "$TEST_USERS"; exit; fi\ncase "$5" in 0) printf "%s\\n" "$TEST_PACKAGES" ;; 10) printf "%s\\n" "$TEST_PROFILE_PACKAGES" ;; *) exit 1 ;; esac\n');
+  put(systemPm, '#!/bin/sh\n[ "${TEST_SYSTEM_PM_FAIL:-0}" != 1 ] || exit 1\nif [ "$2" = users ]; then printf "%s\\n" "$TEST_USERS"; exit; fi\ncase "$5" in 0) printf "%s\\n" "$TEST_PACKAGES" ;; 10) printf "%s\\n" "$TEST_PROFILE_PACKAGES" ;; *) exit 1 ;; esac\n');
+  writeFileSync(script, readFileSync(new URL('../scripts/app-filter.sh', import.meta.url), 'utf8')
+    .replaceAll('/system/bin/pm', shellPath(systemPm)));
   put(path.join(agh, 'scripts/vpn-compat.sh'), '#!/bin/sh\nprintf "%s\\n" "$1" >> "$ABP_STATE_DIR/refresh.trace"\nif [ "${TEST_APPLY_FAIL:-0}" = 1 ] && grep -q "0:com.example.new" "$ABP_STATE_DIR/app-exclusions.txt"; then exit 1; fi\necho "[+] scope refreshed"\n');
   const file = path.join(state, 'app-exclusions.txt');
   const env = { ...root.env('Magisk'), PATH: bin + path.delimiter + process.env.PATH,
@@ -83,6 +86,12 @@ test('resolves installed packages and profiles, deduplicates shared UIDs, skips 
   assert.match(f.run(['list']).stdout, /excluded\t0:com.example.removed/);
 });
 
+test('UID lookup uses the Android Package Manager path when a detached worker PATH pm fails', t => {
+  const f = fixture(t); writeFileSync(f.file, '0:com.example.one\n');
+  const r = f.run(['uids'], { TEST_PM_FAIL: '1' });
+  assert.equal(r.status, 0, r.stderr); assert.equal(r.stdout, '10123\n');
+});
+
 for (const output of ['', 'Error: Package manager unavailable', 'package:com.example.one uid:$(touch bad)',
   'package:com.example.one uid:1010123', 'package:com.example.one uid:10123\npackage:com.example.one uid:10124']) {
   test('rejects malformed, conflicting or wrong-user Package Manager output: ' + output, t => {
@@ -113,7 +122,7 @@ test('failed refresh restores saved configuration and reapplies the previous sco
 
 test('lookup failure prevents both a configuration change and firewall refresh', t => {
   const f = fixture(t); writeFileSync(f.file, '0:com.example.one\n');
-  assert.notEqual(f.run(['set', '0:com.example.new', 'off'], { TEST_PM_FAIL: '1' }).status, 0);
+  assert.notEqual(f.run(['set', '0:com.example.new', 'off'], { TEST_SYSTEM_PM_FAIL: '1' }).status, 0);
   assert.equal(readFileSync(f.file, 'utf8'), '0:com.example.one\n');
   assert.equal(existsSync(path.join(f.state, 'refresh.trace')), false);
 });

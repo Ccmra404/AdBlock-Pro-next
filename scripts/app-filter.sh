@@ -8,6 +8,15 @@ FILE=$STATE_DIR/app-exclusions.txt
 umask 077
 [ -n "${BB:-}" ] || . "$AGH_DIR/scripts/compat.sh" || exit 1
 
+# Detached WebUI workers may not inherit Android's system PATH.
+run_pm() {
+  if [ -x /system/bin/pm ]; then
+    /system/bin/pm "$@"
+  else
+    pm "$@"
+  fi
+}
+
 valid_key() {
   [ ${#1} -le 265 ] || return 1
   printf '%s\n' "$1" | "$BB" grep -Eq '^(0|[1-9][0-9]{0,4}):[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$' || return 1
@@ -47,7 +56,7 @@ resolve_uids() {
   users=$(printf '%s\n' "$selected" | "$BB" cut -d: -f1 | "$BB" sort -u) || return 1
   for user in $users; do
     if [ "$user" != 0 ]; then
-      user_snapshot=$(pm list users) || { echo '[!] 无法查询工作资料用户。' >&2; return 1; }
+      user_snapshot=$(run_pm list users) || { echo '[!] 无法查询工作资料用户。' >&2; return 1; }
       printf '%s\n' "$user_snapshot" | "$BB" awk -v user="$user" '
         /^[[:space:]]*Users:[[:space:]]*$/ { next }
         /^[[:space:]]*UserInfo\{[0-9]+:/ {
@@ -63,7 +72,7 @@ resolve_uids() {
       # A confirmed removed profile is inactive; unreadable state is not absence.
       case "$user_status" in 0) ;; 1) continue ;; *) echo '[!] 工作资料用户查询结果无效。' >&2; return 1 ;; esac
     fi
-    packages=$(pm list packages -U --user "$user") || {
+    packages=$(run_pm list packages -U --user "$user") || {
       echo '[!] 无法读取系统应用 UID；原设置保留。' >&2; return 1;
     }
     # Reject an error printed with exit=0 and conflicting/malformed UID rows.
