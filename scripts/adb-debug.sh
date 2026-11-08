@@ -25,9 +25,11 @@ fi
 
 captured=$($BB awk -F '\t' 'NR == 1 && $1 == "captured_at" { print $2; exit }' "$REPORT")
 case "$captured" in ''|*[!0-9]*) echo '[Observation]'; echo 'result=invalid_report' >&2; exit 1 ;; esac
+[ ${#captured} -le 12 ] || { echo '[Observation]'; echo 'result=invalid_report' >&2; exit 1; }
 now=$(date +%s 2>/dev/null)
 case "$now" in ''|*[!0-9]*) echo '[Observation]'; echo 'result=clock_unavailable'; exit 0 ;; esac
-if [ "$captured" -gt "$now" ] 2>/dev/null || [ $((now - captured)) -gt 86400 ] 2>/dev/null; then
+[ ${#now} -le 12 ] || { echo '[Observation]'; echo 'result=clock_unavailable'; exit 0; }
+if abp_timestamp_window_elapsed "$now" "$captured" 86400 gt; then
   rm -f "$REPORT"
   echo '[Observation]'
   echo 'result=expired'

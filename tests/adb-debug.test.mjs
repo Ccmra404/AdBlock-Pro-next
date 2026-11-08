@@ -86,6 +86,8 @@ test('debug storage is opt-in, validates a bounded TSV, and uses private atomic 
   assert.match(debugScript, /latest-observation\.tsv/);
   assert.match(debugScript, /dns_listener\|dns_listener_udp\|dns_listener_tcp\|dns_api/);
   assert.match(debugScript, /86400/);
+  assert.match(debugScript, /abp_timestamp_window_elapsed "\$now" "\$captured" 86400 gt/);
+  assert.doesNotMatch(debugScript, /\[ \"\$captured\" -gt \"\$now\"|\$\(\(now - captured\)\)/);
   assert.match(installer, /scripts\/adb-debug\.sh" -d "\$MODPATH/);
   assert.match(installer, /unzip -l "\$ZIPFILE" \| grep -Eq/);
   assert.doesNotMatch(installer, /unzip -Z1/);

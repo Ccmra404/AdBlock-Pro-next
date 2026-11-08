@@ -84,4 +84,27 @@ abp_mkdir_p() {
   for dir do abp_mkdir_one "$dir" || return 1; done
 }
 
+# Compare bounded decimal epoch values through awk. Android mksh's test and
+# arithmetic operators use signed 32-bit values on supported devices.
+abp_timestamp_window_elapsed() {
+  local now recorded interval comparison value
+  [ "$#" -eq 4 ] || return 1
+  now=$1; recorded=$2; interval=$3; comparison=$4
+  for value in "$now" "$recorded" "$interval"; do
+    case "$value" in ''|*[!0-9]*) return 1 ;; esac
+    [ ${#value} -le 12 ] || return 1
+  done
+  case "$comparison" in gt|ge) ;; *) return 1 ;; esac
+  "$BB" awk -v now="$now" -v recorded="$recorded" -v interval="$interval" -v comparison="$comparison" '
+    BEGIN {
+      now += 0; recorded += 0; interval += 0
+      # A future timestamp means the device clock moved backwards; treat the
+      # stored stamp as stale so retries and report expiry can proceed.
+      if (now < recorded) exit 0
+      elapsed = now - recorded
+      if (comparison == "gt") exit !(elapsed > interval)
+      exit !(elapsed >= interval)
+    }'
+}
+
 abp_find_busybox || return 1
