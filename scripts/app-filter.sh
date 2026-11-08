@@ -15,17 +15,29 @@ valid_key() {
 }
 
 selections() {
-  local input key count=0
+  local input status
   input=$1
   [ -e "$input" ] || return 0
   [ -f "$input" ] && [ -r "$input" ] || return 1
   [ "$(wc -c < "$input")" -le 140000 ] || return 1
-  while IFS= read -r key || [ -n "$key" ]; do
-    valid_key "$key" || { echo '[!] 应用排除配置无效；未更改 DNS 接管。' >&2; return 1; }
-    count=$((count + 1))
-    [ "$count" -le 512 ] || { echo '[!] 应用排除最多保存 512 项。' >&2; return 1; }
-    printf '%s\n' "$key"
-  done < "$input"
+  # Validate the whole file in one process instead of invoking grep per app.
+  "$BB" awk '
+    {
+      key=$0
+      if (length(key)>265 || key !~ /^(0|[1-9][0-9]*):[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/) exit 2
+      user=substr(key, 1, index(key, ":")-1)
+      if (length(user)>5 || user+0>21473) exit 2
+      if (++count>512) exit 3
+      print key
+    }
+  ' "$input"
+  status=$?
+  case "$status" in
+    0) return 0 ;;
+    2) echo '[!] 应用排除配置无效；未更改 DNS 接管。' >&2 ;;
+    3) echo '[!] 应用排除最多保存 512 项。' >&2 ;;
+  esac
+  return 1
 }
 
 resolve_uids() {

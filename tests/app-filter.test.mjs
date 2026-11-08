@@ -38,6 +38,41 @@ test('default all-app filtering needs no Package Manager access or state file', 
   assert.equal(existsSync(f.file), false);
 });
 
+test('bulk selection validation accepts 512 entries, the largest user ID and a final line without a newline', t => {
+  const f = fixture(t);
+  const keys = Array.from({ length: 511 }, (_, i) => `0:com.example.app${i}`);
+  keys.push('21473:com.example.last');
+  writeFileSync(f.file, keys.join('\n'));
+  const r = f.run(['list']);
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout, keys.map(key => `excluded\t${key}\n`).join(''));
+});
+
+test('bulk selection validation rejects invalid saved entries and does not apply a new scope', t => {
+  const f = fixture(t);
+  const invalid = ['00:com.example.one', '21474:com.example.one', '99999:com.example.one',
+    '0:com.example;id', '0:com..example', `0:com.${'a'.repeat(260)}`, '', '0:com.example.one\r'];
+  for (const key of invalid) {
+    const original = `0:com.example.one\n${key}\n`;
+    writeFileSync(f.file, original);
+    const listed = f.run(['list']);
+    assert.notEqual(listed.status, 0, key);
+    assert.equal(listed.stdout, '');
+    assert.notEqual(f.run(['set', '0:com.example.new', 'off']).status, 0, key);
+    assert.equal(readFileSync(f.file, 'utf8'), original);
+    assert.equal(existsSync(path.join(f.state, 'refresh.trace')), false);
+  }
+});
+
+test('bulk selection validation rejects more than 512 entries', t => {
+  const f = fixture(t);
+  writeFileSync(f.file, Array.from({ length: 513 }, (_, i) => `0:com.example.app${i}`).join('\n'));
+  const r = f.run(['list']);
+  assert.notEqual(r.status, 0);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /最多保存 512 项/);
+});
+
 test('resolves installed packages and profiles, deduplicates shared UIDs, skips removed apps', t => {
   const f = fixture(t);
   writeFileSync(f.file, '0:com.example.one\n0:com.example.shared\n0:com.example.removed\n10:com.example.one\n');
