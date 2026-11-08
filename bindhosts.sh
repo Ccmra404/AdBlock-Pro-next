@@ -930,13 +930,35 @@ write_personal_filter() {
   tmp="$USER_FILTER.tmp.$$"
   printf '! AdBlock Pro personal allow and block rules\n' > "$tmp" || return 1
   for kind in blacklist whitelist; do
-    [ ! -f "$STATE/$kind.txt" ] || while IFS= read -r domain; do
-      domain=$(printf '%s' "$domain" | $BB tr '[:upper:]' '[:lower:]')
-      case "$domain" in ''|\#*) continue ;; esac
-      valid_domain "$domain" || { rm -f "$tmp"; echo "[!] Invalid domain in $kind.txt: $domain" >&2; return 1; }
-      if [ "$kind" = blacklist ]; then rule="||$domain^"; else rule="@@||$domain^"; fi
-      printf '%s\n' "$rule" >> "$tmp" || { rm -f "$tmp"; return 1; }
-    done < "$STATE/$kind.txt"
+    [ -f "$STATE/$kind.txt" ] || continue
+    input_tmp="$tmp.input"
+    # Preserve the existing read-loop handling of incomplete last lines while
+    # avoiding a separate tr and grep process for every stored domain.
+    if ! (while IFS= read -r domain; do printf '%s\n' "$domain" || exit 1; done < "$STATE/$kind.txt") > "$input_tmp"; then
+      rm -f "$tmp" "$input_tmp"; return 1
+    fi
+    if ! "$BB" awk -v kind="$kind" '
+      function valid(d, labels,n,i) {
+        if (length(d)>253 || index(d,".")==0) return 0
+        n=split(d,labels,/\./)
+        for (i=1; i<=n; i++)
+          if (length(labels[i])>63 || labels[i] !~ /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/) return 0
+        return 1
+      }
+      {
+        domain=tolower($0)
+        if (domain=="" || substr(domain,1,1)=="#") next
+        if (!valid(domain)) {
+          printf "[!] Invalid domain in %s.txt: %s\n", kind, domain > "/dev/stderr"
+          exit 1
+        }
+        if (kind=="blacklist") print "||" domain "^"
+        else print "@@||" domain "^"
+      }
+    ' "$input_tmp" >> "$tmp"; then
+      rm -f "$tmp" "$input_tmp"; return 1
+    fi
+    rm -f "$input_tmp"
   done
   rules_tmp="$tmp.sorted"
   $BB awk '!/^[[:space:]]*(!|#|$)/ { print }' "$tmp" | $BB sort -u > "$rules_tmp" || { rm -f "$tmp" "$rules_tmp"; return 1; }
