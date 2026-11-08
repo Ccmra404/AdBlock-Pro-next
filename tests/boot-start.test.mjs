@@ -11,6 +11,23 @@ const start = source.indexOf('boot_route_ready() {');
 const end = source.indexOf('# Start the module enable/disable watcher', start);
 assert(start >= 0 && end > start, 'boot readiness helpers exist');
 const helperCode = source.slice(start, end);
+const clampStart = source.indexOf('# Clamp untrusted/malformed settings');
+const clampEnd = source.indexOf('# Android often stores', clampStart);
+assert(clampStart >= 0 && clampEnd > clampStart, 'boot setting clamps exist');
+const clampCode = source.slice(clampStart, clampEnd);
+
+function clampBootSettings(delay, networkWait) {
+  return spawnSync('bash', ['-c', [
+    'boot_start_delay=$TEST_BOOT_DELAY',
+    'boot_network_wait=$TEST_BOOT_NETWORK_WAIT',
+    clampCode,
+    'printf "%s %s\\n" "$boot_start_delay" "$boot_network_wait"',
+  ].join('\n')], {
+    encoding: 'utf8',
+    timeout: 10000,
+    env: { ...process.env, TEST_BOOT_DELAY: String(delay), TEST_BOOT_NETWORK_WAIT: String(networkWait) },
+  });
+}
 
 function run(t, action, options = {}) {
   const dir = mkdtempSync(path.join(tmpdir(), 'abp-boot-'));
@@ -75,6 +92,14 @@ test('waiting can be disabled using zero seconds', t => {
   const { result, ticks } = run(t, 'wait_for_boot_network', { wait: 0 });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(ticks, 0);
+});
+
+test('long numeric boot settings are clamped before Android shell integer comparisons', () => {
+  const result = clampBootSettings('4294967296', '2147483648');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout.trim(), '60 90');
+  assert.match(clampCode, /\$\{#boot_start_delay\} -le 2/);
+  assert.match(clampCode, /\$\{#boot_network_wait\} -le 2/);
 });
 
 test('a local route alone is not mistaken for a usable default route', t => {

@@ -76,6 +76,24 @@ test('shared sync validates downloaded data and retains newer cached versions ac
   assert.equal(f.run('init').status,0); assert.equal(readFileSync(f.filter,'utf8'),'||new.example^\n');
 });
 
+test('shared revision ordering remains correct above Android mksh signed integer range', t=>{
+  const f=fixture(t); assert.equal(f.run('init').status,0);
+  const high='2147483648', higher='2147483649';
+  writeFileSync(f.file,`# revision: ${high}\ncurrent.example\n`);
+  writeFileSync(f.filter,'||current.example^\n');
+  writeFileSync(f.remote,`# revision: ${higher}\nnew.example\n`);
+  const result=f.run('sync'); assert.equal(result.status,0,result.stderr+result.stdout);
+  assert.match(readFileSync(f.file,'utf8'),new RegExp(`^# revision: ${higher}$`,'m'));
+
+  assert.equal(f.run('init').status,0);
+  assert.match(readFileSync(f.file,'utf8'),new RegExp(`^# revision: ${higher}$`,'m'));
+  const before=readFileSync(f.file,'utf8'), applied=readFileSync(f.filter,'utf8');
+  writeFileSync(f.remote,`# revision: ${high}\nolder.example\n`);
+  assert.notEqual(f.run('sync').status,0);
+  assert.equal(readFileSync(f.file,'utf8'),before);
+  assert.equal(readFileSync(f.filter,'utf8'),applied);
+});
+
 test('shared sync retries the official CDN mirror when GitHub Raw is unavailable', t=>{
   const f=fixture(t); assert.equal(f.run('init').status,0);
   f.env.FAIL_URL='https://raw.githubusercontent.com/Ccmra404/AdBlock-Pro-next/main/rules/shared-app-domains.txt';

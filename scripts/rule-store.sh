@@ -35,6 +35,11 @@ normalize_shared() {
   "$BB" sort -u "$work/normalized" > "$2"
 }
 revision() { "$BB" awk '/^# revision:/ { print $3; exit }' "$1"; }
+# Revisions are capped at 12 decimal digits; awk can compare them exactly and
+# avoids Android mksh's signed 32-bit overflow in test's -ge operator.
+revision_is_at_least() {
+  "$BB" awk -v candidate="$1" -v baseline="$2" 'BEGIN { exit !(candidate + 0 >= baseline + 0) }'
+}
 commit_shared() {
   "$BB" awk '!/^#/ && NF { print "||" $0 "^" }' "$1" > "$work/filter" || return 1
   if [ -f "$SHARED" ] && "$BB" cmp -s "$1" "$SHARED"; then
@@ -51,7 +56,7 @@ initialize_shared() {
   normalize_shared "$MODULE/rules/shared-app-domains.txt" "$work/bundle" || return 1
   if [ -f "$SHARED" ]; then
     normalize_shared "$SHARED" "$work/current" || return 1
-    if [ "$(revision "$work/current")" -ge "$(revision "$work/bundle")" ]; then
+    if revision_is_at_least "$(revision "$work/current")" "$(revision "$work/bundle")"; then
       commit_shared "$work/current"; return
     fi
   fi
@@ -166,7 +171,7 @@ case "$1" in
     normalize_shared "$work/download" "$work/next" || { echo '[!] Invalid shared rules; previous snapshot retained.' >&2; exit 1; }
     if [ -f "$SHARED" ]; then
       normalize_shared "$SHARED" "$work/current" || exit 1
-      [ "$(revision "$work/next")" -ge "$(revision "$work/current")" ] || { echo '[!] Older shared snapshot refused.' >&2; exit 1; }
+      revision_is_at_least "$(revision "$work/next")" "$(revision "$work/current")" || { echo '[!] Older shared snapshot refused.' >&2; exit 1; }
     fi
     commit_shared "$work/next" || exit 1
     echo '[+] 共享抓包规则已同步；未覆盖本机个人名单。'
