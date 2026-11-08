@@ -51,6 +51,57 @@ test('TXT export sections, DNS rules and JSON import preserve blacklist and whit
   assert.deepEqual(Array.from(json.blacklist),['ads.example']);
 });
 
+test('import preview detects both directions of a domain overlap without changing the incoming batch', () => {
+  const h = harness();
+  h.state.lists.blacklist = ['ads.example', 'deep.track.example'];
+  h.state.lists.whitelist = ['pay.example'];
+  const incoming = h.parsePersonalImport(JSON.stringify({
+    blacklist: ['ADS.Example.', 'sub.ads.example', 'track.example', 'notads.example', 'fresh.example', 'child.fresh.example'],
+    whitelist: ['pay.example', 'sub.pay.example', 'new.example'],
+  }));
+  const preview = JSON.parse(JSON.stringify(h.preparePersonalImport(incoming)));
+  assert.deepEqual(preview, {
+    lists: { blacklist: ['notads.example', 'fresh.example', 'child.fresh.example'], whitelist: ['new.example'] },
+    skipped: 5,
+  });
+});
+
+test('import preview agrees with the original overlap rules for varied domains', () => {
+  const h = harness();
+  let seed = 12345;
+  const random = n => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed % n; };
+  const domain = () => Array.from({ length: 2 + random(3) }, () => ['a', 'aa', 'b', 'shop', 'ads'][random(5)]).join('.');
+  const touches = (candidate, list) => list.some(item => candidate === item || candidate.endsWith('.' + item) || item.endsWith('.' + candidate));
+  for (let round = 0; round < 40; round++) {
+    const old = { blacklist: Array.from({length: 40}, domain), whitelist: Array.from({length: 40}, domain) };
+    const incoming = { blacklist: Array.from({length: 25}, domain), whitelist: Array.from({length: 25}, domain) };
+    h.state.lists = old;
+    const expected = { lists: { blacklist: [], whitelist: [] }, skipped: 0 };
+    for (const kind of ['blacklist', 'whitelist']) for (const item of incoming[kind]) {
+      if (touches(item, old.blacklist) || touches(item, old.whitelist)) expected.skipped++;
+      else expected.lists[kind].push(item);
+    }
+    assert.deepEqual(JSON.parse(JSON.stringify(h.preparePersonalImport(incoming))), expected);
+  }
+});
+
+test('import preview preserves overlap matching for malformed and unusually long saved lines', () => {
+  const h = harness();
+  const old = {
+    blacklist: ['a..ads.example', '.odd.example', 'broken.example.', 'single', 'x.'.repeat(10000) + 'deep.example'],
+    whitelist: ['pay.example'],
+  };
+  const incoming = { blacklist: ['ads.example', 'odd.example', 'broken.example', 'deep.example', 'normal.example'], whitelist: ['sub.pay.example'] };
+  h.state.lists = old;
+  const touches = (candidate, list) => list.some(item => candidate === item || candidate.endsWith('.' + item) || item.endsWith('.' + candidate));
+  const expected = { lists: { blacklist: [], whitelist: [] }, skipped: 0 };
+  for (const kind of ['blacklist', 'whitelist']) for (const item of incoming[kind]) {
+    if (touches(item, old.blacklist) || touches(item, old.whitelist)) expected.skipped++;
+    else expected.lists[kind].push(item);
+  }
+  assert.deepEqual(JSON.parse(JSON.stringify(h.preparePersonalImport(incoming))), expected);
+});
+
 test('invalid and excessive imports are rejected before executing any native command',()=>{
   const h=harness();
   for(const text of ['<script>alert(1)</script>','valid.example\nbad;command.example','[拦截名单]\n', '{"blacklist":[12]}', '{"version":0,"blacklist":["ads.example"]}', '[拦截名单]\nshared.example\n[放行名单]\nshared.example', 'x'.repeat(65537)]) assert.throws(()=>h.parsePersonalImport(text));
@@ -280,6 +331,20 @@ test('observed domains can be selected in batches and exports contain only chose
  const prompt=h.observationAIPrompt();
  assert.match(prompt,/ads\.example/);assert.doesNotMatch(prompt,/api\.example|Banking App|com\.private\.bank/);
  assert.match(h.observationSelectionTools(),/1 个已选/);
+});
+
+test('observation pages mark only valid selected domains among large results', () => {
+ const h=harness();
+ h.state.observationDomains=Array.from({length:2000},(_,i)=>({domain:`domain${i}.example`,count:1}));
+ h.state.selectedObservationDomains=['domain0.example','domain9.example','domain1999.example','not-observed.example','domain0.example'];
+ const first=h.observationRows();
+ assert.equal((first.match(/ checked>/g)||[]).length,2);
+ assert.match(first,/data-observation-domain="domain0\.example"[^>]* checked>/);
+ assert.match(first,/data-observation-domain="domain9\.example"[^>]* checked>/);
+ h.state.observationPage=199;
+ const last=h.observationRows();
+ assert.equal((last.match(/ checked>/g)||[]).length,1);
+ assert.match(last,/data-observation-domain="domain1999\.example"[^>]* checked>/);
 });
 
 test('shared submission link includes only selected observed domains and requires manual review',async()=>{

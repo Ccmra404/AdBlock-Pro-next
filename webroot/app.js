@@ -582,11 +582,11 @@ function observationRows() {
   state.observationPage = Math.min(state.observationPage, pageCount - 1);
   const start = state.observationPage * OBSERVATION_PAGE_SIZE;
   const visible = state.observationDomains.slice(start, start + OBSERVATION_PAGE_SIZE);
+  const selected = new Set(selectedObservationDomains());
   return `${visible.map(item => {
     const classification = classifyObservedDomain(item);
     const action = `<div class="btn-row">${classification.add ? `<button class="btn" data-action="observe-add" data-domain="${esc(item.domain)}">拦截</button>` : ''}${!domainInList(item.domain, state.lists.whitelist) ? `<button class="btn" data-action="observe-allow" data-domain="${esc(item.domain)}">放行</button>` : ''}</div>`;
-    const selected = selectedObservationDomains().includes(item.domain);
-    return `<div class="observe-row"><label class="observe-select"><input type="checkbox" data-observation-domain="${esc(item.domain)}" aria-label="选择 ${esc(item.domain)}" ${selected ? 'checked' : ''}></label><div class="observe-copy"><strong>${esc(item.domain)}</strong><small>${fmt(item.count)} 次请求${item.filterId ? ` · 规则 ${esc(item.filterId)}` : ''}</small></div>${tag(classification.label, classification.tone)}${action}</div>`;
+    return `<div class="observe-row"><label class="observe-select"><input type="checkbox" data-observation-domain="${esc(item.domain)}" aria-label="选择 ${esc(item.domain)}" ${selected.has(item.domain) ? 'checked' : ''}></label><div class="observe-copy"><strong>${esc(item.domain)}</strong><small>${fmt(item.count)} 次请求${item.filterId ? ` · 规则 ${esc(item.filterId)}` : ''}</small></div>${tag(classification.label, classification.tone)}${action}</div>`;
   }).join('')}<nav class="observe-pagination logs-pagination" aria-label="观察结果分页"><button class="btn" data-action="observe-page" data-page="${state.observationPage - 1}" ${state.observationPage === 0 ? 'disabled' : ''}>上一页</button><span>第 ${state.observationPage + 1} / ${pageCount} 页 · ${start + 1}–${start + visible.length} 条，共 ${candidateCount} 条</span><button class="btn" data-action="observe-page" data-page="${state.observationPage + 1}" ${state.observationPage >= pageCount - 1 ? 'disabled' : ''}>下一页</button></nav>`;
 }
 function observationPanel() {
@@ -1378,7 +1378,8 @@ function parsePersonalImport(text) {
     });
     result[kind] = [...new Set(result[kind])];
   }
-  if (result.blacklist.some(domain => result.whitelist.includes(domain))) throw new Error('同一域名不能同时加入拦截和放行名单');
+  const allowed = new Set(result.whitelist);
+  if (result.blacklist.some(domain => allowed.has(domain))) throw new Error('同一域名不能同时加入拦截和放行名单');
   if (!result.blacklist.length && !result.whitelist.length) throw new Error('文件中没有可导入的域名');
   if (result.blacklist.length + result.whitelist.length > 5000) throw new Error('单次最多导入 5,000 条域名');
   return result;
@@ -1386,10 +1387,28 @@ function parsePersonalImport(text) {
 function preparePersonalImport(lists) {
   const prepared = { blacklist: [], whitelist: [] };
   let skipped = 0;
+  let maxLength = 0;
+  for (const kind of ['blacklist', 'whitelist']) for (const domain of lists[kind]) maxLength = Math.max(maxLength, domain.length);
+  if (!lists.blacklist.length && !lists.whitelist.length) return { lists: prepared, skipped };
+  // Index only the saved lists so overlapping entries in this batch keep their existing behavior.
+  const existing = new Set([...(state.lists.blacklist || []), ...(state.lists.whitelist || [])]);
+  const parents = new Set();
+  for (const domain of existing) {
+    // Longer suffixes cannot match an incoming domain; avoid expanding malformed long saved lines.
+    for (let dot = domain.indexOf('.', Math.max(0, domain.length - maxLength - 1)); dot !== -1; dot = domain.indexOf('.', dot + 1)) parents.add(domain.slice(dot + 1));
+  }
+  function overlaps(domain) {
+    if (parents.has(domain)) return true;
+    for (let part = domain; ; ) {
+      if (existing.has(part)) return true;
+      const dot = part.indexOf('.');
+      if (dot === -1) return false;
+      part = part.slice(dot + 1);
+    }
+  }
   for (const kind of ['blacklist', 'whitelist']) {
-    const opposite = kind === 'blacklist' ? 'whitelist' : 'blacklist';
     for (const domain of lists[kind]) {
-      if (domainTouchesList(domain, state.lists[kind]) || domainTouchesList(domain, state.lists[opposite])) skipped++;
+      if (overlaps(domain)) skipped++;
       else prepared[kind].push(domain);
     }
   }
