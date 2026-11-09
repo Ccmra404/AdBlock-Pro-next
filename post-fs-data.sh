@@ -7,7 +7,12 @@ BOOTSTRAP="$AGH_DIR/bin/adblock-bootstrap"
 
 [ -x "$BOOTSTRAP" ] || exit 0
 if ! result=$("$BOOTSTRAP" migrate-state 2>&1); then
-  printf '%s [AdBlock Pro] State directory migration notice: %s\n' \
-    "$(date '+%Y-%m-%d %H:%M:%S')" "$result" >> "$AGH_DIR/history.log" 2>/dev/null || true
+  history_message=$(printf '%s [AdBlock Pro] State directory migration notice: %s' \
+    "$(date '+%Y-%m-%d %H:%M:%S')" "$result")
+  if [ -r "$AGH_DIR/scripts/compat.sh" ] && . "$AGH_DIR/scripts/compat.sh" 2>/dev/null; then
+    abp_append_history "$AGH_DIR/history.log" line "$history_message" || true
+  else
+    printf '%s\n' "$history_message" >&2
+  fi
 fi
 exit 0

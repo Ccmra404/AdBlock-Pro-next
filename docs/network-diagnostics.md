@@ -22,6 +22,10 @@
 
 系统设置查询每次最多 2 秒，VPN 查询最多 3 秒，整组 IPv6 防火墙查询最多 6 秒。诊断不保存原始 connectivity dump、网络地址、应用列表或私人 DNS 提供商。它只在用户主动诊断时运行，不增加日常状态轮询开销。BusyBox 不提供 timeout 时，对应查询显示未知，不降级为无超时执行。
 
+## 存储占用
+
+诊断中的 `diag_disk_history_log_kb` 和 `diag_disk_history_archive_kb` 分别表示模块运行历史及其最近一段归档。历史超过 1 MiB 后会按行边界保留最近约 1 MiB，旧内容会被新历史替换；这样异常恢复或自动更新日志不会无限占用存储。其他用户配置、名单和备份不受这项限制。
+
 这些信息不能证明应用是否走 DoH/DoT、代理内置 DNS、缓存或 IP 直连。排查偶发广告和访问问题时，应针对具体应用做 VPN 开关前后、普通 Wi-Fi/移动网络的对照，并结合域名观察与规则检查；不能仅凭配置快照认定冲突。
 
 实现依据：[Android 私人 DNS 与全局代理设置定义](https://android.googlesource.com/platform/packages/modules/Connectivity/+/refs/heads/main/framework/src/android/net/ConnectivitySettingsManager.java)、[ConnectivityService 当前网络输出](https://android.googlesource.com/platform/packages/modules/Connectivity/+/refs/heads/main/service/src/com/android/server/ConnectivityService.java)。Android 和厂商输出可能变化，因此不识别的格式保留未知状态。

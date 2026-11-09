@@ -8,6 +8,8 @@ import { shellPath } from './shell-fixture.mjs';
 import { fileURLToPath } from 'node:url';
 
 const helper = new URL('../scripts/vpn-compat.sh', import.meta.url);
+const compatSource = readFileSync(new URL('../scripts/compat.sh', import.meta.url), 'utf8');
+const historyLogger = fileURLToPath(new URL('../scripts/history-log.sh', import.meta.url));
 
 function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on', redirect = true, core = true, netReadable = true, failDisable = false, failEnable = false, failDescription = false, interfaces = null, firewallEnabled = 'true', disabled = false } = {}) {
   const root = mkdtempSync(path.join(tmpdir(), 'abp-vpn-compat-'));
@@ -18,6 +20,7 @@ function fixture(t, { vpn = false, paused = vpn, compat = 'on', takeover = 'on',
   const sys = path.join(root, 'net');
   const proc = path.join(root, 'proc');
   for (const dir of [path.join(agh, 'scripts'), path.join(agh, 'bin'), state, mod, sys, proc, path.join(proc, '777'), path.join(proc, 'net')]) mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(agh, 'scripts/compat.sh'), compatSource);
   if (compat !== null) writeFileSync(path.join(state, 'vpn-compat'), compat + '\n');
   writeFileSync(path.join(state, 'dns-takeover'), takeover + '\n');
   writeFileSync(path.join(state, 'vpn-compat-state'), paused ? 'vpn\n' : '');
@@ -61,12 +64,12 @@ esac
 `);
   chmodSync(path.join(agh, 'scripts/iptables.sh'), 0o755);
   const bb = path.join(root, 'busybox');
-  writeFileSync(bb, '#!/bin/sh\ncase "$1" in sh) shift; exec bash "$@" ;; *) exec "$@" ;; esac\n');
+  writeFileSync(bb, '#!/bin/sh\ncase "$1" in\n  --list) printf "sh\\nawk\\nflock\\nnohup\\nsetuidgid\\ninotifyd\\n" ;;\n  sh) shift; exec bash "$@" ;;\n  flock) shift; [ "$1" != -n ] || shift; shift; exec "$@" ;;\n  *) exec "$@" ;;\nesac\n');
   chmodSync(bb, 0o755);
   function run(...args) {
     return spawnSync('bash', [shellPath(fileURLToPath(helper)), ...args], {
       encoding: 'utf8', timeout: 10000,
-      env: { ...process.env, BB: shellPath(bb), ABP_DNS_TRANSITION_LOCKED: '1',
+        env: { ...process.env, BB: shellPath(bb), ABP_HISTORY_LOG_SCRIPT: shellPath(historyLogger), ABP_DNS_TRANSITION_LOCKED: '1',
         ABP_AGH_DIR: shellPath(agh), ABP_STATE_DIR: shellPath(state), ABP_MODULE_DIR: shellPath(mod),
         ABP_SYS_CLASS_NET: shellPath(sys), ABP_PROC_ROOT: shellPath(proc),
         FIREWALL_STATE: shellPath(fwState), FIREWALL_CALLS: shellPath(calls), FAIL_DISABLE: failDisable ? '1' : '0', FAIL_ENABLE: failEnable ? '1' : '0',

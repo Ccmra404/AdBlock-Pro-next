@@ -27,6 +27,8 @@ function runFixture(t, processPresent = true, migrated = false) {
   const engine = path.join(agh, 'bin', 'AdGuardHome');
   writeFileSync(engine, Buffer.alloc(14000, 65));
   writeFileSync(path.join(agh, 'bin', 'data', 'filters', '10007.txt'), '||ads.example^\n');
+  writeFileSync(path.join(agh, 'history.log'), 'history\n');
+  writeFileSync(path.join(agh, 'history.log.1'), 'older history\n');
   writeFileSync(path.join(state, 'webui-jobs', '100.log'), 'diagnostics\n');
   writeFileSync(path.join(state, 'dns-history', 'one.tar.gz'), 'snapshot\n');
   if (processPresent) {
@@ -65,6 +67,8 @@ test('disk report measures real installed paths without reading private configs'
   const result = runFixture(t);
   assert(Number(result.diag_disk_engine_binary_kb) >= 12);
   assert(Number(result.diag_disk_filter_cache_kb) > 0);
+  assert(Number(result.diag_disk_history_log_kb) > 0);
+  assert(Number(result.diag_disk_history_archive_kb) > 0);
   assert(Number(result.diag_disk_task_logs_kb) > 0);
   assert(Number(result.diag_disk_rollback_kb) > 0);
   assert.equal(result.diag_mem_rss_kb, '40960');
