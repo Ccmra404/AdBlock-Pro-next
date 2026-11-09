@@ -48,7 +48,8 @@ current_state() {
 log_transition() {
   local message
   message=$1
-  printf '%s [VPN 兼容] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$message" >> "$HISTORY" 2>/dev/null || true
+  "$BB" sh "${ABP_HISTORY_LOG_SCRIPT:-$AGH_DIR/scripts/history-log.sh}" \
+    "$HISTORY" line "$(printf '%s [VPN 兼容] %s' "$(date '+%Y-%m-%d %H:%M:%S')" "$message")" || true
 }
 
 # Reuse each Root family's description API, only on state changes. A cosmetic

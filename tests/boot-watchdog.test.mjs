@@ -86,6 +86,7 @@ esac
   const body = [
     'MODDIR="' + shellPath(mod) + '"',
     'BB="' + shellPath(bb) + '"',
+    'history_log() { printf "%s\\n" "$1" >> "' + shellPath(path.join(agh, 'history.log')) + '"; }',
     'ticks=0',
     `sleep() {
       ticks=$((ticks + 1))

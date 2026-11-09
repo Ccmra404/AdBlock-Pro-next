@@ -1136,7 +1136,7 @@ update_rules() {
 }
 
 auto_update_rules() {
-  local now last attempt selected
+  local now last attempt selected update_output update_result
   [ ! -f "$MODDIR/disable" ] && [ ! -f "$MODDIR/remove" ] || return 0
   [ ! -f "$STATE/auto-update" ] || [ "$(cat "$STATE/auto-update")" = on ] || return 0
   is_our_process "$(cat "$AGH/bin/agh.pid" 2>/dev/null)" && is_dns_listening || return 0
@@ -1158,8 +1158,14 @@ auto_update_rules() {
   if [ "$enabled_filter_count" -eq 0 ] && ! printf '%s\n' "$selected" | "$BB" awk -F '\t' '$1=="source" && $5=="enabled" { found=1 } END { exit !found }'; then return 0; fi
   printf '%s\n' "$now" > "$STATE/auto-update-attempt.tmp" &&
     chmod 600 "$STATE/auto-update-attempt.tmp" && mv "$STATE/auto-update-attempt.tmp" "$STATE/auto-update-attempt" || return 1
-  printf '%s [自动更新] 下载已启用的规则来源。\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> "$AGH/history.log"
-  AUTO_UPDATE=1 update_rules >> "$AGH/history.log" 2>&1
+  abp_append_history "$AGH/history.log" line "$(printf '%s [自动更新] 下载已启用的规则来源。' "$(date '+%Y-%m-%d %H:%M:%S')")" || true
+  update_output=$AGH/.history-update-output
+  rm -f "$update_output"
+  AUTO_UPDATE=1 update_rules > "$update_output" 2>&1
+  update_result=$?
+  [ ! -f "$update_output" ] || abp_append_history "$AGH/history.log" file "$update_output" || true
+  rm -f "$update_output"
+  return "$update_result"
 }
 
 diagnose() {

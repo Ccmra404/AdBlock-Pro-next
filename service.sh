@@ -2,6 +2,10 @@
 MODDIR=${0%/*}
 . "$MODDIR/scripts/compat.sh" || exit 1
 
+history_log() {
+  abp_append_history /data/adb/adblockpro/history.log line "$1" >/dev/null 2>&1 || true
+}
+
 STATE_DIR=/data/adb/bindhosts_personal
 AUTOSTART=$STATE_DIR/autostart
 # If a reboot interrupted a temporary query-log observation, restore its
@@ -45,8 +49,8 @@ wait_for_boot_network() {
     sleep 2
     waited=$((waited + 2))
   done
-  printf '%s [提示] 等待网络路由 %s 秒后仍未就绪，将离线启动 DNS 核心。\n' \
-    "$(date '+%Y-%m-%d %H:%M:%S')" "$boot_network_wait" >> /data/adb/adblockpro/history.log 2>/dev/null || true
+  history_log "$(printf '%s [提示] 等待网络路由 %s 秒后仍未就绪，将离线启动 DNS 核心。' \
+    "$(date '+%Y-%m-%d %H:%M:%S')" "$boot_network_wait")"
   return 0
 }
 
@@ -63,7 +67,7 @@ if [ "$(cat "$AUTOSTART" 2>/dev/null)" = on ]; then
   while [ "$(getprop sys.boot_completed)" != 1 ] &&
         [ "$(getprop init.svc.bootanim)" != stopped ]; do
     [ "$boot_waited" -lt 180 ] || {
-      printf '%s [警告] 开机完成信号未返回，继续尝试启动 DNS 服务。\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> /data/adb/adblockpro/history.log
+      history_log "$(printf '%s [警告] 开机完成信号未返回，继续尝试启动 DNS 服务。' "$(date '+%Y-%m-%d %H:%M:%S')")"
       break
     }
     sleep 5
@@ -144,10 +148,10 @@ fi
       [ ! -f "$MODDIR/disable" ] || cleanup_reason='模块已禁用'
       [ ! -f "$MODDIR/remove" ] || cleanup_reason='模块待卸载'
       if [ "$redirect_state" = absent ]; then
-        printf '%s [恢复] %s，已解除本模块 DNS 重定向。\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$cleanup_reason" >> "$AGH/history.log"
+        history_log "$(printf '%s [恢复] %s，已解除本模块 DNS 重定向。' "$(date '+%Y-%m-%d %H:%M:%S')" "$cleanup_reason")"
         cleanup_warning=0
       elif [ "$cleanup_warning" = 0 ]; then
-        printf '%s [警告] %s，DNS 重定向仍有残留或状态未知，将继续重试。\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$cleanup_reason" >> "$AGH/history.log"
+        history_log "$(printf '%s [警告] %s，DNS 重定向仍有残留或状态未知，将继续重试。' "$(date '+%Y-%m-%d %H:%M:%S')" "$cleanup_reason")"
         cleanup_warning=1
       fi
     fi
@@ -160,8 +164,8 @@ fi
     case "$request" in run:*) ;; *) recovery_ticks=0; continue ;; esac
     if [ "$recovery_attempts" -ge 3 ]; then
       if [ "$recovery_warning" = 0 ]; then
-        printf '%s [警告] DNS 核心连续异常，已停止自动恢复；请检查运行日志后手动恢复。\n' \
-          "$(date '+%Y-%m-%d %H:%M:%S')" >> "$AGH/history.log"
+        history_log "$(printf '%s [警告] DNS 核心连续异常，已停止自动恢复；请检查运行日志后手动恢复。' \
+          "$(date '+%Y-%m-%d %H:%M:%S')")"
         recovery_warning=1
       fi
       continue
@@ -179,8 +183,8 @@ fi
         recovery_attempts=$((recovery_attempts + 1))
         recovery_message='DNS 核心已完成自动恢复'
         [ "$recovery_result" = 0 ] || recovery_message='DNS 核心自动恢复未完成'
-        printf '%s [恢复] %s（本轮 %s/3）。\n' "$(date '+%Y-%m-%d %H:%M:%S')" \
-          "$recovery_message" "$recovery_attempts" >> "$AGH/history.log"
+        history_log "$(printf '%s [恢复] %s（本轮 %s/3）。' "$(date '+%Y-%m-%d %H:%M:%S')" \
+          "$recovery_message" "$recovery_attempts")"
         ;;
     esac
   done
@@ -190,5 +194,5 @@ fi
 # is running. No GitHub request or private-list migration occurs at boot.
 if [ -r /data/adb/adblockpro/bin/agh.pid ]; then
   "$BB" sh "$MODDIR/bindhosts.sh" --ensure-shared >/dev/null 2>&1 ||
-    printf '%s [提醒] 共享抓包规则待应用；现有 DNS 核心继续运行。\n' "$(date '+%Y-%m-%d %H:%M:%S')" >> /data/adb/adblockpro/history.log
+    history_log "$(printf '%s [提醒] 共享抓包规则待应用；现有 DNS 核心继续运行。' "$(date '+%Y-%m-%d %H:%M:%S')")"
 fi

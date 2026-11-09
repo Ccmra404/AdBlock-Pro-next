@@ -15,7 +15,8 @@ function log() {
   local timestamp=$(date "+%Y-%m-%d %H:%M:%S")
   local str
   [ "$language" = "en" ] && str="$timestamp $1" || str="$timestamp $2"
-  echo "$str" | tee -a "$AGH_DIR/history.log"
+  printf '%s\n' "$str"
+  abp_append_history "$AGH_DIR/history.log" line "$str" || true
 }
 
 function update_description() {

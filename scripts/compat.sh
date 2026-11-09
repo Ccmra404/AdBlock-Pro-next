@@ -84,6 +84,13 @@ abp_mkdir_p() {
   for dir do abp_mkdir_one "$dir" || return 1; done
 }
 
+# Keep module history storage bounded while serializing every writer with the
+# rotation itself. Preserve the newest complete log lines across two files.
+abp_append_history() {
+  [ "$#" -eq 3 ] || return 2
+  "$BB" sh "${ABP_HISTORY_LOG_SCRIPT:-/data/adb/adblockpro/scripts/history-log.sh}" "$@"
+}
+
 # Compare bounded decimal epoch values through awk. Android mksh's test and
 # arithmetic operators use signed 32-bit values on supported devices.
 abp_timestamp_window_elapsed() {
