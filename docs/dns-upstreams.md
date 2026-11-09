@@ -33,7 +33,7 @@
 
 模块会在保存前检测读取后发生的 DNS 配置变化，发现变化时要求重新读取。官方 API 不提供原子条件写入，请避免同时在原生后台和模块 WebUI 修改 DNS 设置。上次测试通过不保证更换网络后仍然可用。
 
-相关官方接口：[dns_info / test_upstream_dns / dns_config / cache_clear](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.79/openapi/openapi.yaml)。
+相关官方接口：[dns_info / test_upstream_dns / dns_config / cache_clear](https://github.com/AdguardTeam/AdGuardHome/blob/v0.107.80/openapi/openapi.yaml)。
 
 ## 私网反向解析报错
 

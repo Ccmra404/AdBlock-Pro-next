@@ -188,7 +188,7 @@ func TestDNSSaveTestsEveryServerAndOnlySendsManagedFields(t *testing.T) {
 	}
 }
 func TestDNSTestMatchesCoreDefaultPorts(t *testing.T) {
-	// AdGuard Home v0.107.79 keys successful results by upstream.Address(),
+	// The bundled AdGuard Home core keys successful results by upstream.Address(),
 	// which adds default ports.  Keep these literal API responses independent
 	// of the result-matching implementation.
 	cases := []struct{ server, key string }{
