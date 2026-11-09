@@ -71,3 +71,26 @@ v0.14.5 正式 ARM64 ZIP 为 20,028,919 字节。包内 AdGuard Home 二进制�
 - `main` 仍为 `dfe849360785d50e31419b10aefad9686f1c312d`，正式版仍为 v0.14.5。
 - 本轮安全复核和重置路径审查没有修改产品运行代码；Issue #24 仍需等待官方核心更新及后续设备评估。
 - 无真机测试、PR 合并或 Release。
+
+## 2026-11-09：日志占用与安装体积复核
+
+### 安装体积
+
+- v0.14.5 ZIP 约 20.0 MB，AdGuard Home ARM64 二进制解压后约 34.2 MB，是主要安装占用。
+- 检查 `customize.sh` 后确认核心只解包到 `/data/adb/adblockpro/bin/AdGuardHome`；Root 管理器模块目录不会再保留另一份核心副本。硬链接或复制调整没有可证实的节省空间收益，也可能破坏跨 Root 管理器升级/卸载，因此未改。
+
+### 已修复：运行历史日志无限增长
+
+`history.log` 由启动、DNS 恢复、VPN 状态变化和自动规则更新等流程持续追加，原来没有保留上限。
+
+- 新增加锁写入及轮转：超过 1 MiB 时，`history.log` 与 `history.log.1` 合计保留最新约 1 MiB；轮转时按完整行切分，并将日志权限设为仅 Root 可读写。自动更新结果先写入受保护的临时文件，再并入历史。
+- 存储诊断新增 `diag_disk_history_log_kb` 和 `diag_disk_history_archive_kb`；文档说明保留策略。
+- 回归覆盖日志写入、UTF-8 轮转边界、归档上限、权限、启动迁移告警、看门狗、VPN 日志和占用字段。
+- 代码分支：`perf/bound-history-log-size-20261109`，提交 `bfac8d858d1a322ea4e948414a72d23cabb9f143`，已推送到远端。
+- 本地验证：Node 624 项、Python 36 项通过；Shell/JavaScript 语法和 `git diff --check` 通过。未在 Android 真机运行。
+- 按用户此前“正式版时再打包”的要求，没有创建触发 ARM64 测试 ZIP 的 PR，也没有运行安装包构建；因此代码分支目前没有 PR/CI 结论。若要先经 GitHub PR 自动检查，仓库工作流会生成测试 ZIP。
+
+### 本轮状态
+
+- 基线仍为 `dfe849360785d50e31419b10aefad9686f1c312d`，正式版仍为 v0.14.5。
+- 代码分支已推送，未开 PR；现有 PR #84、#85 和 #86 仍未合并。无真机测试、打包、合并或 Release。
