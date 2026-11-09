@@ -1142,15 +1142,15 @@ auto_update_rules() {
   is_our_process "$(cat "$AGH/bin/agh.pid" 2>/dev/null)" && is_dns_listening || return 0
   now=$(date '+%s')
   case "$now" in ''|*[!0-9]*) return 1 ;; esac
+  [ ${#now} -le 12 ] || return 1
   last=$(cat "$STATE/last-update" 2>/dev/null)
   attempt=$(cat "$STATE/auto-update-attempt" 2>/dev/null)
   case "$last" in ''|*[!0-9]*|0[0-9]*) last=0 ;; esac
   case "$attempt" in ''|*[!0-9]*|0[0-9]*) attempt=0 ;; esac
   [ ${#last} -le 11 ] || last=0
   [ ${#attempt} -le 11 ] || attempt=0
-  [ "$last" -le "$now" ] || last=0
-  [ "$attempt" -le "$now" ] || attempt=0
-  [ $((now - last)) -ge 86400 ] && [ $((now - attempt)) -ge 3600 ] || return 0
+  abp_timestamp_window_elapsed "$now" "$last" 86400 ge &&
+    abp_timestamp_window_elapsed "$now" "$attempt" 3600 ge || return 0
   selected=$("$BB" sh "$MODDIR/webui-config.sh" list-sources) || return 1
   filter_json=$(api GET /filtering/status 4) || return 1
   enabled_filter_count=$(printf '%s' "$filter_json" | "$BOOTSTRAP" filtering-enabled-count) || return 1

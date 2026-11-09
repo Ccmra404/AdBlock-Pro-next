@@ -13,9 +13,9 @@ SCRIPT = Path(__file__).resolve().parents[1] / "tools" / "update_adguard_home.py
 SPEC = importlib.util.spec_from_file_location("updater", SCRIPT)
 updater = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(updater)
-TAG = "v0.107.79"
+TAG = "v0.107.80"
 URL = f"https://github.com/AdguardTeam/AdGuardHome/releases/download/{TAG}/AdGuardHome_linux_arm64.tar.gz"
-SHA = "3f7893c18e8aaadc456d0452839190561c306ca95175a2254958be80a769c1ae"
+SHA = "d5e17d0d724418ddef8b7723ed8ade7eef4e621ec5b0e43a341859cca71a3d8f"
 
 
 def stable_release(version=TAG, digest=SHA, prerelease=False):
@@ -106,10 +106,10 @@ class UpstreamSafetyTests(unittest.TestCase):
 
     def test_old_version_cannot_downgrade(self):
         self.assertFalse(updater.check_release(
-            stable_release(), {"version": "v0.107.80"}
+            stable_release(version="v0.107.79"), {"version": TAG}
         )[3])
         self.assertTrue(updater.check_release(
-            stable_release(version="v0.107.80", digest=SHA),
+            stable_release(version="v0.107.81", digest=SHA),
             {"version": TAG},
         )[3])
 
@@ -143,7 +143,7 @@ class UpstreamSafetyTests(unittest.TestCase):
             binary.write_bytes(b'original-engine')
             saved_lock = json.dumps({'version': TAG})
             lock.write_text(saved_lock)
-            release = stable_release(version='v0.107.80', digest='a' * 64)
+            release = stable_release(version='v0.107.81', digest='a' * 64)
             def download(url, limit):
                 return json.dumps(release).encode() if url == updater.API else b'bad-archive'
             with patch.object(updater, 'BINARY', binary), patch.object(updater, 'LOCK', lock), \
