@@ -6,8 +6,10 @@ import {spawnSync} from 'node:child_process';
 import {rootFixture, shellPath, filteringBootstrap} from './shell-fixture.mjs';
 
 const source = readFileSync(new URL('../bindhosts.sh', import.meta.url), 'utf8');
+const compat = readFileSync(new URL('../scripts/compat.sh', import.meta.url), 'utf8');
 const automatic = source.slice(source.indexOf('auto_update_rules() {'), source.indexOf('\ndiagnose() {'));
 const failed = source.slice(source.indexOf('update_failed() {'), source.indexOf('\nsource_name() {'));
+const testShell = process.env.ABP_AUTO_UPDATE_TEST_SHELL || 'bash';
 function fixture(t, options = {}) {
   const f = rootFixture(t); f.addBusybox('Magisk');
   const state = path.join(f.dir, 'state'), agh = path.join(f.dir, 'agh'), mod = path.join(f.dir, 'module');
@@ -29,14 +31,29 @@ function fixture(t, options = {}) {
   writeFileSync(script, [
     'BB=' + shellPath(f.paths.Magisk), 'STATE=' + shellPath(state), 'AGH=' + shellPath(agh), 'MODDIR=' + shellPath(mod),
     'BOOTSTRAP=$ABP_BOOTSTRAP',
+    compat.slice(compat.indexOf('abp_timestamp_window_elapsed() {'), compat.indexOf('\nabp_find_busybox || return 1')),
     'api() { [ "$1:$2" = GET:/filtering/status ] || return 1; cat "$FILTER_STATUS"; }',
-    'date() { printf "2000000000\\n"; }',
+    `date() { printf "%s\\n" "${options.now ?? 2000000000}"; }`,
     `is_our_process() { return ${options.dead ? 1 : 0}; }`,
     `is_dns_listening() { return ${options.noListener ? 1 : 0}; }`,
     'update_rules() { echo "$AUTO_UPDATE" >> "$STATE/calls"; ' + (options.failure ? 'return 1;' : 'echo 2000000000 > "$STATE/last-update";') + ' }',
     automatic, 'auto_update_rules',
   ].join('\n'));
-  return {state, agh, mod, run:() => spawnSync('bash', [shellPath(script)], {encoding:'utf8', env:{...f.env('Magisk'), ABP_BOOTSTRAP:bootstrap, FILTER_STATUS:shellPath(filterStatus)}})};
+  return {state, agh, mod, run:() => spawnSync(testShell, [shellPath(script)], {encoding:'utf8', env:{...f.env('Magisk'), ABP_BOOTSTRAP:bootstrap, FILTER_STATUS:shellPath(filterStatus)}})};
+}
+
+function runTimestampWindow(t, now, recorded, interval, comparison) {
+  const f = rootFixture(t); f.addBusybox('Magisk');
+  const script = path.join(f.dir, 'timestamp.sh');
+  const helper = compat.slice(compat.indexOf('abp_timestamp_window_elapsed() {'), compat.indexOf('\nabp_find_busybox || return 1'));
+  writeFileSync(script, [
+    'BB=' + shellPath(f.paths.Magisk),
+    helper,
+    'if abp_timestamp_window_elapsed "$1" "$2" "$3" "$4"; then echo elapsed; else echo active; fi',
+  ].join('\n'));
+  return spawnSync(testShell, [shellPath(script), String(now), String(recorded), String(interval), comparison], {
+    encoding:'utf8', env:f.env('Magisk'),
+  });
 }
 
 test('due automatic update calls the real update entry semantics once and respects the last success', t => {
@@ -62,6 +79,29 @@ test('failed automatic update preserves last success and waits an hour before re
   assert.equal(f.run().status, 0);
   assert.equal(readFileSync(path.join(f.state, 'calls'), 'utf8'), '1\n');
 });
+
+test('automatic rule updates remain due beyond Android mksh signed 32-bit epoch range', t => {
+  const f = fixture(t, {now: 3000000000});
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr + result.stdout);
+  assert.equal(readFileSync(path.join(f.state, 'calls'), 'utf8'), '1\n');
+});
+
+test('epoch window comparisons preserve inclusive, strict, and clock rollback behavior', t => {
+  const atBoundary = runTimestampWindow(t, 3000000000, 2999913600, 86400, 'ge');
+  assert.equal(atBoundary.status, 0, atBoundary.stderr);
+  assert.equal(atBoundary.stdout.trim(), 'elapsed');
+  const oneSecondEarly = runTimestampWindow(t, 3000000000, 2999913601, 86400, 'ge');
+  assert.equal(oneSecondEarly.status, 0, oneSecondEarly.stderr);
+  assert.equal(oneSecondEarly.stdout.trim(), 'active');
+  const strictBoundary = runTimestampWindow(t, 3000000000, 2999913600, 86400, 'gt');
+  assert.equal(strictBoundary.status, 0, strictBoundary.stderr);
+  assert.equal(strictBoundary.stdout.trim(), 'active');
+  const clockRollback = runTimestampWindow(t, 3000000000, 3000000001, 86400, 'gt');
+  assert.equal(clockRollback.status, 0, clockRollback.stderr);
+  assert.equal(clockRollback.stdout.trim(), 'elapsed');
+});
+
 for (const stamp of ['2099999999', 'invalid', '08', '99999999999999999999999']) {
   test(`clock corrections and malformed timestamp ${stamp} do not suppress future downloads`, t => {
     const f = fixture(t, {last:stamp, attempt:stamp}); assert.equal(f.run().status, 0);
